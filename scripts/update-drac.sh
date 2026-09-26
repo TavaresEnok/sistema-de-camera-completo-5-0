@@ -31,6 +31,18 @@ env_set() {
   fi
 }
 
+# Em instalações com IP próprio, o nginx do host publica o Web em um endereço
+# privado específico. A checagem de atualização precisa consultar o mesmo
+# endereço configurado no compose, em vez de supor que a porta está no loopback.
+web_health_url() {
+  local bind
+  bind="$(env_value DRAC_WEB_BIND)"
+  case "$bind" in
+    ''|0.0.0.0|127.0.0.1) printf '%s\n' 'http://127.0.0.1:5173/' ;;
+    *) printf 'http://%s:5173/\n' "$bind" ;;
+  esac
+}
+
 # A Central é um produto da VM Management, não um serviço de cada tenant.
 # `docker compose up drac-central` ativa o serviço mesmo quando ele possui
 # `profiles: [central]`; por isso a lista precisa ser decidida antes e nunca
@@ -194,7 +206,7 @@ rollback() {
     if ! "${COMPOSE[@]}" build "${APP_SERVICES[@]}" >/dev/null \
       || ! "${COMPOSE[@]}" up -d "${APP_SERVICES[@]}" >/dev/null \
       || ! wait_for_http GET http://127.0.0.1:3000/health/ready API \
-      || ! wait_for_http HEAD http://127.0.0.1:5173/ Web; then
+      || ! wait_for_http HEAD "$(web_health_url)" Web; then
       printf '[DRAC update][ERRO] Código anterior restaurado, mas os serviços não validaram.\n' >&2
       rollback_status=1
     fi
@@ -336,7 +348,7 @@ log "Subindo aplicação atualizada"
 
 log "Validando healthchecks"
 wait_for_http GET http://127.0.0.1:3000/health/ready API
-wait_for_http HEAD http://127.0.0.1:5173/ Web
+wait_for_http HEAD "$(web_health_url)" Web
 
 if [ -x "$ROOT_DIR/scripts/production-readiness.sh" ]; then
   log "Executando readiness"
