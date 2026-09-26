@@ -1212,6 +1212,7 @@ export class AiManagerService implements OnModuleInit {
     // RTMP; 3 de 3 ficavam cegas e a gravação de emergência assumia, com 698
     // trechos gravados em 24 h numa única câmera.
     const infoBase = {
+      configurationRevision: cam.updatedAt instanceof Date ? cam.updatedAt.toISOString() : String(cam.updatedAt ?? ''),
       recordSubtype: recordingProfile.subtype,
       recordChannel: recordingProfile.channel,
       liveSubtype: liveProfile.subtype,

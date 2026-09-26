@@ -2,4 +2,5 @@ models/
 *.onnx
 *_openvino_model/
 __pycache__/
+datasets/**/*.cache
 .pytest_cache/

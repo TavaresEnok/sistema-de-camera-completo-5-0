@@ -81,6 +81,19 @@ test('storage saudável: o ciclo segue normal, na ordem envio → poda → vigil
   assert.deepEqual(avisos, [], 'preflight que passa não polui o log');
 });
 
+test('duas chamadas concorrentes executam somente um ciclo', async () => {
+  const { svc, eventos } = montar();
+  let liberar!: () => void;
+  const barreira = new Promise<void>((resolve) => { liberar = resolve; });
+  svc.resolver.storageParaEscrita = async () => { await barreira; return { id: 'st-1' }; };
+  const primeira = svc.runOnce();
+  const segunda = svc.runOnce();
+  liberar();
+  const [a, b] = await Promise.all([primeira, segunda]);
+  assert.equal([a, b].filter((item) => !item.skipped).length, 1);
+  assert.equal(eventos.filter((item) => item === 'upload').length, 1);
+});
+
 test('a falha do preflight fica registrada para o heartbeat da Central', async () => {
   // Foi a ausência deste registro que deixou horas de NoSuchBucket invisíveis
   // à Central no incidente original.

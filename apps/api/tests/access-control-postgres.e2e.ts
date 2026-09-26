@@ -90,6 +90,7 @@ if (!DB_URL) {
     await prisma.user.createMany({
       data: [DONO, DELEGADO, ESTRANHO, ADMIN].map((uid) => ({
         id: uid,
+        username: uid,
         name: uid,
         email: `${uid}@e2e.local`,
         passwordHash: 'x',

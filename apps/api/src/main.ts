@@ -55,6 +55,7 @@ async function bootstrap() {
   // `Logger.log/error/...` da aplicação passa pela redação de credencial, sem
   // depender de o autor de cada ponto de chamada lembrar de sanitizar.
   const app = await NestFactory.create(AppModule, { logger: new RedactingLogger() });
+  app.enableShutdownHooks(['SIGTERM', 'SIGINT']);
   const trustProxyHops = envNumber('TRUST_PROXY_HOPS', 0);
   if (Number.isInteger(trustProxyHops) && trustProxyHops > 0 && trustProxyHops <= 5) {
     // Só habilite quando a API não estiver acessível diretamente: o valor indica

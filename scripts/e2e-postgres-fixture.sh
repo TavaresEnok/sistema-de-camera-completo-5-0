@@ -122,6 +122,12 @@ run() {
   DRAC_E2E_DATABASE_URL="$DB_URL" \
   DRAC_E2E_REQUIRED="${DRAC_E2E_REQUIRED:-}" \
     pnpm --filter api test:e2e:pg || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    DRAC_CENTRAL_DATABASE_URL="$DB_URL" \
+    DRAC_CENTRAL_STORE_MODE=pg \
+      node --test apps/central/tests/datastore-pg.test.js \
+        apps/central/tests/timeseries-pg.test.js apps/central/tests/timeseries-http.test.js || rc=$?
+  fi
   down
   return "$rc"
 }

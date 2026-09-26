@@ -40,6 +40,7 @@ TTL_RASTRO_S = 5.0
 # Teto de rastros guardados por câmera: cena movimentada com IDs trocando não
 # pode virar vazamento de memória num processo que também atende vídeo.
 MAX_RASTROS = 128
+MARGEM_LINHA = 0.003
 
 
 def _lado(ax: float, ay: float, bx: float, by: float, px: float, py: float) -> float:
@@ -49,6 +50,37 @@ def _lado(ax: float, ay: float, bx: float, by: float, px: float, py: float) -> f
 
 def _sinal(v: float, eps: float = 1e-9) -> int:
     return 1 if v > eps else (-1 if v < -eps else 0)
+
+
+def _dentro(ponto: Tuple[float, float], poligono: List[Tuple[float, float]]) -> bool:
+    """Ray casting idêntico ao simulador web, sem depender de OpenCV."""
+    dentro = False
+    j = len(poligono) - 1
+    for i in range(len(poligono)):
+        x, y = poligono[i]
+        xx, yy = poligono[j]
+        if (y > ponto[1]) != (yy > ponto[1]):
+            limite = (xx - x) * (ponto[1] - y) / (yy - y) + x
+            if ponto[0] < limite:
+                dentro = not dentro
+        j = i
+    return dentro
+
+
+def areas_de(zonas: Optional[Iterable[Any]]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    includes: List[Dict[str, Any]] = []
+    excludes: List[Dict[str, Any]] = []
+    for z in zonas or []:
+        if not isinstance(z, dict) or z.get("kind") not in ("include", "exclude"):
+            continue
+        try:
+            pontos = [(float(p[0]), float(p[1])) for p in z.get("points", [])]
+        except (TypeError, ValueError, IndexError):
+            continue
+        if len(pontos) < 3 or not all(math.isfinite(v) for p in pontos for v in p):
+            continue
+        (includes if z["kind"] == "include" else excludes).append({"points": pontos})
+    return includes, excludes
 
 
 def _segmentos_cruzam(
@@ -120,8 +152,12 @@ class DetectorDeTravessia:
 
     def __init__(self, zonas: Optional[Iterable[Any]] = None) -> None:
         self.linhas = linhas_de(zonas)
+        self.includes, self.excludes = areas_de(zonas)
         # trackId -> (x, y, visto_em)
         self._rastros: Dict[str, Tuple[float, float, float]] = {}
+        # (trackId, linhaId) -> (último lado estável, ponto, visto_em). A faixa
+        # neutra impede que tocar/tremular sobre a linha vire uma travessia.
+        self._lados: Dict[Tuple[str, str], Tuple[int, Tuple[float, float], float]] = {}
 
     @property
     def ativo(self) -> bool:
@@ -130,6 +166,8 @@ class DetectorDeTravessia:
 
     def atualizar_zonas(self, zonas: Optional[Iterable[Any]]) -> None:
         self.linhas = linhas_de(zonas)
+        self.includes, self.excludes = areas_de(zonas)
+        self._lados.clear()
         if not self.linhas:
             self._rastros.clear()
 
@@ -138,6 +176,8 @@ class DetectorDeTravessia:
         vencidos = [k for k, (_, _, t) in self._rastros.items() if agora - t > TTL_RASTRO_S]
         for k in vencidos:
             self._rastros.pop(k, None)
+            for estado in [estado for estado in self._lados if estado[0] == k]:
+                self._lados.pop(estado, None)
 
     def _limitar(self) -> None:
         """Aplica o teto de memória, descartando os mais antigos.
@@ -150,6 +190,13 @@ class DetectorDeTravessia:
             return
         for k, _ in sorted(self._rastros.items(), key=lambda kv: kv[1][2])[:excedente]:
             self._rastros.pop(k, None)
+            for estado in [estado for estado in self._lados if estado[0] == k]:
+                self._lados.pop(estado, None)
+
+    def _permitido(self, ponto: Tuple[float, float]) -> bool:
+        if any(_dentro(ponto, z["points"]) for z in self.excludes):
+            return False
+        return not self.includes or any(_dentro(ponto, z["points"]) for z in self.includes)
 
     def avaliar(
         self,
@@ -182,19 +229,25 @@ class DetectorDeTravessia:
             if atual is None:
                 continue
 
-            anterior = self._rastros.get(chave)
             self._rastros[chave] = (atual[0], atual[1], agora)
-            if anterior is None:
-                continue  # primeira vez que vemos este objeto: sem trajeto ainda
-
-            px, py, _ = anterior
-            if math.hypot(atual[0] - px, atual[1] - py) < 1e-6:
-                continue  # parado não cruza
+            if not self._permitido(atual):
+                for estado in [estado for estado in self._lados if estado[0] == chave]:
+                    self._lados.pop(estado, None)
+                continue
 
             for linha in self.linhas:
-                if not _segmentos_cruzam((px, py), atual, linha["a"], linha["b"]):
+                comprimento = math.hypot(linha["b"][0] - linha["a"][0], linha["b"][1] - linha["a"][1])
+                lado_atual = _sinal(_lado(*linha["a"], *linha["b"], *atual), MARGEM_LINHA * comprimento)
+                estado_chave = (chave, linha["id"])
+                anterior_estavel = self._lados.get(estado_chave)
+                if lado_atual == 0:
                     continue
-                lado_antes = _sinal(_lado(*linha["a"], *linha["b"], px, py))
+                self._lados[estado_chave] = (lado_atual, atual, agora)
+                if anterior_estavel is None:
+                    continue
+                lado_antes, ponto_anterior, _ = anterior_estavel
+                if lado_antes == lado_atual or not _segmentos_cruzam(ponto_anterior, atual, linha["a"], linha["b"]):
+                    continue
                 sentido = "ab" if lado_antes < 0 else "ba"
                 configurado = linha["sentido"]
                 travessias.append({

@@ -224,18 +224,17 @@ export class CloudOffloadService {
   async runOnce(): Promise<OffloadResult> {
     const vazio: OffloadResult = { skipped: true, uploaded: 0, deletedLocal: 0, failed: 0, bytesUploaded: 0 };
     if (this.running) return { ...vazio, reason: 'ciclo anterior ainda em andamento' };
+    this.running = true;
 
     // Escreve SEMPRE no storage ATIVO. Antes era a configuração única; agora a
     // instalação pode ter vários, e o ativo é o destino de tudo que é novo. Sem
     // nenhum cadastrado, o resolvedor cai na config legada — instalação que
     // nunca usou a tela nova continua idêntica.
-    const destino = await this.resolver.storageParaEscrita();
-    if (!destino) return { ...vazio, reason: 'sem storage em nuvem provisionado' };
-    const cfg = destino;
-    const storageId = destino.id;
-
-    this.running = true;
     try {
+      const destino = await this.resolver.storageParaEscrita();
+      if (!destino) return { ...vazio, reason: 'sem storage em nuvem provisionado' };
+      const cfg = destino;
+      const storageId = destino.id;
       const client = this.resolver.clienteDe(destino);
 
       // ── DISJUNTOR: a credencial prova que funciona ANTES dos gigabytes ────

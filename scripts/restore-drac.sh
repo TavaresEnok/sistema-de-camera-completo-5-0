@@ -29,6 +29,35 @@ env_value() {
   sed -n "s/^${name}=//p" "$ENV_FILE" | tail -n1 | sed 's/^"//; s/"$//'
 }
 
+web_health_url() {
+  local bind
+  bind="$(env_value DRAC_WEB_BIND)"
+  case "$bind" in
+    ''|0.0.0.0|127.0.0.1) printf '%s\n' 'http://127.0.0.1:5173/' ;;
+    *) printf 'http://%s:5173/\n' "$bind" ;;
+  esac
+}
+
+wait_for_http() {
+  local method="$1" url="$2" label="$3" attempts="${4:-30}"
+  local attempt
+  for attempt in $(seq 1 "$attempts"); do
+    if [ "$method" = HEAD ]; then
+      curl -fsSI --max-time 3 "$url" >/dev/null 2>&1 && return 0
+    else
+      curl -fsS --max-time 3 "$url" >/dev/null 2>&1 && return 0
+    fi
+    sleep 2
+  done
+  printf '[DRAC restore][ERRO] %s não respondeu: %s\n' "$label" "$url" >&2
+  return 1
+}
+
+COMPOSE_PROFILES_VALUE="$(env_value COMPOSE_PROFILES)"
+if [ "$(env_value DRAC_UPDATE_INCLUDE_CENTRAL)" = true ] || [[ ",$COMPOSE_PROFILES_VALUE," = *,central,* ]]; then
+  COMPOSE+=(--profile central)
+fi
+
 # Restaurar banco/storage também relança os serviços. Em modo Gateway, subir
 # o MediaMTX sem o overlay TURN tornaria a instalação aparentemente saudável
 # por HTTP, mas inalcançável por WebRTC a partir da internet.
@@ -39,7 +68,16 @@ if [ "$(env_value DRAC_GATEWAY_MODE)" = "true" ] || [ -n "$(env_value MEDIAMTX_T
   }
   COMPOSE+=(-f "$ROOT_DIR/infra/docker-compose.gateway.yml")
 fi
+if docker inspect vms-mediamtx --format '{{.HostConfig.Runtime}}' 2>/dev/null | grep -q nvidia \
+  && [ -f "$ROOT_DIR/infra/docker-compose.gpu.yml" ]; then
+  COMPOSE+=(-f "$ROOT_DIR/infra/docker-compose.gpu.yml")
+fi
+if docker inspect vms-ai-service --format '{{.HostConfig.Runtime}}' 2>/dev/null | grep -q nvidia \
+  && [ -f "$ROOT_DIR/infra/docker-compose.gpu-ai.yml" ]; then
+  COMPOSE+=(-f "$ROOT_DIR/infra/docker-compose.gpu-ai.yml")
+fi
 RESTORE_MUTATED=false
+WRITERS_STOPPED=false
 ROLLBACK_IN_PROGRESS=false
 STORAGE_SWAPPED=false
 STORAGE_EXISTED=false
@@ -62,8 +100,9 @@ stop_writers() {
 }
 
 start_runtime() {
-  "${COMPOSE[@]}" up -d \
-    postgres redis mediamtx api drac-central web ai-service postgres-backup postgres-backup-verify
+  # Sem lista explícita: sobe os serviços da topologia/default e somente os
+  # profiles habilitados, em vez de forçar a Central em todo tenant.
+  "${COMPOSE[@]}" up -d
 }
 
 copy_dump_to_postgres() {
@@ -128,7 +167,16 @@ validate_storage_archive() {
 
 rollback_restore() {
   local reason="${1:-falha desconhecida}"
-  if [ "$RESTORE_MUTATED" != "true" ] || [ "$ROLLBACK_IN_PROGRESS" = "true" ]; then
+  if [ "$ROLLBACK_IN_PROGRESS" = "true" ]; then
+    return 0
+  fi
+  if [ "$RESTORE_MUTATED" != "true" ]; then
+    # Um checkpoint que falhou nunca deve ser restaurado. Deixar os writers
+    # parados é mais seguro que iniciar serviços fora da topologia original.
+    if [ "$WRITERS_STOPPED" = "true" ]; then
+      printf '[DRAC restore][ERRO] Checkpoint não concluído; banco original intacto, writers parados. Retome os serviços da topologia original antes de tentar novamente.\n' >&2
+      return 1
+    fi
     return 0
   fi
   ROLLBACK_IN_PROGRESS=true
@@ -171,8 +219,8 @@ rollback_restore() {
 
   if [ "$rollback_status" -eq 0 ]; then
     if ! start_runtime >/dev/null \
-      || ! curl -fsS --max-time 30 http://127.0.0.1:3000/health/ready >/dev/null \
-      || ! curl -fsSI --max-time 30 http://127.0.0.1:5173/ >/dev/null; then
+      || ! wait_for_http GET http://127.0.0.1:3000/health/ready API \
+      || ! wait_for_http HEAD "$(web_health_url)" Web; then
       rollback_status=1
     fi
   fi
@@ -237,7 +285,11 @@ if [ -n "$STORAGE_ARCHIVE" ]; then
   fi
 fi
 
-log "Criando dump de segurança do estado atual"
+log "Parando todos os processos que podem escrever em banco ou storage"
+WRITERS_STOPPED=true
+stop_writers
+
+log "Criando dump de segurança do estado atual com writers parados"
 docker exec "$POSTGRES_CONTAINER" sh -lc '
   set -eu
   export PGPASSWORD="$POSTGRES_PASSWORD"
@@ -247,8 +299,6 @@ docker exec "$POSTGRES_CONTAINER" sh -lc '
 copy_dump_to_postgres "$SAFETY_DIR/postgres-before.dump" /tmp/drac-restore-safety-validate.dump
 docker exec "$POSTGRES_CONTAINER" rm -f /tmp/drac-restore-safety-validate.dump
 
-log "Parando todos os processos que podem escrever em banco ou storage"
-stop_writers
 RESTORE_MUTATED=true
 
 log "Restaurando banco em transação única"
@@ -271,14 +321,12 @@ log "Subindo serviços"
 start_runtime
 
 log "Validando API e Web"
-curl -fsS --max-time 30 http://127.0.0.1:3000/health/ready >/dev/null
-curl -fsSI --max-time 30 http://127.0.0.1:5173/ >/dev/null
+wait_for_http GET http://127.0.0.1:3000/health/ready API
+wait_for_http HEAD "$(web_health_url)" Web
 
 if [ -x "$ROOT_DIR/scripts/production-readiness.sh" ]; then
-  set +e
-  "$ROOT_DIR/scripts/production-readiness.sh"
-  readiness_status=$?
-  set -e
+  readiness_status=0
+  "$ROOT_DIR/scripts/production-readiness.sh" || readiness_status=$?
   if [ "$readiness_status" -ge 2 ]; then
     fail "Readiness bloqueou o estado restaurado."
   fi

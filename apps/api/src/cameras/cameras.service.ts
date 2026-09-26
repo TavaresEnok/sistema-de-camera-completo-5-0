@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, OnApplicationBootstrap, Optional } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, OnApplicationBootstrap, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ModuleRef } from '@nestjs/core';
 import { temZonaDeArea, validarZonasDeDeteccao } from './helpers/validar-zonas.helper';
@@ -701,9 +701,11 @@ export class CamerasService implements OnApplicationBootstrap {
       && (dto.recordingMode ?? existing.recordingMode) === 'motion'
       && (existing as any).motionTrigger === 'CAMERA';
     const normalizedProfile = this.normalizeProfileToDetected(dto, existing);
-    const camera = await this.prisma.camera.update({
-      where: { id },
-      data: {
+    let camera: any;
+    try {
+      camera = await this.prisma.camera.update({
+        where: { id, ...(dto.expectedUpdatedAt ? { updatedAt: new Date(dto.expectedUpdatedAt) } : {}) },
+        data: {
         name: dto.name,
         // Não aceite transformar o marcador de uma câmera push em configuração
         // de rede parcialmente preenchida. Ao voltar para RTSP pull, a tela
@@ -801,9 +803,15 @@ export class CamerasService implements OnApplicationBootstrap {
             ? { ptzCapable: null, ptzCapableSource: null, ptzProbedAt: null }
             : { ptzCapable: dto.ptzCapable, ptzCapableSource: 'manual', ptzProbedAt: new Date() }
           : {}),
-      },
-      include: { site: true, area: true, group: true },
-    });
+        },
+        include: { site: true, area: true, group: true },
+      });
+    } catch (error) {
+      if (dto.expectedUpdatedAt && (error as { code?: string })?.code === 'P2025') {
+        throw new ConflictException('Esta câmera foi alterada por outra pessoa. Recarregue a configuração antes de salvar.');
+      }
+      throw error;
+    }
 
     // NOTA: o reinício da análise (para recarregar as máscaras de zona) é feito
     // pelo CONTROLLER, não aqui. Importar os serviços de IA neste arquivo cria o

@@ -47,7 +47,8 @@ def _available_cpu_threads() -> dict:
     # cgroup v2
     cgroup_quota_count: int | None = None
     try:
-        raw = (open("/sys/fs/cgroup/cpu.max", "r", encoding="utf-8").read() or "").strip()
+        with open("/sys/fs/cgroup/cpu.max", "r", encoding="utf-8") as cpu_file:
+            raw = (cpu_file.read() or "").strip()
         quota_str, period_str = raw.split(maxsplit=1)
         if quota_str != "max":
             quota = int(quota_str)

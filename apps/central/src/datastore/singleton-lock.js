@@ -18,14 +18,34 @@ class JsonInstanceLock {
       handle = await fs.open(this.lockFile, 'wx', 0o600);
     } catch (error) {
       if (error?.code === 'EEXIST') {
+        // Só recupera automaticamente quando é possível provar que o dono era
+        // deste mesmo host e o PID já não existe. Host diferente permanece
+        // fail-closed, pois pode ser outra instância legítima em volume comum.
+        try {
+          const owner = JSON.parse(await fs.readFile(this.lockFile, 'utf8'));
+          if (owner?.hostname === os.hostname() && Number.isInteger(owner?.pid)) {
+            let alive = true;
+            try { process.kill(owner.pid, 0); } catch (probeError) {
+              alive = probeError?.code !== 'ESRCH';
+            }
+            if (!alive) {
+              await fs.rm(this.lockFile);
+              handle = await fs.open(this.lockFile, 'wx', 0o600);
+            }
+          }
+        } catch { /* lock ilegível permanece fail-closed */ }
+        if (handle) {
+          // Recuperação comprovada do lock órfão.
+        } else {
         const lockError = new Error(
           `Outra instância da DRAC Central já possui ${this.lockFile}. ` +
           'Se o processo anterior terminou de forma não limpa, confirme que ele está parado antes de remover somente esse lock.',
         );
         lockError.code = 'CENTRAL_INSTANCE_LOCKED';
         throw lockError;
+        }
       }
-      throw error;
+      if (!handle) throw error;
     }
     try {
       await handle.writeFile(JSON.stringify({

@@ -345,14 +345,27 @@ export class AuthService {
 
     await this.assertPasswordStrength(newPassword);
     const passwordHash = await bcrypt.hash(newPassword, 10);
-    await this.prisma.user.update({
-      where: { id: user.id },
-      data: {
-        passwordHash,
-        resetTokenHash: null,
-        resetTokenExpiresAt: null,
-        authVersion: { increment: 1 },
-      },
+    await this.prisma.$transaction(async (tx) => {
+      const consumed = await tx.user.updateMany({
+        where: {
+          id: user.id,
+          resetTokenHash,
+          resetTokenExpiresAt: { gt: new Date() },
+        },
+        data: {
+          passwordHash,
+          resetTokenHash: null,
+          resetTokenExpiresAt: null,
+          authVersion: { increment: 1 },
+        },
+      });
+      if (consumed.count !== 1) {
+        throw new UnauthorizedException('Token de redefinição inválido ou expirado.');
+      }
+      await tx.authSession.updateMany({
+        where: { userId: user.id, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
     });
   }
 

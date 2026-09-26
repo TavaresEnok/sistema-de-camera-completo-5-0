@@ -38,9 +38,6 @@ function resumir(zones: Array<{ kind: string }> | undefined): ResumoPerimetro {
 }
 
 const temPerimetro = (r: ResumoPerimetro) => r.linhas + r.monitorar + r.ignorar > 0;
-const podeConfigurarPerimetro = (camera: { aiEnabled: boolean; recordingMode: string }) =>
-  camera.aiEnabled || camera.recordingMode === 'motion' || camera.recordingMode === 'object';
-
 export default function PerimetroPage() {
   const [location, setLocation] = useLocation();
   const userRole = useAuthStore((state) => state.user?.role ?? 'viewer');
@@ -54,10 +51,13 @@ export default function PerimetroPage() {
   const [page, setPage] = useState(0);
   const [width, setWidth] = useState(300);
   const [dirty, setDirty] = useState(false);
+  const [drawingActive, setDrawingActive] = useState(false);
   const [pending, setPending] = useState<(() => void) | null>(null);
   const pendingRef = useRef<(() => void) | null>(null);
   const saveThenLeave = useRef(false);
   const [testing, setTesting] = useState(false);
+  const [aplicacoes, setAplicacoes] = useState<Record<string, { revision: string; since: number }>>({});
+  const [revisoesPorCamera, setRevisoesPorCamera] = useState<Record<string, string>>({});
   const [editing, setEditing] = useState(false);
   const editorRef = useRef<HTMLDivElement>(null);
   const guard = (action: () => void) => {
@@ -65,7 +65,7 @@ export default function PerimetroPage() {
     else { setTesting(false); action(); }
   };
   useEffect(() => {
-    if (!token || userRole === 'viewer') return;
+    if (!token) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
     const controller = new AbortController();
@@ -100,7 +100,7 @@ export default function PerimetroPage() {
 
   const lista = useMemo(
     () => cameras
-      .filter((camera) => camera.enabled && podeConfigurarPerimetro(camera))
+      .filter((camera) => camera.enabled)
       .map((camera) => {
         const zonas = zonasPorCamera[camera.id]
           ?? (camera.detectionZones as DetectionZone[] | undefined)
@@ -150,13 +150,45 @@ export default function PerimetroPage() {
 
   const selecionada = listaFiltrada.find((i) => i.camera.id === selectedCamId) ?? null;
   const totalComPerimetro = listaFiltrada.filter((i) => temPerimetro(i.resumo)).length;
-  const visible = listaFiltrada.filter(({ camera, resumo }) => camera.name.toLocaleLowerCase('pt-BR').includes(search.toLocaleLowerCase('pt-BR')) &&
-    (filter === 'all' || (filter === 'empty' ? !temPerimetro(resumo) : perimeterState(camera.isOnline, resumo.linhas > 0, processors[camera.id], checked).attention)));
+  const termo = search.toLocaleLowerCase('pt-BR').trim();
+  const visible = listaFiltrada.filter(({ camera, resumo }) =>
+    [camera.name, camera.code, camera.floor].some((valor) => String(valor ?? '').toLocaleLowerCase('pt-BR').includes(termo)) &&
+    (filter === 'all' || (filter === 'empty'
+      ? !temPerimetro(resumo)
+      : !camera.aiEnabled || !camera.alarmsEnabled || Boolean(aplicacoes[camera.id]) || perimeterState(camera.isOnline, resumo.linhas > 0, processors[camera.id], checked).attention)));
   const pageCount = Math.max(1, Math.ceil(visible.length / 30));
   const currentPage = Math.min(page, pageCount - 1);
-  const selectedState = selecionada ? selecionada.camera.status === 'no_signal'
-    ? { label: 'Verificando vídeo', attention: true }
+  const selectedState = selecionada ? !selecionada.camera.aiEnabled
+    ? { label: 'Ative a análise para proteger', attention: true, tone: 'warning' as const }
+    : selecionada.camera.status === 'no_signal'
+    ? { label: 'Verificando vídeo', attention: true, tone: 'checking' as const }
     : perimeterState(selecionada.camera.isOnline, selecionada.resumo.linhas > 0, processors[selecionada.camera.id], checked) : null;
+  useEffect(() => {
+    setAplicacoes((atuais) => {
+      let mudou = false;
+      const proximas = { ...atuais };
+      for (const [cameraId, aplicacao] of Object.entries(atuais)) {
+        if (processors[cameraId]?.configuration_revision === aplicacao.revision) {
+          delete proximas[cameraId];
+          mudou = true;
+        }
+      }
+      return mudou ? proximas : atuais;
+    });
+  }, [processors]);
+  const aplicacaoSelecionada = selecionada ? aplicacoes[selecionada.camera.id] : undefined;
+  const aplicacaoDemorada = Boolean(aplicacaoSelecionada && Date.now() - aplicacaoSelecionada.since > 30_000);
+  const estadoExibido = aplicacaoSelecionada
+    ? { label: aplicacaoDemorada ? 'Salvo, aplicação não confirmada' : 'Aplicando regras…', tone: aplicacaoDemorada ? 'warning' as const : 'checking' as const }
+    : healthError
+      ? { label: 'Estado da análise indisponível', tone: 'checking' as const }
+      : selecionada && !temPerimetro(selecionada.resumo)
+        ? { label: 'Sem regra de perímetro', tone: 'warning' as const }
+      : selectedState?.tone === 'ok' && selecionada && !selecionada.camera.alarmsEnabled
+        ? { label: 'Análise ativa · alertas desligados', tone: 'warning' as const }
+        : selectedState?.tone === 'ok'
+          ? { label: 'Análise ativa · alertas ligados', tone: 'ok' as const }
+          : { label: selectedState?.label ?? 'Verificando análise', tone: selectedState?.tone ?? 'checking' as const };
 
   // ── Sem nenhuma câmera ativa ────────────────────────────────────────────
   if (!lista.length) {
@@ -165,10 +197,9 @@ export default function PerimetroPage() {
         <div className="ops-card w-full max-w-lg overflow-hidden">
           <div className="border-b border-border px-8 py-6 text-center">
             <ShieldAlert className="mx-auto mb-3 h-8 w-8 text-[hsl(var(--muted-foreground))]" />
-            <h1 className="text-[17px] font-semibold">Nenhuma câmera ativa</h1>
+            <h1 className="text-[17px] font-semibold">Nenhuma câmera disponível para perímetro</h1>
             <p className="mx-auto mt-2 max-w-md text-[12px] leading-relaxed text-muted-foreground">
-              Nenhuma câmera ativa tem detecção de movimento ou objetos habilitada.
-              Ative a análise ou a gravação por movimento em uma câmera para configurar o perímetro.
+              Não há câmera ativa acessível para configurar. Cadastre ou ative uma câmera para começar.
             </p>
             {/* Sem câmera, o lugar da imagem ficava vazio e ninguém entendia o
                 que iria desenhar ali. O exemplo mostra o resultado antes de
@@ -197,7 +228,7 @@ export default function PerimetroPage() {
       <div className="page-hdr flex-wrap gap-3">
         <div>
           <p className="page-sub">
-            Desenhe a linha de travessia e as zonas sobre a imagem da câmera ·{' '}
+            Defina travessias e áreas de detecção sobre a imagem da câmera ·{' '}
             {totalComPerimetro} de {listaFiltrada.length} configurada(s)
           </p>
         </div>
@@ -222,16 +253,22 @@ export default function PerimetroPage() {
                 <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Configuração de perímetro</p>
                 <h1 className="truncate text-base font-semibold">{selecionada.camera.name}</h1>
               </div>
-              <span className={`rounded-full border px-2.5 py-1 text-[11px] ${selectedState?.attention || healthError ? 'border-amber-500/25 bg-amber-500/10 text-amber-400' : 'border-emerald-500/25 bg-emerald-500/10 text-emerald-400'}`}>{healthError ? 'Análise indisponível' : selectedState?.label}</span>
+              <span className={`rounded-full border px-2.5 py-1 text-[11px] ${estadoExibido.tone === 'ok' ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-400' : estadoExibido.tone === 'warning' ? 'border-amber-500/25 bg-amber-500/10 text-amber-400' : 'border-border bg-muted/40 text-muted-foreground'}`}>{estadoExibido.label}</span>
             </div>
             <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
               <span>{selecionada.resumo.linhas + selecionada.resumo.monitorar + selecionada.resumo.ignorar} {selecionada.resumo.linhas + selecionada.resumo.monitorar + selecionada.resumo.ignorar === 1 ? 'regra' : 'regras'}</span>
               <span>Gravação {({ continuous: 'contínua', motion: 'por movimento', object: 'por objeto', schedule: 'programada', manual: 'manual' })[selecionada.camera.recordingMode]}</span>
               <span>Alertas {selecionada.camera.alarmsEnabled ? 'ligados' : 'desligados'}</span>
+              {selecionada.resumo.linhas > 0 && <span>Objetos {selecionada.camera.aiObjectClasses.length ? selecionada.camera.aiObjectClasses.join(', ') : 'conforme licença'}</span>}
             </div>
+            {temPerimetro(selecionada.resumo) && <div className="mt-3 rounded-lg border border-border bg-background/45 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
+              {selecionada.resumo.linhas > 0 && <p><strong className="text-foreground">Travessia:</strong> usa objetos rastreados e o sentido definido em cada linha.</p>}
+              {(selecionada.resumo.monitorar > 0 || selecionada.resumo.ignorar > 0) && <p><strong className="text-foreground">Áreas:</strong> limitam onde movimento e travessias podem valer.</p>}
+              <p><strong className="text-foreground">Resposta:</strong> eventos são registrados; {selecionada.camera.alarmsEnabled ? 'esta câmera permite alarmes, sujeitos às regras e silenciamentos ativos.' : 'os alarmes desta câmera estão desligados.'}</p>
+            </div>}
             <div className="mt-4 flex flex-wrap gap-2">
-              <button className="btn btn-primary btn-sm" disabled={dirty || !selecionada.zonas.length} title={dirty ? 'Salve ou descarte o desenho antes de testar' : !selecionada.zonas.length ? 'Crie e salve uma regra para testar' : undefined} onClick={() => setTesting(!testing)}>{testing ? 'Voltar ao desenho' : 'Testar perímetro'}</button>
-              {userRole !== 'viewer' && <button className="btn btn-secondary btn-sm" onClick={() => guard(() => setEditing(true))}>Detecção e ações</button>}
+              <button className="btn btn-primary btn-sm" disabled={dirty || !selecionada.zonas.length} title={dirty ? 'Salve ou descarte o desenho antes de simular' : !selecionada.zonas.length ? 'Crie e salve uma regra para simular' : undefined} onClick={() => setTesting(!testing)}>{testing ? 'Voltar ao desenho' : 'Simular regras'}</button>
+              {userRole === 'admin' && <button className="btn btn-secondary btn-sm" onClick={() => guard(() => setEditing(true))}>Detecção e ações</button>}
             </div>
           </div>}
           {selecionada && (
@@ -239,13 +276,21 @@ export default function PerimetroPage() {
               key={selecionada.camera.id}
               cameraId={selecionada.camera.id}
               cameraName={selecionada.camera.name}
+              configurationRevision={revisoesPorCamera[selecionada.camera.id] ?? selecionada.camera.updatedAt}
               initialZones={selecionada.zonas}
-              onDirtyChange={setDirty}
-              readOnly={userRole === 'viewer' || testing}
+              onDirtyChange={(hasChanges, drawingNow) => { setDirty(hasChanges); setDrawingActive(drawingNow); }}
+              readOnly={userRole !== 'admin' || testing}
               testing={testing}
               ignoredMotion={processors[selecionada.camera.id]?.motion_detector?.perimeter_ignored_motion}
-              onSaved={(zones) => {
+              onSaved={(zones, configurationRevision, applyStatus) => {
                 setZonasPorCamera((prev) => ({ ...prev, [selecionada.camera.id]: zones }));
+                if (configurationRevision) {
+                  setRevisoesPorCamera((prev) => ({ ...prev, [selecionada.camera.id]: configurationRevision }));
+                  if (selecionada.camera.aiEnabled) {
+                    const falhou = applyStatus === 'failed' || applyStatus === 'disabled' || applyStatus === 'camera_disabled';
+                    setAplicacoes((prev) => ({ ...prev, [selecionada.camera.id]: { revision: configurationRevision, since: falhou ? Date.now() - 31_000 : Date.now() } }));
+                  }
+                }
                 setDirty(false);
                 if (saveThenLeave.current) { saveThenLeave.current = false; setPending(null); setTesting(false); pendingRef.current?.(); pendingRef.current = null; }
               }}
@@ -267,7 +312,7 @@ export default function PerimetroPage() {
             <div className="text-[10px] font-mono uppercase tracking-[0.18em] text-[hsl(var(--muted-foreground))]">Câmeras</div>
             <input aria-label="Buscar câmera" placeholder="Buscar câmera…" value={search} onChange={(e) => setSearch(e.target.value)} className="w-full rounded-lg border border-border bg-background px-3 py-2 text-xs" />
             <Select value={groupFilter} onValueChange={(value) => guard(() => setGroupFilter(value))}>
-              <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Todos os grupos" /></SelectTrigger>
+              <SelectTrigger aria-label="Filtrar por grupo" className="h-8 text-xs"><SelectValue placeholder="Todos os grupos" /></SelectTrigger>
               <SelectContent>
                 {groupFilters.map((group) => <SelectItem key={group} value={group} className="text-xs">{group === '__all__' ? 'Todos os grupos' : group}</SelectItem>)}
               </SelectContent>
@@ -282,6 +327,7 @@ export default function PerimetroPage() {
                   key={camera.id}
                   type="button"
                   onClick={() => guard(() => setSelectedCamId(camera.id))}
+                  aria-pressed={ativa}
                   title={camera.name}
                   className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left transition-colors ${
                     ativa
@@ -294,7 +340,7 @@ export default function PerimetroPage() {
                   />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-[12px] font-medium">{camera.name}</span>
-                    <span className="block text-[10px] text-muted-foreground">{healthError ? 'Análise não verificada' : camera.status === 'no_signal' ? 'Verificando vídeo' : perimeterState(camera.isOnline, resumo.linhas > 0, processors[camera.id], checked).label}</span>
+                    <span className="block text-[10px] text-muted-foreground">{!camera.aiEnabled ? 'Análise desligada' : healthError ? 'Análise não verificada' : camera.status === 'no_signal' ? 'Verificando vídeo' : perimeterState(camera.isOnline, resumo.linhas > 0, processors[camera.id], checked).label}</span>
                     <span className="block text-[10px] text-[hsl(var(--muted-foreground))]">
                       {temPerimetro(resumo) ? <ResumoInline resumo={resumo} /> : 'sem perímetro'}
                     </span>
@@ -319,7 +365,7 @@ export default function PerimetroPage() {
           <AlertDialogFooter>
             <button className="btn btn-secondary" onClick={() => { setPending(null); pendingRef.current = null; saveThenLeave.current = false; }}>Continuar editando</button>
             <button className="btn btn-secondary" onClick={() => { editorRef.current?.querySelector<HTMLButtonElement>('[data-perimeter-discard]')?.click(); setDirty(false); setPending(null); setTesting(false); pendingRef.current?.(); pendingRef.current = null; }}>Descartar</button>
-            <button className="btn btn-primary" onClick={() => { const button = editorRef.current?.querySelector<HTMLButtonElement>('[data-perimeter-save]'); if (button && !button.disabled) { saveThenLeave.current = true; button.click(); } else { setPending(null); pendingRef.current = null; } }}>Salvar e continuar</button>
+            <button className="btn btn-primary" disabled={drawingActive} title={drawingActive ? 'Conclua ou cancele o desenho atual' : undefined} onClick={() => { const button = editorRef.current?.querySelector<HTMLButtonElement>('[data-perimeter-save]'); if (button && !button.disabled) { saveThenLeave.current = true; button.click(); } }}>Salvar e continuar</button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

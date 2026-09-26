@@ -15,9 +15,8 @@ const { DEFAULT_RAW_RETENTION_HOURS, DEFAULT_HOURLY_RETENTION_DAYS, toNumber } =
 //
 // Modos (item 2.10):
 //   json  → só JSON (comportamento atual; DEFAULT sem DATABASE_URL).
-//   dual  → lê Postgres com fallback p/ o JSON legado; escreve só no PG; JSON
-//           read-only (janela de rollback). DEFAULT quando há DATABASE_URL.
-//   pg    → só Postgres (estado-alvo após reconciliação).
+//   dual  → modo transitório explícito; pode ressuscitar exclusões do legado.
+//   pg    → só Postgres (DEFAULT seguro após a reconciliação automática).
 
 function resolveConfig(env = process.env) {
   // SOMENTE a variável específica da Central. Aceitar o `DATABASE_URL` genérico era
@@ -34,7 +33,11 @@ function resolveConfig(env = process.env) {
     }
     mode = 'json';
   } else if (!['json', 'dual', 'pg'].includes(mode)) {
-    mode = 'dual';
+    mode = 'pg';
+  }
+  if (databaseUrl && mode === 'dual' && String(env.DRAC_CENTRAL_ALLOW_DUAL_READ || '').toLowerCase() !== 'true') {
+    console.warn('[central] modo dual recusado sem DRAC_CENTRAL_ALLOW_DUAL_READ=true — usando pg para preservar exclusões.');
+    mode = 'pg';
   }
   const dataFile = path.resolve(process.cwd(), env.DRAC_CENTRAL_DATA_FILE || './data/installations.json');
   const backupDir = String(env.DRAC_CENTRAL_BACKUP_DIR || '').trim()
@@ -83,6 +86,7 @@ function createDatastore({ legacy, config, store } = {}) {
   if (timeseries.enabled) timeseries.maintenanceIntervalMs = tsConfig.maintenanceIntervalMs;
 
   let initPromise = null;
+  let cachedPgDb = null;
   async function ensureInit() {
     if (!usesPg) return;
     if (!initPromise) initPromise = doInit();
@@ -113,18 +117,26 @@ function createDatastore({ legacy, config, store } = {}) {
   async function load() {
     if (!usesPg) return legacy.load();
     await ensureInit();
-    const pgDb = await pg.readAll();
-    if (cfg.mode === 'pg') return pgDb;
-    // dual: JSON legado (read-only) preenche o que o PG ainda não tem.
-    const legacyDb = legacy ? await legacy.load() : {};
-    return mergeDb(pgDb, legacyDb);
+    if (!cachedPgDb) {
+      const pgDb = await pg.readAll();
+      if (cfg.mode === 'pg') cachedPgDb = pgDb;
+      else {
+        // dual: JSON legado (read-only) preenche somente na carga inicial.
+        const legacyDb = legacy ? await legacy.load() : {};
+        cachedPgDb = mergeDb(pgDb, legacyDb);
+      }
+    }
+    return structuredClone(cachedPgDb);
   }
 
   async function save(db) {
     if (!usesPg) return legacy.save(db);
     await ensureInit();
-    // Escrita só no Postgres. O JSON legado NUNCA é reescrito (janela de rollback).
-    await pg.writeAll(db);
+    // Com lock singleton, somente este processo escreve o documento. Persistir
+    // o diff evita reler e regravar a frota inteira em cada heartbeat/GET.
+    if (cachedPgDb && typeof pg.writeDiff === 'function') await pg.writeDiff(cachedPgDb, db);
+    else await pg.writeAll(db);
+    cachedPgDb = structuredClone(db);
   }
 
   async function close() {

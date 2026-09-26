@@ -25,10 +25,16 @@ test('config: DATABASE_URL genérico não liga nem com STORE_MODE=dual pedido', 
   assert.equal(cfg.mode, 'json', 'sem a URL específica, o modo cai para json');
 });
 
-test('config: a variável ESPECÍFICA liga o modo dual (decisão explícita)', () => {
+test('config: a variável ESPECÍFICA usa pg por padrão seguro', () => {
   const cfg = resolveConfig({ DRAC_CENTRAL_DATABASE_URL: 'postgres://c:x@db:5432/central' });
-  assert.equal(cfg.mode, 'dual');
+  assert.equal(cfg.mode, 'pg');
   assert.equal(cfg.databaseUrl, 'postgres://c:x@db:5432/central');
+});
+
+test('config: dual exige opt-in transitório explícito', () => {
+  const base = { DRAC_CENTRAL_DATABASE_URL: 'postgres://c:x@db:5432/central', DRAC_CENTRAL_STORE_MODE: 'dual' };
+  assert.equal(resolveConfig(base).mode, 'pg');
+  assert.equal(resolveConfig({ ...base, DRAC_CENTRAL_ALLOW_DUAL_READ: 'true' }).mode, 'dual');
 });
 
 test('config: sem nenhuma URL o default segue json', () => {

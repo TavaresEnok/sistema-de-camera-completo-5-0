@@ -41,10 +41,18 @@ interface AuthState {
 
 const TOKEN_STORAGE_KEY = 'vms.auth.token';
 const USER_STORAGE_KEY = 'nexusguard.auth.user';
+const LOGOUT_INTENT_KEY = 'nexusguard.auth.logout-at';
 const API_URL = getApiBaseUrl();
 const SESSION_RETRY_DELAYS_MS = [2_000, 5_000, 10_000, 20_000, 30_000] as const;
 let sessionRetryTimer: ReturnType<typeof setTimeout> | null = null;
 let sessionRetryAttempt = 0;
+let authGeneration = 0;
+type RefreshSession = { accessToken: string; user: AuthUser };
+let refreshInFlight: Promise<RefreshSession> | null = null;
+
+function hasLogoutIntent() {
+  return typeof window !== 'undefined' && Boolean(window.localStorage.getItem(LOGOUT_INTENT_KEY));
+}
 
 function clearSessionRetry() {
   if (sessionRetryTimer) clearTimeout(sessionRetryTimer);
@@ -117,17 +125,28 @@ function persistUser(user: AuthUser | null) {
   }
 }
 
-async function refreshWebSession() {
-  const { data } = await axios.post<LoginResponse>(
-    `${API_URL}/auth/refresh`,
-    {},
-    {
-      withCredentials: true,
-      headers: { 'X-DRAC-Auth-Mode': 'cookie' },
-      timeout: 15_000,
-    },
-  );
-  return { accessToken: data.accessToken, user: mapUser(data.user) };
+async function refreshWebSession(): Promise<RefreshSession> {
+  if (refreshInFlight) return refreshInFlight;
+  const request = (): Promise<RefreshSession> => axios.post<LoginResponse>(
+      `${API_URL}/auth/refresh`,
+      {},
+      {
+        withCredentials: true,
+        headers: { 'X-DRAC-Auth-Mode': 'cookie' },
+        timeout: 15_000,
+      },
+    ).then(({ data }) => ({ accessToken: data.accessToken, user: mapUser(data.user) }));
+  // O cookie é compartilhado entre abas e rotaciona a cada refresh. O Web Lock
+  // garante que a segunda aba só leia o cookie depois de a primeira concluir.
+  const current = typeof navigator !== 'undefined' && navigator.locks
+    ? navigator.locks.request('drac-auth-refresh', { mode: 'exclusive' }, request).then((session) => session)
+    : request();
+  refreshInFlight = current;
+  try {
+    return await current;
+  } finally {
+    if (refreshInFlight === current) refreshInFlight = null;
+  }
 }
 
 function isAuthenticationRejection(error: unknown) {
@@ -143,11 +162,18 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   isLoading: false,
   isBootstrapped: false,
   bootstrap: async () => {
+    const generation = authGeneration;
     set({ isLoading: true });
     removeLegacyBrowserToken();
+    if (hasLogoutIntent()) {
+      persistUser(null);
+      set({ user: null, accessToken: null, isAuthenticated: false, isLoading: false, isBootstrapped: true });
+      return;
+    }
 
     try {
       const session = await refreshWebSession();
+      if (generation !== authGeneration || hasLogoutIntent()) return;
       persistUser(session.user);
       set({
         user: session.user,
@@ -187,6 +213,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
   revalidate: async () => {
+    if (hasLogoutIntent()) return;
+    const generation = authGeneration;
     // Revalidação periódica da sessão (a cada poucos minutos), executada com a UI
     // já MONTADA e visível. Diferente de `bootstrap`, este caminho NUNCA seta
     // `isLoading: true`: o `ProtectedRoute` renderiza <AppFallback/> (tela cheia
@@ -199,6 +227,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       // Rotacionar pelo cookie a cada revalidação renova a sessão ativa e entrega
       // um access token curto antes que o anterior expire.
       const session = await refreshWebSession();
+      if (generation !== authGeneration || hasLogoutIntent()) return;
       persistUser(session.user);
       set({
         user: session.user,
@@ -237,6 +266,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       );
       const user = mapUser(data.user);
 
+      authGeneration += 1;
+      if (typeof window !== 'undefined') window.localStorage.removeItem(LOGOUT_INTENT_KEY);
+
       persistUser(user);
       set({
         user,
@@ -259,9 +291,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
   logout: async () => {
+    authGeneration += 1;
     clearSessionRetry();
     const accessToken = get().accessToken;
     persistUser(null);
+    if (typeof window !== 'undefined') window.localStorage.setItem(LOGOUT_INTENT_KEY, new Date().toISOString());
     set({
       user: null,
       accessToken: null,
@@ -285,3 +319,19 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 // Migração defensiva: versões anteriores deixavam o JWT de oito horas em
 // localStorage. Ele é apagado assim que o bundle novo carrega.
 removeLegacyBrowserToken();
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (event) => {
+    if (event.key !== LOGOUT_INTENT_KEY || !event.newValue) return;
+    authGeneration += 1;
+    clearSessionRetry();
+    persistUser(null);
+    useAuthStore.setState({
+      user: null,
+      accessToken: null,
+      isAuthenticated: false,
+      isLoading: false,
+      isBootstrapped: true,
+    });
+  });
+}

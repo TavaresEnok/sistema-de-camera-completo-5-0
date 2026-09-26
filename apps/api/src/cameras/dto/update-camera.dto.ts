@@ -1,4 +1,4 @@
-import { ArrayMaxSize, IsArray, IsBoolean, IsIP, IsIn, IsInt, IsNumber, IsOptional, IsString, Max, MaxLength, Min, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsBoolean, IsIP, IsIn, IsInt, IsISO8601, IsNumber, IsOptional, IsString, Max, MaxLength, Min, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { DetectionZoneDto } from './detection-zone.dto';
 
@@ -9,6 +9,11 @@ const RTSP_TRANSPORTS = ['tcp', 'udp'] as const;
 const LIVE_PROTOCOLS = ['auto', 'flv', 'hls', 'llhls', 'webrtc', 'mjpeg'] as const;
 
 export class UpdateCameraDto {
+  /** Revisão lida pelo editor; impede sobrescrever outra edição silenciosamente. */
+  @IsOptional()
+  @IsISO8601()
+  expectedUpdatedAt?: string;
+
   @IsOptional()
   @IsString()
   name?: string;

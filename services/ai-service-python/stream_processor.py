@@ -1204,7 +1204,10 @@ class StreamProcessor:
                     # Agora o tempo é contado desde a última vez que o
                     # movimento foi VISTO: enquanto ele continua, o incidente é
                     # o mesmo. Ver detectors/agrupamento_de_evento.py.
-                    emitir, motivo = self._agrupador.decidir(event_type, current_time)
+                    # Cada travessia já passou por rastreamento, segmento,
+                    # direção e histerese no tripwire. Agrupar só por tipo
+                    # apagava a segunda pessoa/linha do mesmo quadro.
+                    emitir, motivo = (True, "travessia-confirmada") if event_type == "LINE_CROSSED" else self._agrupador.decidir(event_type, current_time)
                     if emitir:
                         ready.append(detection)
                         # Mantido porque outras partes leem este mapa; o dono da

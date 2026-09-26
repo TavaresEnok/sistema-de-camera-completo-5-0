@@ -36,3 +36,18 @@ test('Postgres usa advisory lock exclusivo de sessão', async () => {
   assert.match(source, /pg_advisory_unlock/);
   assert.match(source, /this\._instanceLockClient = client/);
 });
+
+test('JSON recupera lock órfão comprovado no mesmo host', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'drac-central-stale-lock-'));
+  const lockFile = path.join(directory, 'central.lock');
+  const lock = new JsonInstanceLock(lockFile);
+  try {
+    await fs.writeFile(lockFile, JSON.stringify({ pid: 99999999, hostname: os.hostname() }), { mode: 0o600 });
+    await lock.acquire();
+    const owner = JSON.parse(await fs.readFile(lockFile, 'utf8'));
+    assert.equal(owner.pid, process.pid);
+  } finally {
+    await lock.release();
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});

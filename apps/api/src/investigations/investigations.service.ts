@@ -127,33 +127,35 @@ export class InvestigationsService {
     user: AuthUser,
     filters?: { q?: string; status?: string; priority?: string; classification?: string; ownerUserId?: string },
   ) {
-    const where =
+    const q = filters?.q?.trim();
+    const where: Prisma.InvestigationWhereInput =
       user.role === UserRole.ADMIN || user.role === UserRole.SUPER_ADMIN
         ? {}
         : { createdByUserId: user.id };
+    if (filters?.status) where.status = filters.status;
+    if (q) {
+      where.OR = [
+        { title: { contains: q, mode: 'insensitive' } },
+        { summary: { contains: q, mode: 'insensitive' } },
+        { createdByUserName: { contains: q, mode: 'insensitive' } },
+      ];
+    }
 
     const items = await this.prisma.investigation.findMany({
       where,
       include: { items: { orderBy: { timestamp: 'asc' } } },
       orderBy: { updatedAt: 'desc' },
-      take: 50,
     });
 
     const mapped = items.map((item) => this.map(item));
-    const q = filters?.q?.trim().toLowerCase();
     const filtered = mapped.filter((item) => {
-      if (filters?.status && item.status !== filters.status) return false;
       if (filters?.priority && item.priority !== filters.priority) return false;
       if (filters?.classification && item.classification !== filters.classification) return false;
       if (filters?.ownerUserId && item.ownerUserId !== filters.ownerUserId) return false;
-      if (q) {
-        const haystack = `${item.title} ${item.summary ?? ''} ${item.ownerUserName ?? ''}`.toLowerCase();
-        if (!haystack.includes(q)) return false;
-      }
       return true;
     });
 
-    return { items: filtered };
+    return { items: filtered.slice(0, 50) };
   }
 
   async create(user: AuthUser, dto: CreateInvestigationDto) {

@@ -6,6 +6,7 @@ import { cameraPublicIdLabel } from '../lib/camera-list-metadata';
 
 export interface Camera {
   id: string;
+  updatedAt?: string;
   /** Chave operacional curta e única; o UUID em `id` continua sendo interno. */
   publicId?: number | null;
   code: string;
@@ -336,6 +337,7 @@ function mapCameraItems(
         ? null
         : Number.isFinite(Number(camera.longitude)) ? Number(camera.longitude) : null,
       rtmpIngestPath: camera.rtmpIngestPath ?? null,
+      updatedAt: typeof camera.updatedAt === 'string' ? camera.updatedAt : previous?.updatedAt,
       rtspPort: camera.rtspPort ?? 554,
       model: sourceMode === 'rtmp_push'
         ? `${formatCodec(camera.detectedVideoCodec ?? camera.streamVideoCodec)} / RTMP`

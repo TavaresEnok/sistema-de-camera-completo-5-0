@@ -13,8 +13,9 @@ export function testTrajectory(previous: Point | null, current: Point, zones: Zo
   if (zones.some((z) => z.kind === 'exclude' && inside(current, z.points))) return [];
   const includes = zones.filter((z) => z.kind === 'include');
   if (includes.length && !includes.some((z) => inside(current, z.points))) return [];
+  if (previous && zones.some((z) => z.kind === 'exclude' && inside(previous, z.points))) return [];
+  if (previous && includes.length && !includes.some((z) => inside(previous, z.points))) return [];
   return zones.filter((zone) => {
-    if (zone.kind === 'include') return inside(current, zone.points) && (!previous || !inside(previous, zone.points));
     if (zone.kind !== 'line' || !previous || zone.points.length !== 2) return false;
     const [a, b] = zone.points;
     const before = side(a, b, previous), after = side(a, b, current);

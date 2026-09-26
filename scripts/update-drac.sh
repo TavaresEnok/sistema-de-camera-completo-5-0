@@ -92,6 +92,8 @@ fi
 BEFORE_COMMIT=""
 ROLLBACK_NEEDED=false
 ROLLBACK_IN_PROGRESS=false
+WRITERS_STOPPED=false
+DATABASE_MAY_HAVE_CHANGED=false
 
 log() {
   printf '[DRAC update] %s\n' "$*"
@@ -163,7 +165,7 @@ rollback() {
 
   # Quiesce é obrigatório antes de tocar no banco. Não existe restore seguro
   # enquanto a API pode gravar usando o schema novo.
-  if ! "${COMPOSE[@]}" stop "${APP_SERVICES[@]}" >/dev/null; then
+  if [ "$WRITERS_STOPPED" = "true" ] && ! "${COMPOSE[@]}" stop "${APP_SERVICES[@]}" >/dev/null; then
     printf '[DRAC update][ERRO] Não foi possível parar os serviços da aplicação para rollback.\n' >&2
     rollback_status=1
     quiesced=false
@@ -183,7 +185,11 @@ rollback() {
     fi
   fi
 
-  if [ "$quiesced" = "true" ] && [ -s "$BACKUP_DIR/postgres-before.dump" ] && docker inspect "$POSTGRES_CONTAINER" >/dev/null 2>&1; then
+  if [ "$DATABASE_MAY_HAVE_CHANGED" = "true" ] && { [ "$quiesced" != "true" ] || [ ! -s "$BACKUP_DIR/postgres-before.dump" ]; }; then
+    printf '[DRAC update][ERRO] Banco alterado sem checkpoint utilizável; recuperação manual obrigatória.\n' >&2
+    rollback_status=1
+  fi
+  if [ "$DATABASE_MAY_HAVE_CHANGED" = "true" ] && [ "$quiesced" = "true" ] && [ -s "$BACKUP_DIR/postgres-before.dump" ]; then
     printf '[DRAC update] Restaurando banco do ponto de seguranca\n' >&2
     if ! docker cp "$BACKUP_DIR/postgres-before.dump" "$POSTGRES_CONTAINER:/tmp/drac-update-rollback.dump" >/dev/null; then
       printf '[DRAC update][ERRO] Não foi possível copiar o dump de rollback.\n' >&2
@@ -202,7 +208,7 @@ rollback() {
     fi
   fi
 
-  if [ "$rollback_status" -eq 0 ]; then
+  if [ "$rollback_status" -eq 0 ] && [ "$WRITERS_STOPPED" = "true" ]; then
     if ! "${COMPOSE[@]}" build "${APP_SERVICES[@]}" >/dev/null \
       || ! "${COMPOSE[@]}" up -d "${APP_SERVICES[@]}" >/dev/null \
       || ! wait_for_http GET http://127.0.0.1:3000/health/ready API \
@@ -291,8 +297,11 @@ preflight_recording_duplicates() {
 require_file "$ENV_FILE"
 mkdir -p "$BACKUP_DIR"
 
+if [ -n "$(git -C "$ROOT_DIR" status --porcelain --untracked-files=no)" ]; then
+  fail "Repositorio possui alteracoes versionadas locais. Faça commit/stash; rollback não pode descartá-las."
+fi
 if [ "${DRAC_UPDATE_ALLOW_DIRTY:-false}" != "true" ] && [ -n "$(git -C "$ROOT_DIR" status --porcelain)" ]; then
-  fail "Repositorio possui alteracoes locais. Faça commit/stash ou use DRAC_UPDATE_ALLOW_DIRTY=true conscientemente."
+  fail "Repositorio possui arquivos não versionados. Faça commit/stash ou use DRAC_UPDATE_ALLOW_DIRTY=true."
 fi
 
 log "Gerando ponto de seguranca em $BACKUP_DIR"
@@ -301,21 +310,6 @@ BEFORE_COMMIT="$(git -C "$ROOT_DIR" rev-parse HEAD)"
 printf '%s\n' "$BEFORE_COMMIT" > "$BACKUP_DIR/git-before.txt"
 git -C "$ROOT_DIR" status --short > "$BACKUP_DIR/git-status-before.txt"
 ensure_mediamtx_callback_token
-
-if "${COMPOSE[@]}" ps postgres >/dev/null 2>&1; then
-  log "Gerando backup rapido do banco"
-  set +e
-  docker exec "$POSTGRES_CONTAINER" sh -lc 'export PGPASSWORD="$POSTGRES_PASSWORD"; pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > "$BACKUP_DIR/postgres-before.dump"
-  dump_status=$?
-  set -e
-  if [ "$dump_status" -ne 0 ] || [ ! -s "$BACKUP_DIR/postgres-before.dump" ]; then
-    rm -f "$BACKUP_DIR/postgres-before.dump"
-    fail "Falha ao gerar backup do banco antes da atualizacao"
-  fi
-  docker cp "$BACKUP_DIR/postgres-before.dump" "$POSTGRES_CONTAINER:/tmp/drac-update-validate.dump" >/dev/null
-  docker exec "$POSTGRES_CONTAINER" pg_restore --list /tmp/drac-update-validate.dump >/dev/null
-  docker exec "$POSTGRES_CONTAINER" rm -f /tmp/drac-update-validate.dump
-fi
 
 log "Atualizando codigo pela branch $BRANCH"
 ROLLBACK_NEEDED=true
@@ -338,9 +332,18 @@ log "Verificando duplicatas históricas antes das migrações"
 preflight_recording_duplicates
 
 log "Parando aplicação antes das migrações"
+WRITERS_STOPPED=true
 "${COMPOSE[@]}" stop "${APP_SERVICES[@]}"
 
+log "Gerando checkpoint do banco com writers parados"
+docker exec "$POSTGRES_CONTAINER" sh -lc 'set -eu; export PGPASSWORD="$POSTGRES_PASSWORD"; pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > "$BACKUP_DIR/postgres-before.dump"
+[ -s "$BACKUP_DIR/postgres-before.dump" ] || fail "Checkpoint do banco ficou vazio"
+docker cp "$BACKUP_DIR/postgres-before.dump" "$POSTGRES_CONTAINER:/tmp/drac-update-validate.dump" >/dev/null
+docker exec "$POSTGRES_CONTAINER" pg_restore --list /tmp/drac-update-validate.dump >/dev/null
+docker exec "$POSTGRES_CONTAINER" rm -f /tmp/drac-update-validate.dump
+
 log "Aplicando migracoes com a aplicação quiescente"
+DATABASE_MAY_HAVE_CHANGED=true
 "${COMPOSE[@]}" run --rm --no-deps -w /app/apps/api api npx prisma migrate deploy
 
 log "Subindo aplicação atualizada"

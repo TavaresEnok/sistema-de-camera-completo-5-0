@@ -229,6 +229,9 @@ const TETO_MB = 256;
 // Alvo de duração. Abaixo disso a transferência não sai do slow-start e o que
 // se cronometra é a conexão, não a banda.
 const DURACAO_ALVO_MS = 2500;
+const megabitsPorSegundo = (bytes, ms) => (
+  ms > 0 ? Number(((bytes * 8) / (ms / 1000) / 1e6).toFixed(2)) : 0
+);
 
 async function measureS3Performance(config, { timeoutMs = 300000, sizeMb = null, latencySamples = 7 } = {}) {
   const explicito = Number(sizeMb) > 0;
@@ -339,8 +342,6 @@ async function measureS3Performance(config, { timeoutMs = 300000, sizeMb = null,
     const p95Ms = Math.round(percentil(amostras, 0.95));
     // Mb/s (megaBITS), a unidade em que banda é contratada. Devolver MB/s faria
     // o operador comparar com o "100 mega" do provedor e errar por 8x.
-    const mbps = (bytes, ms) => (ms > 0 ? Number(((bytes * 8) / (ms / 1000) / 1e6).toFixed(2)) : 0);
-
     return {
       ok: true,
       error: null,
@@ -353,8 +354,8 @@ async function measureS3Performance(config, { timeoutMs = 300000, sizeMb = null,
         amostras: amostras.length,
       },
       amostraDescidaMb: Number((bytesDescida / 1024 / 1024).toFixed(1)),
-      subida: { mbps: mbps(carga.length, msSubida), segundos: Number((msSubida / 1000).toFixed(2)) },
-      descida: { mbps: mbps(bytesDescida, msDescida), segundos: Number((msDescida / 1000).toFixed(2)) },
+      subida: { mbps: megabitsPorSegundo(carga.length, msSubida), segundos: Number((msSubida / 1000).toFixed(2)) },
+      descida: { mbps: megabitsPorSegundo(bytesDescida, msDescida), segundos: Number((msDescida / 1000).toFixed(2)) },
       falhas,
       fechaConexao,
       notas,
@@ -484,4 +485,4 @@ async function localizarServidor(ip, { timeoutMs = 5000 } = {}) {
   }
 }
 
-module.exports = { testS3Access, measureS3Performance, diagnosticarConexao, localizarServidor, __sign: sign, __joinKey: joinKey, __explain: explain };
+module.exports = { testS3Access, measureS3Performance, diagnosticarConexao, localizarServidor, __sign: sign, __joinKey: joinKey, __explain: explain, __megabitsPorSegundo: megabitsPorSegundo };

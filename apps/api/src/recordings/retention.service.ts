@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { ConflictException, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { existsSync, readFileSync, readdirSync, rmSync, rmdirSync, statSync, writeFileSync } from 'node:fs';
 import { statfs, readdir, rmdir } from 'node:fs/promises';
@@ -387,6 +387,15 @@ export class RetentionService implements OnModuleInit, OnModuleDestroy {
       for (const clip of protectedClips) recordingIds.add(clip.sourceRecordingId);
     }
     return { recordingIds, clipIds, eventIds };
+  }
+
+  async assertGlobalPurgeAllowed(): Promise<void> {
+    const protectedItems = await this.getProtectionSets();
+    if (protectedItems.recordingIds.size || protectedItems.clipIds.size) {
+      throw new ConflictException(
+        'Existem evidências protegidas por investigação ou retenção legal. Remova a proteção antes da exclusão global.',
+      );
+    }
   }
 
   /**

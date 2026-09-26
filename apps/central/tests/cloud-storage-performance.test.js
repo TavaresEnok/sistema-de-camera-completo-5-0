@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { measureS3Performance } = require('../src/s3-probe');
+const { measureS3Performance, __megabitsPorSegundo } = require('../src/s3-probe');
 
 // Medição de desempenho a partir da Central.
 //
@@ -56,7 +56,8 @@ test('mede em MEGABITS por segundo, não megabytes', async (t) => {
 
   const r = await measureS3Performance(config(srv.endpoint), { sizeMb: 1, latencySamples: 2 });
   assert.equal(r.ok, true);
-  assert.ok(r.subida.mbps > 20 && r.subida.mbps < 80, `esperado ~40 Mb/s, veio ${r.subida.mbps}`);
+  assert.ok(r.subida.mbps > 0, `medição deve ser positiva, veio ${r.subida.mbps}`);
+  assert.equal(__megabitsPorSegundo(1_000_000, 200), 40, '1 MB em 200 ms equivale a 40 Mb/s');
 });
 
 test('APAGA o objeto de teste — o teste não deixa lixo pago no bucket', async (t) => {

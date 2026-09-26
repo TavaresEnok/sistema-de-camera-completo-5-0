@@ -105,6 +105,8 @@ const TRUSTED_PROXIES = compileTrustedProxies(
 );
 const loginAttempts = new Map();
 const MAX_REQUEST_BODY_BYTES = Math.max(16 * 1024, Number(process.env.DRAC_CENTRAL_MAX_BODY_BYTES || 1024 * 1024));
+const REQUEST_BODY_TIMEOUT_MS = Math.max(1_000, Number(process.env.DRAC_CENTRAL_BODY_TIMEOUT_MS || 15_000));
+const requestBodyCache = new WeakMap();
 const REACTIVATION_ARCHIVE_DIR = path.resolve(process.cwd(), process.env.DRAC_CENTRAL_ARCHIVE_DIR || './data/reactivation-archives');
 const REACTIVATION_RETENTION_MONTHS = Math.max(1, Number(process.env.DRAC_CENTRAL_ARCHIVE_RETENTION_MONTHS || 24));
 const ALLOWED_CENTRAL_PERMISSIONS = new Set([TECHNICAL_DOCUMENTATION_PERMISSION]);
@@ -203,20 +205,39 @@ function empty(req, res, statusCode, extraHeaders = {}) {
 }
 
 async function readBody(req) {
-  const chunks = [];
-  let total = 0;
-  for await (const chunk of req) {
-    total += chunk.length;
-    if (total > MAX_REQUEST_BODY_BYTES) {
-      const error = new Error('Corpo da requisição excede o limite permitido.');
-      error.statusCode = 413;
+  if (requestBodyCache.has(req)) return requestBodyCache.get(req);
+  const reading = (async () => {
+    const chunks = [];
+    let total = 0;
+    for await (const chunk of req) {
+      total += chunk.length;
+      if (total > MAX_REQUEST_BODY_BYTES) {
+        const error = new Error('Corpo da requisição excede o limite permitido.');
+        error.statusCode = 413;
+        throw error;
+      }
+      chunks.push(chunk);
+    }
+    const raw = Buffer.concat(chunks).toString('utf8');
+    if (!raw.trim()) return {};
+    try { return JSON.parse(raw); } catch {
+      const error = new Error('Corpo JSON inválido.');
+      error.statusCode = 400;
       throw error;
     }
-    chunks.push(chunk);
-  }
-  const raw = Buffer.concat(chunks).toString('utf8');
-  if (!raw.trim()) return {};
-  return JSON.parse(raw);
+  })();
+  const timeout = new Promise((_, reject) => {
+    const timer = setTimeout(() => {
+      const error = new Error('Tempo limite excedido ao receber o corpo da requisição.');
+      error.statusCode = 408;
+      reject(error);
+    }, REQUEST_BODY_TIMEOUT_MS);
+    timer.unref();
+    reading.finally(() => clearTimeout(timer)).catch(() => undefined);
+  });
+  const result = Promise.race([reading, timeout]);
+  requestBodyCache.set(req, result);
+  return result;
 }
 
 function parseDbText(raw) {
@@ -3550,10 +3571,20 @@ function runRemoteInstall(job, conn, opts, command) {
     });
 }
 
-async function handleRemoteInstall(req, res, db, actor, installationId) {
+async function handleRemoteInstall(req, res, installationId) {
+  // Parsing e SSH não devem ocupar o lock. Toda mutação usa snapshot fresco.
+  const body = await readBody(req);
+  return runSerialized(async () => {
+    const db = await loadDb();
+    const actor = getAuthenticatedUser(req, db);
+    if (!actor) return json(req, res, 401, { error: 'unauthorized' });
+    return prepareRemoteInstall(req, res, db, actor, installationId, body);
+  });
+}
+
+async function prepareRemoteInstall(req, res, db, actor, installationId, body) {
   const item = db.installations[installationId];
   if (!item) return json(req, res, 404, { error: 'installation_not_found' });
-  const body = await readBody(req);
   const host = String(body.host || item.provisionedServerAddress || '').trim();
   const port = Number(body.port || 22);
   const username = String(body.username || 'root').trim();
@@ -3607,17 +3638,15 @@ async function handleRemoteInstall(req, res, db, actor, installationId) {
   const hostKeyId = `${host}:${port}`;
   const knownHostKey = (item.sshHostKeys || {})[hostKeyId] || null;
   const onLearnHostKey = (fingerprint) => {
-    void (async () => {
-      try {
-        const fresh = await loadDb();
-        const target = fresh.installations[installationId];
-        if (!target) return;
-        target.sshHostKeys = { ...(target.sshHostKeys || {}), [hostKeyId]: fingerprint };
-        await saveDb(fresh);
-      } catch {
-        /* aprender a chave é best-effort: não deve derrubar a instalação em curso */
-      }
-    })();
+    void runSerialized(async () => {
+      const fresh = await loadDb();
+      const target = fresh.installations[installationId];
+      if (!target) return;
+      target.sshHostKeys = { ...(target.sshHostKeys || {}), [hostKeyId]: fingerprint };
+      await saveDb(fresh);
+    }).catch(() => {
+      /* aprender a chave é best-effort: não deve derrubar a instalação em curso */
+    });
   };
 
   // Dispara em background; o cliente acompanha por GET /remote-installs/:id.
@@ -3799,6 +3828,20 @@ async function route(req, res) {
         build: buildStamp(),
       });
     }
+    if (req.method === 'GET' && url.pathname === '/api/ready') {
+      try {
+        await Promise.race([
+          getDatastore().load(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('datastore_timeout')), 3_000)),
+        ]);
+        if (_dbGateActiveSince && Date.now() - _dbGateActiveSince > 30_000) {
+          return json(req, res, 503, { status: 'not_ready', datastore: true, queueBlockedMs: Date.now() - _dbGateActiveSince });
+        }
+        return json(req, res, 200, { status: 'ready', datastore: true, queuedMutations: _dbGatePending });
+      } catch {
+        return json(req, res, 503, { status: 'not_ready', datastore: false });
+      }
+    }
     if (req.method === 'GET' && url.pathname === '/favicon.ico') {
       return empty(req, res, 204);
     }
@@ -3884,6 +3927,10 @@ async function route(req, res) {
       return handleQuickInstaller(req, res, decodeURIComponent(installerMatch[1]));
     }
     if (url.pathname.startsWith('/api/admin/')) {
+      const remoteInstallRequest = url.pathname.match(/^\/api\/admin\/installations\/([^/]+)\/remote-install$/);
+      if (req.method === 'POST' && remoteInstallRequest) {
+        return handleRemoteInstall(req, res, decodeURIComponent(remoteInstallRequest[1]));
+      }
       const db = await loadDb();
       const actor = getAuthenticatedUser(req, db);
       if (!actor) {
@@ -4164,10 +4211,6 @@ async function route(req, res) {
       }
 
       // ── Instalação remota via SSH ──────────────────────────────────────────
-      const remoteInstallMatch = url.pathname.match(/^\/api\/admin\/installations\/([^/]+)\/remote-install$/);
-      if (req.method === 'POST' && remoteInstallMatch) {
-        return handleRemoteInstall(req, res, db, actor, decodeURIComponent(remoteInstallMatch[1]));
-      }
       const remoteInstallStatusMatch = url.pathname.match(/^\/api\/admin\/remote-installs\/([^/]+)$/);
       if (req.method === 'GET' && remoteInstallStatusMatch) {
         await saveDb(db);
@@ -4407,8 +4450,19 @@ process.on('unhandledRejection', (reason) => {
 // baixo tráfego e o Node é single-thread, serializar essas rotas elimina a
 // corrida sem custo perceptível. Estáticos (não tocam o DB) seguem em paralelo.
 let _dbGate = Promise.resolve();
+let _dbGatePending = 0;
+let _dbGateActiveSince = 0;
+const MAX_DB_GATE_PENDING = Math.max(10, Number(process.env.DRAC_CENTRAL_MAX_DB_QUEUE || 500));
 function runSerialized(task) {
-  const p = _dbGate.then(task, task);
+  _dbGatePending += 1;
+  const wrapped = async () => {
+    _dbGateActiveSince = Date.now();
+    try { return await task(); } finally {
+      _dbGatePending -= 1;
+      _dbGateActiveSince = 0;
+    }
+  };
+  const p = _dbGate.then(wrapped, wrapped);
   _dbGate = p.then(() => {}, () => {});
   return p;
 }
@@ -4532,13 +4586,23 @@ function startServer() {
   const rotaLonga = /^\/api\/admin\/installations\/[^/]+\/(cloud-storage\/performance|remote-install)/.test(url);
   const touchesDb =
     !rotaLonga
-    && ((url.startsWith('/api/') && url !== '/api/health') || url.startsWith('/install/'));
+    && ((url.startsWith('/api/') && !['/api/health', '/api/ready'].includes(url)) || url.startsWith('/install/'));
   const run = () => Promise.resolve(route(req, res));
-  const started = touchesDb ? runSerialized(run) : run();
+  const hasBody = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method || '');
+  const prepared = touchesDb && hasBody ? readBody(req) : Promise.resolve();
+  const started = prepared.then(() => {
+    if (touchesDb && _dbGatePending >= MAX_DB_GATE_PENDING) {
+      return json(req, res, 503, { error: 'central_busy', queuedMutations: _dbGatePending });
+    }
+    return touchesDb ? runSerialized(run) : run();
+  });
   started.catch((error) => {
     console.error('[central] erro não tratado na rota:', error && error.stack ? error.stack : error);
     try {
-      if (!res.headersSent) json(req, res, 500, { error: 'internal_error' });
+      const statusCode = Number(error?.statusCode) || 500;
+      if (!res.headersSent) json(req, res, statusCode, {
+        error: statusCode === 408 ? 'request_timeout' : statusCode === 413 ? 'payload_too_large' : statusCode === 400 ? 'invalid_json' : 'internal_error',
+      });
       else res.end();
     } catch { /* resposta já encerrada */ }
   });

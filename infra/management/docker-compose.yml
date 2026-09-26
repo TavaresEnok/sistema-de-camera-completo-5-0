@@ -51,7 +51,7 @@ services:
       DRAC_CENTRAL_ARCHIVE_DIR: /app/data/reactivation-archives
       DRAC_CENTRAL_ARCHIVE_RETENTION_MONTHS: ${DRAC_CENTRAL_ARCHIVE_RETENTION_MONTHS:-24}
       DRAC_CENTRAL_DATABASE_URL: postgres://${CENTRAL_POSTGRES_USER:-drac_central}:${CENTRAL_POSTGRES_PASSWORD}@central-postgres:5432/${CENTRAL_POSTGRES_DB:-drac_central}
-      DRAC_CENTRAL_STORE_MODE: ${DRAC_CENTRAL_STORE_MODE:-dual}
+      DRAC_CENTRAL_STORE_MODE: ${DRAC_CENTRAL_STORE_MODE:-pg}
       DRAC_CENTRAL_ENROLLMENT_TOKEN: ${DRAC_CENTRAL_ENROLLMENT_TOKEN:?DRAC_CENTRAL_ENROLLMENT_TOKEN is required}
       DRAC_CENTRAL_SECRET_KEY: ${DRAC_CENTRAL_SECRET_KEY:?DRAC_CENTRAL_SECRET_KEY is required}
       DRAC_CENTRAL_ARCHIVE_KEY: ${DRAC_CENTRAL_ARCHIVE_KEY:?DRAC_CENTRAL_ARCHIVE_KEY is required}
@@ -91,7 +91,7 @@ services:
       central-postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9765/api/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9765/api/ready').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 5s
       retries: 5

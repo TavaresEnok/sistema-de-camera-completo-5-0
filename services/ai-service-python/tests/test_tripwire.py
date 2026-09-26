@@ -134,6 +134,19 @@ class TravessiaTests(unittest.TestCase):
         self.assertFalse(d.ativo, "polígono virou linha")
         self.assertEqual(d.avaliar([Deteccao(caixa_em(0.7, 0.5))], L, A), [])
 
+    def test_area_ignorada_tambem_bloqueia_travessia(self):
+        ignorar_tudo = {"id": "z", "kind": "exclude", "points": [[0, 0], [1, 0], [1, 1], [0, 1]]}
+        d = DetectorDeTravessia([*LINHA_VERTICAL, ignorar_tudo])
+        d.avaliar([Deteccao(caixa_em(0.3, 0.5))], L, A, 1000.0)
+        self.assertEqual(d.avaliar([Deteccao(caixa_em(0.7, 0.5))], L, A, 1000.5), [])
+
+    def test_tocar_a_linha_e_recuar_nao_e_travessia(self):
+        d = DetectorDeTravessia(LINHA_VERTICAL)
+        resultados = []
+        for i, x in enumerate((0.3, 0.5, 0.3)):
+            resultados.extend(d.avaliar([Deteccao(caixa_em(x, 0.5))], L, A, 1000.0 + i * 0.5))
+        self.assertEqual(resultados, [])
+
     def test_linhas_invalidas_sao_descartadas(self):
         ruins = [
             {"id": "a", "kind": "line", "points": []},
@@ -157,6 +170,7 @@ class TravessiaTests(unittest.TestCase):
         for i in range(400):
             d.avaliar([Deteccao(caixa_em(0.3, 0.5), track_id=f"t{i}")], L, A, agora)
         self.assertLessEqual(len(d._rastros), 128)
+        self.assertLessEqual(len(d._lados), 128 * len(d.linhas))
 
     def test_trocar_zonas_em_tempo_de_execucao(self):
         d = DetectorDeTravessia(LINHA_VERTICAL)

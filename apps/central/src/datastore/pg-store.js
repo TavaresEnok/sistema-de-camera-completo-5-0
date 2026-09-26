@@ -3,6 +3,7 @@
 const { TABLES, SCHEMA_SQL } = require('./schema');
 const mappers = require('./mappers');
 const { reconcile, reconcileCount } = require('./dual-read');
+const { isDeepStrictEqual } = require('node:util');
 
 // Store Postgres da Central. Expõe a MESMA superfície do loadDb/saveDb legado
 // (documento inteiro no formato { installations, sessions, users, auditEvents }),
@@ -165,7 +166,8 @@ class PgStore {
        VALUES ($1,$2,$3,$4,$5,$6,$7)
        ON CONFLICT (id) DO UPDATE SET
          license_key=$2, customer_name=$3, license_status=$4,
-         last_heartbeat_at=$5, updated_at=$6, payload=$7`,
+         last_heartbeat_at=$5, updated_at=$6, payload=$7
+       WHERE central_installations.payload IS DISTINCT FROM EXCLUDED.payload`,
       [r.id, r.license_key, r.customer_name, r.license_status, r.last_heartbeat_at, r.updated_at, r.payload],
     );
   }
@@ -177,7 +179,8 @@ class PgStore {
          (email, name, password_hash, created_at, created_by, payload)
        VALUES ($1,$2,$3,$4,$5,$6)
        ON CONFLICT (email) DO UPDATE SET
-         name=$2, password_hash=$3, created_at=$4, created_by=$5, payload=$6`,
+         name=$2, password_hash=$3, created_at=$4, created_by=$5, payload=$6
+       WHERE central_users.payload IS DISTINCT FROM EXCLUDED.payload`,
       [r.email, r.name, r.password_hash, r.created_at, r.created_by, r.payload],
     );
   }
@@ -189,7 +192,8 @@ class PgStore {
          (token_hash, email, created_at, last_seen_at, expires_at, payload)
        VALUES ($1,$2,$3,$4,$5,$6)
        ON CONFLICT (token_hash) DO UPDATE SET
-         email=$2, created_at=$3, last_seen_at=$4, expires_at=$5, payload=$6`,
+         email=$2, created_at=$3, last_seen_at=$4, expires_at=$5, payload=$6
+       WHERE central_sessions.payload IS DISTINCT FROM EXCLUDED.payload`,
       [r.token_hash, r.email, r.created_at, r.last_seen_at, r.expires_at, r.payload],
     );
   }
@@ -201,7 +205,8 @@ class PgStore {
          (id, at, type, actor, result, installation_id, payload)
        VALUES ($1,$2,$3,$4,$5,$6,$7)
        ON CONFLICT (id) DO UPDATE SET
-         at=$2, type=$3, actor=$4, result=$5, installation_id=$6, payload=$7`,
+         at=$2, type=$3, actor=$4, result=$5, installation_id=$6, payload=$7
+       WHERE central_audit_events.payload IS DISTINCT FROM EXCLUDED.payload`,
       [r.id, r.at, r.type, r.actor, r.result, r.installation_id, r.payload],
     );
   }
@@ -251,6 +256,55 @@ class PgStore {
         );
       }
 
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  /** Persiste somente entidades alteradas; a Central possui lock singleton. */
+  async writeDiff(previousDb, nextDb) {
+    const previous = previousDb || {};
+    const next = nextDb || {};
+    const pg = this._pg();
+    const client = await pg.connect();
+    const changedEntries = (before = {}, after = {}) => Object.entries(after)
+      .filter(([key, value]) => !isDeepStrictEqual(before[key], value));
+    const removedKeys = (before = {}, after = {}) => Object.keys(before).filter((key) => !(key in after));
+    try {
+      await client.query('BEGIN');
+      for (const [id, value] of changedEntries(previous.installations, next.installations)) {
+        await this._upsertInstallation(client, id, value);
+      }
+      const removedInstallations = removedKeys(previous.installations, next.installations);
+      if (removedInstallations.length) await client.query(`DELETE FROM ${TABLES.installations} WHERE id = ANY($1::text[])`, [removedInstallations]);
+
+      for (const [email, value] of changedEntries(previous.users, next.users)) await this._upsertUser(client, email, value);
+      const removedUsers = removedKeys(previous.users, next.users);
+      if (removedUsers.length) await client.query(`DELETE FROM ${TABLES.users} WHERE email = ANY($1::text[])`, [removedUsers]);
+
+      for (const [token, value] of changedEntries(previous.sessions, next.sessions)) await this._upsertSession(client, token, value);
+      const removedSessions = removedKeys(previous.sessions, next.sessions);
+      if (removedSessions.length) await client.query(`DELETE FROM ${TABLES.sessions} WHERE token_hash = ANY($1::text[])`, [removedSessions]);
+
+      const beforeAudit = new Map((previous.auditEvents || []).filter((item) => item?.id != null).map((item) => [String(item.id), item]));
+      const afterAudit = new Map((next.auditEvents || []).filter((item) => item?.id != null).map((item) => [String(item.id), item]));
+      for (const [id, event] of afterAudit) if (!isDeepStrictEqual(beforeAudit.get(id), event)) await this._upsertAuditEvent(client, event);
+      const removedAudit = [...beforeAudit.keys()].filter((id) => !afterAudit.has(id));
+      if (removedAudit.length) await client.query(`DELETE FROM ${TABLES.auditEvents} WHERE id = ANY($1::text[])`, [removedAudit]);
+
+      for (const key of ['release', 'releaseHistorico']) {
+        if (next[key] !== undefined && !isDeepStrictEqual(previous[key], next[key])) {
+          await client.query(
+            `INSERT INTO ${TABLES.meta} (key, value) VALUES ($1,$2)
+             ON CONFLICT (key) DO UPDATE SET value=$2`,
+            [key, JSON.stringify(next[key] ?? (key === 'releaseHistorico' ? [] : null))],
+          );
+        }
+      }
       await client.query('COMMIT');
     } catch (error) {
       await client.query('ROLLBACK').catch(() => undefined);

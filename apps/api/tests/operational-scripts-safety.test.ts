@@ -41,7 +41,7 @@ test('update aguarda API e Web iniciarem antes de considerar o deploy quebrado',
   assert.match(updateScript, /wait_for_http\(\)/);
   assert.match(updateScript, /for attempt in \$\(seq 1 "\$attempts"\)/);
   assert.match(updateScript, /wait_for_http GET http:\/\/127\.0\.0\.1:3000\/health\/ready API/);
-  assert.match(updateScript, /wait_for_http HEAD http:\/\/127\.0\.0\.1:5173\/ Web/);
+  assert.ok(updateScript.includes('wait_for_http HEAD "$(web_health_url)" Web'));
 });
 
 test('update não confunde readiness em Atenção com falha que exige rollback', () => {

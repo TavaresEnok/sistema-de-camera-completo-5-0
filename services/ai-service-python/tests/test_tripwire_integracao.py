@@ -66,6 +66,10 @@ class TripwireIntegracaoTests(unittest.TestCase):
                       "travessia no sentido permitido viraria alarme")
         self.assertIn('event_type="LINE_CROSSED"', bloco)
 
+    def test_travessias_independentes_nao_sao_agrupadas_so_pelo_tipo(self):
+        self.assertIn('if event_type == "LINE_CROSSED"', self.texto)
+        self.assertIn('"travessia-confirmada"', self.texto)
+
     def test_o_evento_carrega_o_que_o_operador_precisa(self):
         i = self.texto.index("self.tripwire.avaliar(")
         bloco = self.texto[i:i + 1500]

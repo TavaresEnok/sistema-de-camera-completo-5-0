@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException, Header, Query
+import asyncio
 import os
 import logging
 import threading
@@ -127,6 +128,7 @@ def health_check():
                 "last_seen": processor.last_seen,
                 "last_error": processor.last_error,
                 "running": processor.running,
+                "configuration_revision": str(processor.source_info.get("configurationRevision") or ""),
                 "live_snapshot_count": len(processor.get_live_snapshot(max_age_ms=15000, limit=100)),
                 "capture_frames_enqueued": processor.capture_frames_enqueued,
                 "capture_frames_dropped": processor.capture_frames_dropped,
@@ -215,7 +217,7 @@ async def stop_analysis(camera_id: str, x_service_token: Optional[str] = Header(
             raise HTTPException(status_code=404, detail="Processador não encontrado")
         processor = processors.pop(camera_id)
 
-    processor.stop()
+    await asyncio.to_thread(processor.stop)
 
     logger.info("[%s] análise parada", camera_id)
     return {"status": "stopped", "camera_id": camera_id}
@@ -306,10 +308,8 @@ async def stop_all(x_service_token: Optional[str] = Header(default=None)):
         draining = list(processors.items())
         processors.clear()
 
-    stopped = []
-    for camera_id, processor in draining:
-        processor.stop()
-        stopped.append(camera_id)
+    await asyncio.gather(*(asyncio.to_thread(processor.stop) for _, processor in draining))
+    stopped = [camera_id for camera_id, _ in draining]
     logger.info("análise parada para %d câmera(s)", len(stopped))
     return {"status": "stopped", "camera_ids": stopped}
 
@@ -317,7 +317,7 @@ async def stop_all(x_service_token: Optional[str] = Header(default=None)):
 @app.post("/models/reset")
 async def reset_models(x_service_token: Optional[str] = Header(default=None)):
     validate_internal_token(x_service_token)
-    registry.reset()
+    await asyncio.to_thread(registry.reset)
     return {"status": "reset"}
 
 
@@ -325,7 +325,7 @@ async def reset_models(x_service_token: Optional[str] = Header(default=None)):
 async def load_model(request: ModeRequest, x_service_token: Optional[str] = Header(default=None)):
     validate_internal_token(x_service_token)
     try:
-        registry.ensure_mode(request.analysis_type)
+        await asyncio.to_thread(registry.ensure_mode, request.analysis_type)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
     return {"status": "loaded", "model_registry": registry.status()}

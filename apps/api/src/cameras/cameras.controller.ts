@@ -977,6 +977,7 @@ export class CamerasController {
     await this.commercialPolicy.assertRetentionQuota(dto.retentionDays);
     const wasEnabled = (await this.camerasService.getCameraOrThrow(id)).enabled !== false;
     const camera = await this.camerasService.update(id, dto);
+    let aiApplyStatus: string | undefined;
     if (dto.enabled === false && wasEnabled) {
       // Desativada: derruba gravação e live AGORA (sem esperar closeAfter/watchdog).
       await this.recordingManager.stop(id).catch(() => undefined);
@@ -1000,16 +1001,16 @@ export class CamerasController {
       // máscaras, classes e política de confirmação. Feito AQUI (e
       // não em CamerasService) porque importar os serviços de IA lá fecha o
       // ciclo de módulos Cameras→Ai→Cameras e o Nest não sobe.
-      void (async () => {
-        try {
-          const aiService = this.moduleRef.get(AiService, { strict: false });
-          await aiService.stopAnalysis(id).catch(() => undefined);
-          const aiManager = this.moduleRef.get(AiManagerService, { strict: false });
-          await aiManager.startCamera(id, { allowCameraTrigger: true }).catch(() => undefined);
-        } catch {
-          // IA indisponível: as zonas passam a valer no próximo start da análise.
-        }
-      })();
+      try {
+        const aiService = this.moduleRef.get(AiService, { strict: false });
+        await aiService.stopAnalysis(id).catch(() => undefined);
+        const aiManager = this.moduleRef.get(AiManagerService, { strict: false });
+        const result = await aiManager.startCamera(id, { allowCameraTrigger: true });
+        aiApplyStatus = String((result as { status?: string })?.status ?? 'requested');
+      } catch {
+        // A configuração permanece salva e a tela diferencia isso de aplicada.
+        aiApplyStatus = 'failed';
+      }
     }
     await this.auditService.log(
       user.id,
@@ -1019,7 +1020,7 @@ export class CamerasController {
       { name: camera.name, siteId: camera.siteId, areaId: camera.areaId, groupId: camera.groupId, enabled: (camera as { enabled?: boolean }).enabled },
       req,
     );
-    return camera;
+    return aiApplyStatus ? { ...camera, aiApplyStatus } : camera;
   }
 
   @Roles(UserRole.ADMIN)

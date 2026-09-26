@@ -1,5 +1,44 @@
 import { BadRequestException } from '@nestjs/common';
 
+type Ponto = [number, number];
+
+function orientacao(a: Ponto, b: Ponto, c: Ponto) {
+  return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+}
+
+function segmentosSeCruzam(a: Ponto, b: Ponto, c: Ponto, d: Ponto) {
+  const o1 = orientacao(a, b, c);
+  const o2 = orientacao(a, b, d);
+  const o3 = orientacao(c, d, a);
+  const o4 = orientacao(c, d, b);
+  return ((o1 > 0 && o2 < 0) || (o1 < 0 && o2 > 0))
+    && ((o3 > 0 && o4 < 0) || (o3 < 0 && o4 > 0));
+}
+
+function validarPoligono(nome: string, pontos: Ponto[]) {
+  const chaves = pontos.map(([x, y]) => `${x}:${y}`);
+  if (new Set(chaves).size !== pontos.length) {
+    throw new BadRequestException(`A área "${nome}" possui pontos repetidos.`);
+  }
+  const areaDobrada = Math.abs(pontos.reduce((soma, ponto, indice) => {
+    const proximo = pontos[(indice + 1) % pontos.length];
+    return soma + ponto[0] * proximo[1] - proximo[0] * ponto[1];
+  }, 0));
+  if (areaDobrada < 0.00002) {
+    throw new BadRequestException(`A área "${nome}" é pequena demais ou não possui interior.`);
+  }
+  for (let i = 0; i < pontos.length; i += 1) {
+    const a = pontos[i]; const b = pontos[(i + 1) % pontos.length];
+    for (let j = i + 1; j < pontos.length; j += 1) {
+      if (j === i || j === i + 1 || (i === 0 && j === pontos.length - 1)) continue;
+      const c = pontos[j]; const d = pontos[(j + 1) % pontos.length];
+      if (segmentosSeCruzam(a, b, c, d)) {
+        throw new BadRequestException(`A área "${nome}" cruza sobre ela mesma.`);
+      }
+    }
+  }
+}
+
 /**
  * Validação das zonas por TIPO — o que o DTO sozinho não consegue exigir.
  *
@@ -53,6 +92,9 @@ export function validarZonasDeDeteccao(zonas: unknown): void {
           `"${nome}" tem ponto fora do quadro (${par?.[0]}, ${par?.[1]}). As coordenadas são normalizadas de 0 a 1.`,
         );
       }
+    }
+    if (zona?.kind !== 'line') {
+      validarPoligono(nome, pontos.map((par: unknown[]) => [Number(par[0]), Number(par[1])] as Ponto));
     }
   }
 }

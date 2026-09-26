@@ -32,7 +32,7 @@ export class AiController {
     private readonly commercialPolicy: CommercialPolicyService,
   ) {}
 
-  @Roles(UserRole.OPERATOR)
+  @Roles(UserRole.VIEWER)
   @Get('health')
   async getHealth(@CurrentUser() user: AuthUser) {
     const [health, accessibleCameraIds] = await Promise.all([

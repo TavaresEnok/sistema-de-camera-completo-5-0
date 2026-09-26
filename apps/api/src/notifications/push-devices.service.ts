@@ -1,12 +1,16 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { UserRole } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
+import { AccessControlService } from '../access-control/access-control.service';
 
 @Injectable()
 export class PushDevicesService {
   private readonly logger = new Logger(PushDevicesService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly accessControl: AccessControlService,
+  ) {}
 
   /** Registra (ou revalida) um token de push para o usuário. Idempotente. */
   async register(userId: string, token: string, platform?: string, deviceName?: string) {
@@ -47,7 +51,7 @@ export class PushDevicesService {
     }
     const camera = await this.prisma.camera.findUnique({
       where: { id: cameraId },
-      select: { groupId: true },
+      select: { groupId: true, ownerUserId: true },
     });
 
     const [privileged, perms] = await Promise.all([
@@ -63,9 +67,19 @@ export class PushDevicesService {
       }),
     ]);
 
-    const userIds = Array.from(
+    if (camera?.ownerUserId) privileged.push({ id: camera.ownerUserId });
+    const candidateIds = Array.from(
       new Set([...privileged.map((u) => u.id), ...perms.map((p) => p.userId)]),
     );
+    const users = await this.prisma.user.findMany({
+      where: { id: { in: candidateIds }, isActive: true },
+      select: { id: true, username: true, email: true, name: true, role: true },
+    });
+    const decisions = await Promise.all(users.map(async (user) => ({
+      id: user.id,
+      allowed: await this.accessControl.canViewCamera({ ...user, email: user.email ?? user.username }, cameraId),
+    })));
+    const userIds = decisions.filter((item) => item.allowed).map((item) => item.id);
     // Remove quem silenciou as notificações DESTA câmera (mute por usuário).
     const muted = await this.prisma.notificationMute.findMany({
       where: { cameraId, userId: { in: userIds } },

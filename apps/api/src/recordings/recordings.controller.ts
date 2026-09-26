@@ -236,6 +236,7 @@ export class RecordingsController {
   @RequirePermission('serverConfig')
   @Delete('recordings')
   async deleteAllRecordings(@CurrentUser() user: AuthUser, @Req() req: Request) {
+    await this.retentionService.assertGlobalPurgeAllowed();
     await this.recordingManager.stopAll();
     const result = await this.recordingsService.deleteAllRecordings();
     await this.auditService.log(user.id, 'recording.delete_all', 'Recording', null, result, req);

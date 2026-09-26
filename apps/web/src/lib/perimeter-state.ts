@@ -1,4 +1,5 @@
 export type PerimeterProcessor = {
+  configuration_revision?: string;
   running?: boolean;
   last_seen?: number;
   readiness?: { ready?: boolean; frame_age_seconds?: number | null };
@@ -7,13 +8,13 @@ export type PerimeterProcessor = {
 };
 
 export function perimeterState(online: boolean, hasLines: boolean, processor: PerimeterProcessor | undefined, checked: boolean, now = Date.now()) {
-  if (!online) return { label: 'Câmera desconectada', attention: true };
-  if (!checked) return { label: 'Verificando análise', attention: false };
-  if (!processor) return { label: 'Aguardando ativação da análise', attention: true };
+  if (!online) return { label: 'Câmera desconectada', attention: true, tone: 'warning' as const };
+  if (!checked) return { label: 'Verificando análise', attention: false, tone: 'checking' as const };
+  if (!processor) return { label: 'Aguardando ativação da análise', attention: true, tone: 'warning' as const };
   const recent = typeof processor.last_seen === 'number' && now / 1000 - processor.last_seen <= 20;
-  if (!processor.running || !recent || processor.readiness?.ready === false) return { label: 'Análise interrompida', attention: true };
-  if (hasLines && processor.inference?.status !== 'ok') return { label: 'Travessia sem análise confirmada', attention: true };
-  return { label: 'Monitorando', attention: false };
+  if (!processor.running || !recent || processor.readiness?.ready === false) return { label: 'Análise interrompida', attention: true, tone: 'warning' as const };
+  if (hasLines && processor.inference?.status !== 'ok') return { label: 'Travessia sem análise confirmada', attention: true, tone: 'warning' as const };
+  return { label: 'Análise ativa', attention: false, tone: 'ok' as const };
 }
 
 // ab = lado negativo → positivo, igual ao avaliador de travessia da API.

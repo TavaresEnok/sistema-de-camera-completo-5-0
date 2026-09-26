@@ -56,6 +56,7 @@ test('virtual-host coloca o bucket no host', () => {
     { method: 'GET', key: 'cam/1.ts', now: FIXED },
   );
   assert.equal(assinado.url, 'http://meu-storage.storage.local:9000/cam/1.ts');
+  assert.equal(assinado.headers.host, 'meu-storage.storage.local:9000');
 });
 
 test('encodeS3Path preserva a barra e codifica o resto', () => {

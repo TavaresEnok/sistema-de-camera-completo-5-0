@@ -136,8 +136,12 @@ export function signS3Request(
     .map((k) => `${encodeURIComponent(k)}=${encodeURIComponent(query[k])}`)
     .join('&');
 
+  // O host faz parte da assinatura SigV4. No modo virtual-host o bucket muda
+  // o hostname, portanto a URL definitiva precisa existir antes de assinar.
+  const requestHost = pathStyle ? url.host : `${config.bucket}.${url.host}`;
+
   const headers: Record<string, string> = {
-    host: url.host,
+    host: requestHost,
     'x-amz-content-sha256': payloadHash,
     'x-amz-date': amzDate,
     ...(params.extraHeaders ?? {}),

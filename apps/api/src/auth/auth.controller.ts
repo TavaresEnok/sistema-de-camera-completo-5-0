@@ -136,7 +136,7 @@ export class AuthController {
 
   private refreshCookieOptions() {
     const configured = process.env.COOKIE_SECURE;
-    const secure = configured === undefined
+    const secure = configured === undefined || configured.trim() === ''
       ? String(process.env.NODE_ENV ?? '').toLowerCase() === 'production'
       : configured.toLowerCase() === 'true';
     return {

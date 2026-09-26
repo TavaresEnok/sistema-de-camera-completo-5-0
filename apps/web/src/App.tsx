@@ -411,7 +411,7 @@ function App() {
   // a cada 5 min). `revalidate` faz a checagem em segundo plano sem tocar isLoading.
   useEffect(() => {
     const interval = window.setInterval(() => {
-      void revalidate();
+      if (useAuthStore.getState().isAuthenticated) void revalidate();
     }, 5 * 60 * 1000);
     return () => window.clearInterval(interval);
   }, [revalidate]);
