@@ -88,7 +88,7 @@ A central:
 - grava auditoria;
 - entrega um comando que baixa para arquivo temporario, valida SHA-256 e
   executa exatamente o descritor validado;
-- usa `https://github.com/TavaresEnok/Sistema-de-cameras-Enok.git` por padrao, sem exigir chave SSH no cliente;
+- usa `https://github.com/TavaresEnok/sistema-de-camera-completo-5-0.git` por padrao, sem exigir chave SSH no cliente;
 - detecta automaticamente o IP local quando o campo de servidor nao for preenchido;
 - publica o instalador temporario em `/install/:installationId`, autorizado por
   bearer no cabeçalho (o token não entra na URL);
@@ -115,7 +115,7 @@ A geração fica desabilitada até configurar:
 ```bash
 DRAC_CENTRAL_INSTALLER_COMMIT=COMMIT_GIT_COMPLETO_DE_40_HEXADECIMAIS
 DRAC_CENTRAL_INSTALLER_SHA256=SHA256_COMPLETO_DE_64_HEXADECIMAIS
-DRAC_CENTRAL_INSTALLER_URL_TEMPLATE=https://raw.githubusercontent.com/TavaresEnok/Sistema-de-cameras-Enok/{commit}/scripts/install-drac.sh
+DRAC_CENTRAL_INSTALLER_URL_TEMPLATE=https://raw.githubusercontent.com/TavaresEnok/sistema-de-camera-completo-5-0/{commit}/scripts/install-drac.sh
 DRAC_CENTRAL_INSTALLER_TOKEN_TTL_SECONDS=1800
 ```
 

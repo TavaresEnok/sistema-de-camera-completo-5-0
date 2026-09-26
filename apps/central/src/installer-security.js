@@ -5,8 +5,8 @@ const crypto = require('node:crypto');
 const FULL_GIT_COMMIT_RE = /^[a-f0-9]{40}$/i;
 const SHA256_RE = /^[a-f0-9]{64}$/i;
 const DEFAULT_INSTALLER_URL_TEMPLATE =
-  'https://raw.githubusercontent.com/TavaresEnok/Sistema-de-cameras-Enok/{commit}/scripts/install-drac.sh';
-const DEFAULT_REPOSITORY_URL = 'https://github.com/TavaresEnok/Sistema-de-cameras-Enok.git';
+  'https://raw.githubusercontent.com/TavaresEnok/sistema-de-camera-completo-5-0/{commit}/scripts/install-drac.sh';
+const DEFAULT_REPOSITORY_URL = 'https://github.com/TavaresEnok/sistema-de-camera-completo-5-0.git';
 const DEFAULT_INSTALLER_TOKEN_TTL_SECONDS = 15 * 60;
 const DEFAULT_INSTALLER_TOKEN_MAX_DOWNLOADS = 3;
 

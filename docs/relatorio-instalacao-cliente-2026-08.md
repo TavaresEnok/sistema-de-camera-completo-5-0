@@ -85,8 +85,9 @@ silêncio. — commit `e7bd56f`
 
 ### 🟠 4. O instalador apontava para o repositório errado
 
-`DRAC_REPO_URL` padrão era `TavaresEnok/DRAC` → `upload-pack: not our ref`. O
-repositório real é `SISTEMA-CAMERA-2.0-Ajustcam`.
+Na instalação original, `DRAC_REPO_URL` apontava para um repositório histórico
+sem os commits aprovados, causando `upload-pack: not our ref`. O destino atual
+de instalação e atualização é `TavaresEnok/sistema-de-camera-completo-5-0`.
 
 ### 🟠 5. Os padrões eram os da máquina de desenvolvimento
 

@@ -26,7 +26,7 @@ para visualização — **não** faz parte do app; ignore-o na implementação.
 são finais. Recriar pixel-perfect usando o design system/atoms do app; onde o app já tiver
 um componente equivalente (botão, campo, sheet, switch), usar o existente com estes tokens.
 
-## Mapa para o repositório (TavaresEnok/DRAC)
+## Mapa para o repositório (TavaresEnok/sistema-de-camera-completo-5-0)
 O monorepo tem `apps/web` (console React+Vite+Tailwind). Este redesign é do **app mobile**.
 Sugestão de correspondência de telas → rotas/screens do mobile:
 

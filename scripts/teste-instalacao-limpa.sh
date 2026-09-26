@@ -193,7 +193,7 @@ log "gravado em /root/cliente.env (nenhuma pergunta sera feita)"
 # ── A instalação ────────────────────────────────────────────────────────────
 titulo "Instalando (do zero, sem intervencao)"
 log "isto constroi as imagens do zero e leva varios minutos"
-docker exec "$MAQUINA" bash -c "curl -fsSL 'https://raw.githubusercontent.com/TavaresEnok/Sistema-de-cameras-Enok/${COMMIT}/scripts/install-drac.sh' -o /root/install-drac.sh" \
+docker exec "$MAQUINA" bash -c "curl -fsSL 'https://raw.githubusercontent.com/TavaresEnok/sistema-de-camera-completo-5-0/${COMMIT}/scripts/install-drac.sh' -o /root/install-drac.sh" \
   || { erro "nao consegui baixar o instalador do commit $COMMIT"; exit 1; }
 
 # stdin fechado DE PROPÓSITO: prova que a instalação nunca depende de alguém

@@ -97,6 +97,19 @@ function localArtifact(url, content = STUB_INSTALLER) {
   };
 }
 
+test('instalador usa o novo repositório preservando commit e hash aprovados', () => {
+  const artifact = configuredInstallerArtifact({
+    DRAC_CENTRAL_INSTALLER_COMMIT: TEST_INSTALLER_COMMIT,
+    DRAC_CENTRAL_INSTALLER_SHA256: sha256(STUB_INSTALLER),
+  });
+  assert.equal(artifact.repositoryUrl,
+    'https://github.com/TavaresEnok/sistema-de-camera-completo-5-0.git');
+  assert.equal(artifact.url,
+    `https://raw.githubusercontent.com/TavaresEnok/sistema-de-camera-completo-5-0/${TEST_INSTALLER_COMMIT}/scripts/install-drac.sh`);
+  assert.equal(artifact.commit, TEST_INSTALLER_COMMIT);
+  assert.equal(artifact.sha256, sha256(STUB_INSTALLER));
+});
+
 test('configuração exige commit completo, SHA-256 completo e URL vinculada ao commit', () => {
   const base = {
     DRAC_CENTRAL_INSTALLER_COMMIT: TEST_INSTALLER_COMMIT,

@@ -103,7 +103,7 @@ Copie e envie o texto abaixo para a IA responsável pelo desenvolvimento do Ajus
 
 Você atuará como engenheiro sênior de visão computacional, vídeo em tempo real, backend e frontend. Trabalhe diretamente no repositório:
 
-https://github.com/TavaresEnok/Sistema-de-cameras-Enok.git
+https://github.com/TavaresEnok/sistema-de-camera-completo-5-0.git
 
 Objetivo
 

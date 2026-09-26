@@ -1,17 +1,16 @@
-> **REGISTRO HISTÓRICO.** Este documento veio com o pacote de rastreamento e
-> cita `TavaresEnok/SISTEMA-CAMERA-2.0-Ajustcam`, que era o repositório
-> principal na época. Desde 26/08/2026 o principal é
-> `TavaresEnok/Sistema-de-cameras-Enok`. O texto abaixo fica como estava,
-> porque descreve o que foi entregue naquele momento.
+> **REGISTRO HISTÓRICO.** Este documento veio com o pacote de rastreamento.
+> Os resultados descrevem a entrega original; os caminhos de repositório foram
+> atualizados para `TavaresEnok/sistema-de-camera-completo-5-0`, o destino
+> principal desde 26/09/2026.
 
 # AjustCam — Pacote de Tracking (bottom-center, oclusão, estacionário, PTZ, rider)
 
-Código pronto, aplicado sobre o clone de `TavaresEnok/SISTEMA-CAMERA-2.0-Ajustcam`
+Código do pacote, mantido no clone de `TavaresEnok/sistema-de-camera-completo-5-0`
 e testado sinteticamente (resultados no fim). Dois jeitos de aplicar:
 
 **Opção A — patch (recomendado se seu working tree está limpo):**
 ```bash
-cd SISTEMA-CAMERA-2.0-Ajustcam
+cd sistema-de-camera-completo-5-0
 git apply --check PATCHES.diff   # simula; se não reclamar:
 git apply PATCHES.diff
 ```
