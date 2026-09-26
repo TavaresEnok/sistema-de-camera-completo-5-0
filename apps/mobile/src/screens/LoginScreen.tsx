@@ -129,16 +129,16 @@ export function LoginScreen({
           <View style={[styles.field, { backgroundColor: theme.surface, borderColor: theme.border }]}>
             <Icon name="server" size={19} color={theme.textMuted} />
             <View style={{ flex: 1 }}>
-              <Text style={[styles.fieldLabel, { color: theme.textMuted }]}>SERVIDOR (URL DA API)</Text>
+              <Text style={[styles.fieldLabel, { color: theme.textMuted }]}>ENDEREÇO DE ACESSO</Text>
               <TextInput
                 value={apiUrl}
                 onChangeText={onApiUrlChange}
                 autoCapitalize="none"
                 autoCorrect={false}
                 keyboardType="url"
-                placeholder="https://drac.local/api"
+                placeholder="https://acesso.suaempresa.com.br"
                 placeholderTextColor={theme.textMuted}
-                accessibilityLabel="Endereço do servidor"
+                accessibilityLabel="Endereço de acesso"
                 textContentType="URL"
                 autoComplete="url"
                 editable={!loading}
@@ -152,7 +152,7 @@ export function LoginScreen({
         <View style={styles.linksRow}>
           {!hasBakedServer ? (
             <Pressable onPress={() => setShowServer((s) => !s)} hitSlop={8}>
-              <Text style={[styles.smallLink, { color: theme.textSub }]}>{showServer ? 'Ocultar servidor' : 'Servidor'}</Text>
+              <Text style={[styles.smallLink, { color: theme.textSub }]}>{showServer ? 'Ocultar endereço' : 'Endereço de acesso'}</Text>
             </Pressable>
           ) : <View />}
           <Pressable onPress={onForgotPassword} hitSlop={8}>
@@ -167,8 +167,7 @@ export function LoginScreen({
           <View style={[styles.aviso, { borderColor: theme.warning, backgroundColor: theme.surface }]}>
             <Icon name="alert" size={15} color={theme.warning} />
             <Text style={[styles.avisoTexto, { color: theme.textSub }]}>
-              Este endereço usa <Text style={{ fontWeight: '700' }}>http://</Text> e esta versão do app
-              só aceita conexões seguras (https). Use o endereço https do servidor.
+              Este endereço não usa uma conexão segura. Use o endereço informado pela sua equipe.
             </Text>
           </View>
         ) : null}
@@ -202,7 +201,7 @@ export function LoginScreen({
           <View style={styles.serverRow}>
             <View style={[styles.dot, { backgroundColor: apiUrl ? theme.success : theme.warning }]} />
             <Text style={[styles.serverText, { color: theme.textSub }]} numberOfLines={1}>
-              {apiUrl ? `Servidor · ${apiUrl.replace(/^https?:\/\//, '')}` : 'Defina o servidor para continuar'}
+              {apiUrl ? `Acesso · ${apiUrl.replace(/^https?:\/\//, '')}` : 'Informe o endereço de acesso para continuar'}
             </Text>
           </View>
         ) : null}

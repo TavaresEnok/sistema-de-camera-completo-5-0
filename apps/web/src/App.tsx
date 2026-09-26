@@ -126,7 +126,7 @@ class PageErrorBoundary extends Component<{ children: ReactNode; resetKey: strin
         <div className="w-full max-w-md rounded-lg border border-border bg-card p-5 text-center shadow-sm">
           <div className="text-sm font-semibold text-foreground">Esta página não conseguiu carregar</div>
           <div className="mt-2 text-xs text-muted-foreground">
-            {this.state.error.message || 'Erro inesperado ao abrir a tela.'}
+            Não foi possível abrir esta página agora. Tente novamente.
           </div>
           <button
             type="button"

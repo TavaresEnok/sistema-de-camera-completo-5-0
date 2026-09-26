@@ -176,7 +176,7 @@ function playerHtml(whepUrl: string, muted: boolean, contentFit: 'contain' | 'co
         } catch (_) {}
       }, 2000);
     } catch (error) {
-      fail(error instanceof Error ? error.message : 'Não foi possível abrir H.265 por WebRTC.');
+      fail('Não foi possível abrir o vídeo nesta qualidade. Tente novamente ou use a opção de economia de dados.');
     }
   }
   window.addEventListener('pagehide', closeSession);

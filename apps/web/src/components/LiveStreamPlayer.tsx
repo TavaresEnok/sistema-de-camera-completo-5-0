@@ -2606,14 +2606,11 @@ export function LiveStreamPlayer({
               }`}
               title={
                 showsVideoTranscode && transcodeCost
-                  ? `${transcodeCost.reason ?? ''} Custa cerca de ${transcodeCost.cpuMultiplier ?? 5}x mais CPU do servidor. ${transcodeCost.hint ?? ''}`.trim()
+                  ? 'O vídeo foi ajustado para funcionar melhor neste dispositivo.'
                   : undefined
               }
             >
-              {sourceVideoCodec}{showsVideoTranscode ? ' → H.264' : ''}
-              {showsVideoTranscode && transcodeCost?.cpuMultiplier
-                ? ` · ${transcodeCost.cpuMultiplier}x CPU`
-                : ''}
+              {showsVideoTranscode ? 'Vídeo otimizado' : 'Qualidade original'}
             </span>
           ) : null}
           {!compactLiveOverlay && measuredBitrateKbps != null ? (

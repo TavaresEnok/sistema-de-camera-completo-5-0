@@ -103,20 +103,12 @@ export default function LoginPage() {
 
   const getLoginErrorMessage = (err: unknown) => {
     if (!axios.isAxiosError(err)) return 'Não foi possível autenticar agora. Tente novamente.';
-    if (!err.response) return 'Não foi possível conectar à API. Verifique a conexão ou recarregue a página.';
-    // A MENSAGEM DO SERVIDOR VEM PRIMEIRO. A API responde 401 com texto
-    // específico quando a conta está BLOQUEADA por excesso de tentativas
-    // ("tente novamente em X min") — e ele era descartado em favor de
-    // "Credenciais inválidas". O operador continuava tentando achando que
-    // digitou errado, e cada tentativa ESTENDIA o próprio bloqueio.
-    const doServidor = (err.response.data as { message?: string | string[] } | undefined)?.message;
-    const texto = Array.isArray(doServidor) ? doServidor.join(' ') : doServidor;
-    if (typeof texto === 'string' && texto.trim()) return texto.trim();
-    // Limite de tentativas por minuto: virava "falha no servidor" e o usuário
-    // abria chamado reportando o sistema fora do ar.
+    if (!err.response) return 'Não foi possível conectar. Verifique sua conexão e tente novamente.';
+    // O limite de tentativas merece orientação específica. Outros textos da
+    // resposta podem conter detalhes que não pertencem à tela do cliente.
     if (err.response.status === 429) return 'Muitas tentativas seguidas. Aguarde um minuto e tente novamente.';
     if (err.response.status === 401) return 'Credenciais inválidas ou usuário inativo';
-    return 'Falha no servidor de autenticação. Tente novamente em instantes.';
+    return 'Não foi possível entrar agora. Tente novamente em instantes.';
   };
 
   useEffect(() => {

@@ -155,7 +155,7 @@ export function LiveVideo(props: LiveVideoProps) {
             setHevcWebRtc(true);
             return;
           }
-          setWebrtcFailureReason(reason ?? 'A conexão WebRTC não entregou vídeo.');
+          setWebrtcFailureReason(reason ? 'A transmissão ao vivo foi interrompida.' : 'Não foi possível abrir o vídeo ao vivo.');
           setFailures((count) => count + 1);
           setWebrtcFailed(true);
         }}
@@ -166,12 +166,12 @@ export function LiveVideo(props: LiveVideoProps) {
   {
     return (
       <View style={[props.videoStyle, { alignItems: 'center', justifyContent: 'center', backgroundColor: '#0b0f16', paddingHorizontal: 20 }]}>
-        <Text style={[props.emptyTitleStyle, { textAlign: 'center' }]}>{webrtcFailed && webRtcRetryDelay(failures) !== null ? 'Reconectando por WebRTC…' : 'WebRTC indisponível'}</Text>
+        <Text style={[props.emptyTitleStyle, { textAlign: 'center' }]}>{webrtcFailed && webRtcRetryDelay(failures) !== null ? 'Reconectando vídeo…' : 'Vídeo ao vivo indisponível'}</Text>
         <Text style={props.emptyTextStyle}>
-          {whepUri ? webrtcFailureReason ?? 'A conexão WebRTC não entregou vídeo.' : 'O servidor não forneceu uma URL WHEP para esta câmera.'}
+          {whepUri ? webrtcFailureReason ?? 'Não foi possível abrir o vídeo ao vivo.' : 'Esta câmera ainda não está pronta para exibir vídeo ao vivo.'}
         </Text>
         {whepUri ? (
-          <Pressable accessibilityRole="button" accessibilityLabel="Tentar WebRTC novamente" onPress={() => {
+          <Pressable accessibilityRole="button" accessibilityLabel="Tentar vídeo novamente" onPress={() => {
             props.onNeedRefresh?.();
             setWebrtcFailureReason(null);
             setFailures(0);
@@ -182,7 +182,7 @@ export function LiveVideo(props: LiveVideoProps) {
         ) : null}
         {!props.webrtcOnly && props.uri && (!whepUri || webRtcRetryDelay(failures) === null) ? (
           <Pressable accessibilityRole="button" onPress={() => setManualHls(true)} style={{ marginTop: 12, padding: 10 }}>
-            <Text style={props.emptyTitleStyle}>Usar modo compatível (HLS)</Text>
+            <Text style={props.emptyTitleStyle}>Tentar modo alternativo</Text>
           </Pressable>
         ) : null}
       </View>

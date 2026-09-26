@@ -329,7 +329,7 @@ export function LiveScreenRedesign(props: Props) {
             ) : null}
             <View style={[s.hdBadge, recordingActive && s.hdBadgeWithRecording]}><Text style={s.hdBadgeText}>{hdMode ? 'HD+' : 'Economia'}</Text></View>
             {status !== 'live' ? (
-              <View style={s.statusPill}><Text style={s.statusText}>{status === 'connecting' ? 'Conectando…' : status === 'reconnecting' ? 'Reconectando…' : status === 'offline' ? (hdMode ? 'WebRTC indisponível' : 'Offline') : ''}</Text></View>
+              <View style={s.statusPill}><Text style={s.statusText}>{status === 'connecting' ? 'Conectando…' : status === 'reconnecting' ? 'Reconectando…' : status === 'offline' ? (hdMode ? 'Vídeo indisponível' : 'Offline') : ''}</Text></View>
             ) : null}
           </>
         ) : null}

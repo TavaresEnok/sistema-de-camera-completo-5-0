@@ -229,14 +229,14 @@ export function LiveScreen({
         <View style={[StyleSheet.absoluteFill, styles.qualityLoading]}>
           {hdRequestFailed ? (
             <>
-              <Text style={styles.qualityLoadingText}>HD+ indisponível: não foi possível obter a conexão WebRTC/WHEP.</Text>
+              <Text style={styles.qualityLoadingText}>A qualidade máxima está indisponível no momento.</Text>
               <Pressable accessibilityRole="button" accessibilityLabel="Tentar HD+ novamente" onPress={() => {
                 setHdRequestFailed(false);
                 void onRequestHd().then((opened) => { if (!opened) setHdRequestFailed(true); });
               }}><Text style={styles.qualityLoadingText}>Tentar novamente</Text></Pressable>
             </>
           ) : (
-            <><ActivityIndicator color="#ffffff" /><Text style={styles.qualityLoadingText}>Conectando HD+ por WebRTC…</Text></>
+            <><ActivityIndicator color="#ffffff" /><Text style={styles.qualityLoadingText}>Preparando vídeo em alta qualidade…</Text></>
           )}
         </View>
       ) : hdActive ? (
@@ -293,7 +293,7 @@ export function LiveScreen({
   ) : (
     <View style={[styles.liveBadge, !isLive && styles.liveBadgeIdle]}>
       <View style={[styles.liveDot, !isLive && { backgroundColor: 'rgba(255,255,255,0.6)' }]} />
-      <Text style={styles.liveText}>{hdMode && liveStatus === 'offline' ? 'WEBRTC INDISPONÍVEL' : STATUS_LABEL[liveStatus]}</Text>
+      <Text style={styles.liveText}>{hdMode && liveStatus === 'offline' ? 'VÍDEO INDISPONÍVEL' : STATUS_LABEL[liveStatus]}</Text>
     </View>
   );
 

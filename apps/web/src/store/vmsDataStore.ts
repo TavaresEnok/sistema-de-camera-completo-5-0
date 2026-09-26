@@ -274,11 +274,10 @@ async function fetchResource<T>(name: string, request: Promise<{ data: T }>): Pr
   try {
     const response = await request;
     return { data: response.data, error: null };
-  } catch (error) {
-    const message = axios.isAxiosError(error)
-      ? `${name}: ${error.response?.status ? `HTTP ${error.response.status}` : error.message}`
-      : `${name}: ${error instanceof Error ? error.message : 'falha inesperada'}`;
-    return { data: null, error: message };
+  } catch {
+    // O painel do cliente informa a indisponibilidade do conteúdo, sem exibir
+    // endpoint, código HTTP ou detalhe do serviço que falhou.
+    return { data: null, error: `Não foi possível atualizar ${name} agora.` };
   }
 }
 

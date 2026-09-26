@@ -17,6 +17,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { request } from '../services/api';
+import { userFacingError } from '../services/user-facing-error';
 import { captureInstallerLocation } from '../services/installer-location';
 import { discoverCameras, scanLocalNetwork, type ScanProgress } from '../services/camera-discovery';
 import { mergeDiscoveredCameras, parseCameraQr, type DiscoveredCamera } from '../services/camera-discovery-core';
@@ -187,7 +188,7 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
       setDevices(result.devices); setDiscoveryWarnings(result.warnings);
     } catch (err) {
       if (operation !== operationRef.current) return;
-      setError(err instanceof Error ? err.message : 'Não foi possível pesquisar a rede local.');
+      setError(userFacingError(err, 'Não foi possível procurar câmeras agora. Tente novamente.'));
     } finally {
       if (operation === operationRef.current) setDiscovering(false);
     }
@@ -211,7 +212,7 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
       setDiscoveryWarnings(result.warnings);
     } catch (err) {
       if (operation !== operationRef.current) return;
-      setError(err instanceof Error ? err.message : 'Não foi possível fazer a busca completa nesta rede.');
+      setError(userFacingError(err, 'Não foi possível concluir a busca por câmeras. Tente novamente.'));
     } finally {
       if (operation === operationRef.current) { setDiscovering(false); setScanProgress(null); }
     }
@@ -310,7 +311,7 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
       }
     } catch (err) {
       if (operation !== operationRef.current) return;
-      setError(err instanceof Error ? err.message : 'Não foi possível testar a câmera.');
+      setError(userFacingError(err, 'Não foi possível testar esta câmera. Confira os dados e tente novamente.'));
     } finally {
       if (operation === operationRef.current) setChecking(false);
     }
@@ -346,7 +347,7 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
       navigate('success');
     } catch (err) {
       if (operation !== operationRef.current) return;
-      setError(err instanceof Error ? err.message : 'Não foi possível cadastrar a câmera.');
+      setError(userFacingError(err, 'Não foi possível adicionar a câmera. Tente novamente.'));
     } finally {
       if (operation === operationRef.current) setSubmitting(false);
     }

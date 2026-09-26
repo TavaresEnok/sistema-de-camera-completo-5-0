@@ -6,6 +6,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { request } from '../services/api';
+import { userFacingError } from '../services/user-facing-error';
 import { useTheme } from '../theme/ThemeProvider';
 import type { Camera } from '../types';
 import { Icon } from './Icon';
@@ -73,7 +74,7 @@ export function CameraManagementSheet({ visible, camera, apiUrl, token, onClose,
       setRtmpLoading(true);
       void request<RtmpTarget>(apiUrl, `/cameras/mine/${encodeURIComponent(camera.id)}/rtmp-ingest`, token ?? undefined)
         .then((value) => { if (generation.current === current) setRtmpTarget(value); })
-        .catch((err) => { if (generation.current === current) setError(err instanceof Error ? err.message : 'Não foi possível carregar o endereço RTMP.'); })
+        .catch((err) => { if (generation.current === current) setError(userFacingError(err, 'Não foi possível preparar a transmissão da câmera.')); })
         .finally(() => { if (generation.current === current) setRtmpLoading(false); });
     } else {
       setRtmpLoading(false);
@@ -140,7 +141,7 @@ export function CameraManagementSheet({ visible, camera, apiUrl, token, onClose,
       onChanged(camera.id, 'updated');
       onClose();
     } catch (err) {
-      if (generation.current === current) setError(err instanceof Error ? err.message : 'Não foi possível salvar a câmera.');
+      if (generation.current === current) setError(userFacingError(err, 'Não foi possível salvar a câmera. Tente novamente.'));
     } finally {
       if (generation.current === current) setSaving(false);
     }
@@ -156,7 +157,7 @@ export function CameraManagementSheet({ visible, camera, apiUrl, token, onClose,
       onChanged(camera.id, 'deleted');
       onClose();
     } catch (err) {
-      if (generation.current === current) setError(err instanceof Error ? err.message : 'Não foi possível excluir a câmera.');
+      if (generation.current === current) setError(userFacingError(err, 'Não foi possível remover a câmera. Tente novamente.'));
     } finally {
       if (generation.current === current) setDeleting(false);
     }

@@ -47,6 +47,7 @@ import Constants from 'expo-constants';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
 import { AppNoticeHost } from './src/components/AppNoticeHost';
 import { showAppNotice } from './src/services/app-notice';
+import { userFacingError } from './src/services/user-facing-error';
 import { loadCachedPosters, savePoster } from './src/services/poster-cache';
 import { iniciarRelatorioDeTravamento, marcarInstalacao } from './src/services/crash-reporting';
 import { useAlarms } from './src/hooks/useAlarms';
@@ -548,9 +549,9 @@ function AppInner() {
     setLoading(true);
     try {
       const nextApiUrl = cleanApiUrl(apiUrl);
-      if (!nextApiUrl) throw new Error('Informe a URL da API no campo "Servidor".');
+      if (!nextApiUrl) throw new Error('Informe o endereço de acesso.');
       if (/^http:\/\//i.test(nextApiUrl) && !ALLOW_CLEARTEXT_TRAFFIC) {
-        throw new Error('Esta versão exige conexão segura. Use o endereço HTTPS do servidor.');
+        throw new Error('Use o endereço de acesso seguro informado pela sua equipe.');
       }
       const data = await request<{
         accessToken: string;
@@ -597,7 +598,7 @@ function AppInner() {
         );
       }
     } catch (error) {
-      showAppNotice('Não foi possível entrar', error instanceof Error ? error.message : 'Confira seus dados e tente novamente.', 'error');
+      showAppNotice('Não foi possível entrar', userFacingError(error, 'Confira seus dados e tente novamente.'), 'error');
     } finally {
       setLoading(false);
     }
@@ -612,7 +613,7 @@ function AppInner() {
     let nextApiUrl = '';
     try { nextApiUrl = cleanApiUrl(apiUrl); }
     catch (error) {
-      showAppNotice('Não foi possível recuperar a senha', error instanceof Error ? error.message : 'Endereço de acesso inválido.', 'error');
+      showAppNotice('Não foi possível recuperar a senha', userFacingError(error, 'Confira o endereço de acesso e tente novamente.'), 'error');
       return;
     }
     if (!nextApiUrl) {
@@ -722,7 +723,7 @@ function AppInner() {
     } catch (error) {
       if (sessionTokenRef.current !== token || camerasRequestRef.current !== generation) return;
       const status = (error as { status?: number })?.status;
-      const message = error instanceof Error ? error.message : 'Não foi possível carregar câmeras.';
+      const message = userFacingError(error, 'Não foi possível atualizar as câmeras. Verifique a conexão e tente novamente.');
       const isAuthError = status === 401 || /\b401\b|unauthorized|não autorizado/i.test(message);
       setLastSyncError(isAuthError ? 'Sessão expirada. Entre novamente.' : `Servidor indisponível: ${message}`);
       if (isAuthError) {
@@ -794,7 +795,7 @@ function AppInner() {
       // O servidor explica o motivo (ex.: "Câmera desativada. Reative-a nas
       // configurações"). Engolir isso deixava o operador diante de um quadro
       // preto sem saber que a câmera havia sido desligada de propósito.
-      const motivo = error instanceof Error ? error.message : '';
+      const motivo = userFacingError(error, 'Não foi possível concluir esta ação agora. Tente novamente.');
       if (motivo && liveCameraIdRef.current === cameraId && !/\b(401|403)\b/.test(motivo)) {
         setLastSyncError(motivo);
       }
@@ -943,7 +944,7 @@ function AppInner() {
       const status = (error as { status?: number })?.status;
       setRecordingsError(status === 403
         ? 'Você não possui permissão para visualizar estas gravações.'
-        : error instanceof Error ? error.message : 'Não foi possível carregar as gravações.');
+        : userFacingError(error, 'Não foi possível carregar as gravações. Tente novamente.'));
     } finally {
       if (recordingRequestRef.current === generation) {
         setRecordingsLoading(false);
@@ -985,7 +986,7 @@ function AppInner() {
       const status = (error as { status?: number })?.status;
       setRecordingsError(status === 403
         ? 'Você não possui permissão para visualizar estas gravações.'
-        : error instanceof Error ? error.message : 'Não foi possível localizar a gravação mais recente.');
+        : userFacingError(error, 'Não foi possível localizar a gravação mais recente. Tente novamente.'));
     } finally {
       if (recordingRequestRef.current === generation) setRecordingsLoading(false);
     }
@@ -1126,7 +1127,7 @@ function AppInner() {
     } catch (error) {
       await FileSystem.deleteAsync(target, { idempotent: true }).catch(() => undefined);
       if (!silent && sessionTokenRef.current === currentSession.token) {
-        showAppNotice('Gravação pendente', `${error instanceof Error ? error.message : 'Não foi possível salvar o clipe.'} Tentaremos novamente em breve.`, 'warning', 6500);
+        showAppNotice('Gravação pendente', `${userFacingError(error, 'Não foi possível salvar a gravação.')} Tentaremos novamente em breve.`, 'warning', 6500);
       }
       return false;
     } finally {
@@ -1193,7 +1194,7 @@ function AppInner() {
           await downloadPendingClip(currentSession, pending, silent);
         }
       } catch (error) {
-        if (!silent) showAppNotice('Não foi possível salvar a gravação', error instanceof Error ? error.message : 'Tente novamente.', 'error');
+        if (!silent) showAppNotice('Não foi possível salvar a gravação', userFacingError(error, 'Tente novamente.'), 'error');
       } finally {
         clipStopPromiseRef.current = null;
         resetClipState();
@@ -1255,7 +1256,7 @@ function AppInner() {
         const shouldNotify = sessionTokenRef.current === currentSession.token && !clipFinalizeSilentRef.current;
         resetClipState();
         if (shouldNotify) {
-          showAppNotice('Não foi possível iniciar a gravação', error instanceof Error ? error.message : 'Tente novamente.', 'error');
+          showAppNotice('Não foi possível iniciar a gravação', userFacingError(error, 'Tente novamente.'), 'error');
         }
       } finally {
         clipStartPromiseRef.current = null;
@@ -1324,7 +1325,7 @@ function AppInner() {
       );
       setGravacaoSistemaAtiva(alvo);
     } catch (error) {
-      const motivo = error instanceof Error ? error.message : 'Não foi possível mudar a gravação.';
+      const motivo = userFacingError(error, 'Não foi possível alterar a gravação. Tente novamente.');
       showAppNotice(alvo ? 'Não foi possível gravar' : 'Não foi possível parar', motivo, 'error');
     } finally {
       setGravacaoSistemaOcupada(false);
@@ -1415,7 +1416,7 @@ function AppInner() {
       if (sessionTokenRef.current !== token || playbackRequestRef.current !== generation) return;
       // Renovação silenciosa não pode virar alerta: o vídeo está tocando.
       if (opcoes.silencioso) return;
-      showAppNotice('Não foi possível abrir a gravação', error instanceof Error ? error.message : 'Tente novamente.', 'error');
+      showAppNotice('Não foi possível abrir a gravação', userFacingError(error, 'Tente novamente.'), 'error');
     } finally {
       if (playbackRequestRef.current === generation) setAbrindoGravacaoId(null);
     }
@@ -1494,7 +1495,7 @@ function AppInner() {
       }
     } catch (error) {
       if (sessionTokenRef.current === currentSession.token) {
-        showAppNotice('Não foi possível baixar', error instanceof Error ? error.message : 'Tente novamente.', 'error');
+        showAppNotice('Não foi possível baixar', userFacingError(error, 'Tente novamente.'), 'error');
       }
     } finally {
       await FileSystem.deleteAsync(target, { idempotent: true }).catch(() => undefined);
@@ -1531,7 +1532,7 @@ function AppInner() {
       }
     } catch (error) {
       if (sessionTokenRef.current === currentSession.token) {
-        showAppNotice('Não foi possível capturar a foto', error instanceof Error ? error.message : 'Tente novamente.', 'error');
+        showAppNotice('Não foi possível salvar a foto', userFacingError(error, 'Tente novamente.'), 'error');
       }
     } finally {
       await FileSystem.deleteAsync(target, { idempotent: true }).catch(() => undefined);

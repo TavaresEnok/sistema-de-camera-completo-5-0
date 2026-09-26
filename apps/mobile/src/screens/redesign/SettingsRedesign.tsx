@@ -11,11 +11,12 @@ import { Icon, type IconName } from '../../components/Icon';
 import { AddCameraSheet } from '../../components/AddCameraSheet';
 import { request } from '../../services/api';
 import { showAppNotice } from '../../services/app-notice';
+import { userFacingError } from '../../services/user-facing-error';
 
 const TITLE = 'Sora';
 const UI = 'InstrumentSans';
 const MONO = 'JetBrainsMono';
-const ROLE_LABEL: Record<string, string> = { SUPER_ADMIN: 'SUPER ADMIN', ADMIN: 'ADMIN', OPERATOR: 'OPERADOR', VIEWER: 'VISUALIZAÇÃO' };
+const ROLE_LABEL: Record<string, string> = { SUPER_ADMIN: 'ADMINISTRADOR', ADMIN: 'ADMINISTRADOR', OPERATOR: 'OPERADOR', VIEWER: 'VISUALIZAÇÃO' };
 
 interface Props {
   user: { name?: string | null; email?: string; role?: string } | null;
@@ -73,7 +74,7 @@ export function SettingsRedesign(props: Props) {
       showAppNotice('Senha alterada', 'Entre novamente usando sua nova senha.', 'success', 5000);
       setTimeout(onLogout, 900);
     } catch (error) {
-      setPasswordError(error instanceof Error ? error.message : 'Não foi possível alterar a senha.');
+      setPasswordError(userFacingError(error, 'Não foi possível alterar a senha. Tente novamente.'));
     } finally { setPasswordBusy(false); }
   };
 

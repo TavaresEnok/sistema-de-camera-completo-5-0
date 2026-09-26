@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AppState } from 'react-native';
 import { request } from '../services/api';
 import { showAppNotice } from '../services/app-notice';
+import { userFacingError } from '../services/user-facing-error';
 import type { Alarm, Session } from '../types';
 
 const POLL_INTERVAL_MS = 30_000;
@@ -54,7 +55,7 @@ export function useAlarms(session: Session | null): UseAlarms {
       // primeira carga que falhasse deixava `alarms: []` e a tela afirmava
       // "Tudo tranquilo — nenhum alarme". Numa central de alarmes, essa é a
       // mentira mais cara que a interface pode contar.
-      setErro(erro instanceof Error ? erro.message : 'Não foi possível carregar os alarmes.');
+      setErro(userFacingError(erro, 'Não foi possível atualizar os avisos. Verifique a conexão e tente novamente.'));
     } finally {
       setCarregando(false);
     }
@@ -72,7 +73,7 @@ export function useAlarms(session: Session | null): UseAlarms {
         void reload();
       } catch (error) {
         void reload();
-        showAppNotice('Não foi possível atualizar o evento', error instanceof Error ? error.message : failMessage, 'error');
+        showAppNotice('Não foi possível atualizar o aviso', userFacingError(error, failMessage), 'error');
       }
     },
     [session?.token, session?.apiUrl, reload],

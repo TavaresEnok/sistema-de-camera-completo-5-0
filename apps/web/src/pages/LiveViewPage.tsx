@@ -946,7 +946,7 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
                   ⚠ {count} câmeras
                 </span>
               </TooltipTrigger>
-              <TooltipContent className="text-xs max-w-56">Muitas câmeras ao vivo ao mesmo tempo podem sobrecarregar a CPU do servidor (transcode). Reduza a grade se ficar lento.</TooltipContent>
+              <TooltipContent className="text-xs max-w-56">Muitas câmeras ao vivo ao mesmo tempo podem deixar a imagem mais lenta. Reduza a grade se necessário.</TooltipContent>
             </Tooltip>
           ) : null}
 

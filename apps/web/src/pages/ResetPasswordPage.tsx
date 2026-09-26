@@ -16,12 +16,9 @@ export default function ResetPasswordPage() {
 
   const getErrorMessage = (err: unknown) => {
     if (!axios.isAxiosError(err)) return 'Não foi possível redefinir a senha agora. Tente novamente.';
-    if (!err.response) return 'Não foi possível conectar à API. Verifique a conexão ou recarregue a página.';
+    if (!err.response) return 'Não foi possível conectar. Verifique sua conexão e tente novamente.';
     if (err.response.status === 401) return 'Link de redefinição inválido ou expirado. Solicite um novo.';
-    const message = (err.response.data as { message?: string | string[] })?.message;
-    if (Array.isArray(message)) return message.join(' ');
-    if (typeof message === 'string') return message;
-    return 'Falha ao redefinir a senha. Tente novamente em instantes.';
+    return 'Não foi possível redefinir a senha. Tente novamente em instantes.';
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
