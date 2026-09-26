@@ -6,7 +6,10 @@
  * é lido do endpoint público `GET /settings/branding` da própria instalação, de
  * forma que o que o admin salvar nas Configurações reflita também no app.
  */
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { request } from './api';
+
+const BRANDING_CACHE_PREFIX = '@drac:runtime-branding:v1:';
 
 export interface BrandingPalette {
   primaryColor: string;
@@ -113,6 +116,47 @@ export const EMPTY_BRANDING: RuntimeBranding = {
   light: EMPTY_PALETTE,
   minMobileVersionCode: 0,
 };
+
+function cacheKey(apiUrl: string) {
+  // A marca pertence à instalação, não ao aparelho todo. Assim trocar o campo
+  // "Servidor" não faz a identidade de um cliente aparecer no outro.
+  return `${BRANDING_CACHE_PREFIX}${encodeURIComponent(apiUrl.trim().replace(/\/+$/, '').toLowerCase())}`;
+}
+
+function cachedPalette(value: unknown): BrandingPalette {
+  const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  return Object.fromEntries(
+    Object.entries(EMPTY_PALETTE).map(([key, fallback]) => [key, typeof source[key] === 'string' ? source[key] : fallback]),
+  ) as BrandingPalette;
+}
+
+/** Recupera a última marca válida desta instalação para uso sem rede. */
+export async function loadCachedBranding(apiUrl: string): Promise<RuntimeBranding | null> {
+  if (!apiUrl) return null;
+  try {
+    const raw = await AsyncStorage.getItem(cacheKey(apiUrl));
+    if (!raw) return null;
+    const value = JSON.parse(raw) as Record<string, unknown>;
+    if (!value || typeof value !== 'object') return null;
+    return {
+      facilityName: typeof value.facilityName === 'string' ? value.facilityName : '',
+      logoDataUrl: typeof value.logoDataUrl === 'string' ? value.logoDataUrl : '',
+      logoScale: Math.max(0.65, Math.min(2, Number(value.logoScale) || 1)),
+      useDefaultColors: value.useDefaultColors === true,
+      dark: cachedPalette(value.dark),
+      light: cachedPalette(value.light),
+      minMobileVersionCode: Math.max(0, Number(value.minMobileVersionCode) || 0),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Salva somente uma resposta normalizada e recebida com sucesso da API. */
+export async function saveCachedBranding(apiUrl: string, branding: RuntimeBranding): Promise<void> {
+  if (!apiUrl) return;
+  await AsyncStorage.setItem(cacheKey(apiUrl), JSON.stringify(branding));
+}
 
 export async function fetchBranding(apiUrl: string): Promise<RuntimeBranding> {
   if (!apiUrl) return EMPTY_BRANDING;

@@ -354,6 +354,23 @@ test('branding: separa as paletas clara e escura recebidas do servidor', async (
   }
 });
 
+test('branding offline: conserva por instalação apenas a última resposta válida', () => {
+  const branding = readFileSync('src/services/branding.ts', 'utf8');
+  const app = readFileSync('App.tsx', 'utf8');
+
+  assert(branding.includes("BRANDING_CACHE_PREFIX = '@drac:runtime-branding:v1:'"), 'cache de marca deve ter namespace próprio');
+  assert(branding.includes('export async function loadCachedBranding'), 'marca previamente recebida deve poder ser restaurada offline');
+  assert(branding.includes('export async function saveCachedBranding'), 'uma resposta válida deve ser persistida');
+  assert(app.includes('restoreCachedBranding(DEFAULT_API_URL)'), 'login deve restaurar a marca antes de depender da rede');
+  assert(app.includes('saveCachedBranding(url, next)'), 'download bem-sucedido deve atualizar o cache');
+});
+
+test('login manual: inicia no Início e descarta resposta antiga de push', () => {
+  const app = readFileSync('App.tsx', 'utf8');
+  assert(app.includes('await Notifications.clearLastNotificationResponseAsync().catch(() => undefined);'), 'push pendente não pode redirecionar uma sessão nova');
+  assert(app.includes("setTab('central');\n      activateSession(nextSession);"), 'login manual deve abrir a aba Início');
+});
+
 test('isOnline: normaliza status da câmera', () => {
   assert(isOnline({ status: 'ONLINE' } as Camera), 'ONLINE deve estar online');
   assert(isOnline({ status: 'online' } as Camera), 'online deve estar online');

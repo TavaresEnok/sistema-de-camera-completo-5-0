@@ -2,6 +2,7 @@
 // telas rodarem seus StyleSheet.create (que acontecem no import delas).
 import './src/theme/applyFonts';
 import * as FileSystem from 'expo-file-system/legacy';
+import * as Notifications from 'expo-notifications';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
@@ -26,7 +27,7 @@ import { PlaybackScreen } from './src/screens/PlaybackScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
 import { request, normalizeServerUrl, setTokenRefreshHandler, setUnauthorizedHandler } from './src/services/api';
 import { authenticatedMediaUrl, isSecureMediaUrl } from './src/services/media-urls';
-import { fetchBranding, isLightColor } from './src/services/branding';
+import { fetchBranding, isLightColor, loadCachedBranding, saveCachedBranding } from './src/services/branding';
 import { clearStreamUrlsCache, requestCachedStreamUrls, type ModoDeEntrega } from './src/services/stream-urls-cache';
 import { RondaScreen } from './src/screens/RondaScreen';
 import { lerPreferenciaDePush, salvarPreferenciaDePush } from './src/services/pushPreference';
@@ -218,14 +219,25 @@ function AppInner() {
   const operationalMessages = buildOperationalMessages(cameras, lastSyncError);
   const statusBarStyle = isLightColor(theme.bg) ? 'dark' : 'light';
 
-  // Busca a marca (logo/nome/cores) do servidor e aplica no tema. Silencioso:
-  // se falhar (offline, sem branding configurado), mantém o tema padrão.
+  // A marca baixada com sucesso é guardada por instalação. Ao ficar offline, o
+  // APK conserva logo, nome e paleta já aprovados — em vez de voltar ao azul
+  // padrão. Ela só muda quando uma nova autenticação consegue buscá-la.
+  const restoreCachedBranding = (url: string) => {
+    if (!url) return;
+    const generation = ++brandingRequestRef.current;
+    void loadCachedBranding(url).then((cached) => {
+      if (cached && brandingRequestRef.current === generation) applyBranding(cached);
+    });
+  };
+
   const loadBranding = (url: string) => {
     if (!url) return;
     const generation = ++brandingRequestRef.current;
     fetchBranding(url)
       .then((next) => {
-        if (brandingRequestRef.current === generation) applyBranding(next);
+        if (brandingRequestRef.current !== generation) return;
+        applyBranding(next);
+        void saveCachedBranding(url, next).catch(() => undefined);
       })
       .catch(() => undefined);
   };
@@ -286,8 +298,9 @@ function AppInner() {
   };
 
   useEffect(() => {
-    // Em builds white-label o servidor já vem embutido: aplica a marca já no login.
-    if (DEFAULT_API_URL) loadBranding(DEFAULT_API_URL);
+    // Antes de qualquer rede, restaura a última identidade válida. Isso mantém
+    // inclusive a tela de login correta durante uma queda da instalação.
+    if (DEFAULT_API_URL) restoreCachedBranding(DEFAULT_API_URL);
 
     void (async () => {
       try {
@@ -308,6 +321,7 @@ function AppInner() {
         }
         setApiUrl(normalized.apiUrl);
         setEmail(normalized.user.email);
+        restoreCachedBranding(normalized.apiUrl);
         if (normalized.apiUrl !== stored.apiUrl) await saveStoredSession(normalized);
 
         if (enabled) {
@@ -556,11 +570,13 @@ function AppInner() {
       };
       await saveStoredSession(nextSession);
       clearStreamUrlsCache();
+      // Um login manual sempre começa no Início. A resposta de push que o SO
+      // deixou guardada pode ser antiga; limpá-la antes de montar a sessão evita
+      // que ela abra Eventos logo após autenticar.
+      await Notifications.clearLastNotificationResponseAsync().catch(() => undefined);
+      setTab('central');
       activateSession(nextSession);
       setPassword('');
-      // Aplica a marca da instalação que acabou de logar (caso o servidor não
-      // estivesse embutido no APK, ex.: app DRAC padrão apontando p/ um cliente).
-      loadBranding(nextApiUrl);
       if (biometricAvailable && !biometricEnabled) {
         Alert.alert(
           'Ativar acesso por biometria?',
