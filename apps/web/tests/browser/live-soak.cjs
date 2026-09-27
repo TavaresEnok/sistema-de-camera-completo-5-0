@@ -18,7 +18,7 @@ const { chromium } = require('playwright');
     const cdp = await context.newCDPSession(page);
     await cdp.send('Performance.enable');
     await page.goto(url.toString());
-    await page.waitForFunction(() => [...document.querySelectorAll('video')].some(video => video.readyState >= 2), { timeout: 90000 });
+    await page.waitForFunction(() => [...document.querySelectorAll('video')].some(video => video.readyState >= 2), undefined, { timeout: 90000 });
     const started = Date.now();
     while (Date.now() - started < seconds * 1000) {
       const video = await page.evaluate(() => {

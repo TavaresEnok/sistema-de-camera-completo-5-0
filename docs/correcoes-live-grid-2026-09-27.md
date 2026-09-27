@@ -48,6 +48,8 @@ Data: 27/09/2026. Complementa e revisa a entrega parcial `618602a`.
 
 ## Limites e implantação
 
+**Atualização posterior:** persistência das sessões, testes reais de coordenação de janelas, recuperação explícita de layouts e implantação estão registrados em [Fechamento das pendências](pendencias-live-grid-2026-09-27.md). Os parágrafos abaixo descrevem o estado da entrega inicial `7428d90`, antes desse complemento.
+
 Os testes foram executados em containers isolados, sem trocar os serviços em produção. Não foi executada homologação visual com câmeras reais, sessão longa de 36/64 streams ou dispositivo Safari físico; não há medição comparativa de CPU/FPS que permita prometer percentuais de ganho.
 
 O HLS nativo exige atualização conjunta do Web e dos proxies fornecidos no repositório, com HTTPS. A verificação `X-S2Cam-Hls-Session: camera` evita usar cookies globais de uma instalação com proxy antigo.
