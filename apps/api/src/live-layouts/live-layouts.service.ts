@@ -1,5 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, UserRole } from '@prisma/client';
+import { createHash } from 'node:crypto';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { AccessControlService } from '../access-control/access-control.service';
 import { type AuthUser } from '../common/types/auth-user.type';
@@ -213,8 +214,13 @@ export class LiveLayoutsService {
 
   async create(user: AuthUser, dto: CreateLiveLayoutDto) {
     const destinatarios = await this.destinatariosValidados(user, dto.destinatarios);
+    // Repetir a operação offline, inclusive em outra aba, devolve o mesmo layout.
+    const hash = dto.clientRequestId ? createHash('sha256').update(`${user.id}:${dto.clientRequestId}`).digest('hex') : null;
+    const id = hash ? `${hash.slice(0, 8)}-${hash.slice(8, 12)}-${hash.slice(12, 16)}-${hash.slice(16, 20)}-${hash.slice(20, 32)}` : undefined;
+    try {
     const criado = await this.prisma.liveLayout.create({
       data: {
+        ...(id ? { id } : {}),
         userId: user.id,
         name: this.normalizeName(dto.name),
         gridSize: dto.gridSize,
@@ -225,6 +231,13 @@ export class LiveLayoutsService {
       },
     });
     return criado;
+    } catch (error) {
+      if (id && (error as { code?: string }).code === 'P2002') {
+        const existing = await this.prisma.liveLayout.findUnique({ where: { id } });
+        if (existing?.userId === user.id) return existing;
+      }
+      throw error;
+    }
   }
 
   async update(user: AuthUser, id: string, dto: UpdateLiveLayoutDto) {

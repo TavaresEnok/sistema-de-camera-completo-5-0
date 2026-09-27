@@ -3,6 +3,11 @@ import { DestinatariosDto } from './destinatarios.dto';
 import { ArrayMaxSize, IsArray, IsBoolean, IsOptional, IsString, Matches, MaxLength, ValidateNested } from 'class-validator';
 
 export class CreateLiveLayoutDto {
+  @IsOptional()
+  @IsString()
+  @Matches(/^[a-zA-Z0-9_-]{1,100}$/)
+  clientRequestId?: string;
+
   @IsString()
   @MaxLength(80)
   name!: string;

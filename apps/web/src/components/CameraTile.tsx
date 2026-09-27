@@ -6,6 +6,7 @@ import { LiveStreamPlayer, type LivePlayerStatus } from './LiveStreamPlayer';
 import { mostrarAvisoDeOffline } from '../lib/aviso-de-offline-no-tile';
 
 import { useGridStore } from '../store/gridStore';
+import { useAuthStore } from '../store/authStore';
 
 interface CameraTileProps {
   camera: Camera;
@@ -17,6 +18,7 @@ interface CameraTileProps {
   compact?: boolean;
   streamStartDelayMs?: number;
   routeActive?: boolean;
+  playbackEnabled?: boolean;
   showDetectionOverlay?: boolean;
   liveViewMode?: 'selected' | 'grid';
   wallMode?: boolean;
@@ -43,12 +45,15 @@ export function CameraTile({
   compact,
   streamStartDelayMs = 0,
   routeActive = true,
+  playbackEnabled = true,
   showDetectionOverlay = false,
   liveViewMode = 'grid',
   wallMode: wallModeProp,
   onGridSourceIsOriginal,
 }: CameraTileProps) {
   const [hovered, setHovered] = useState(false);
+  const [keyboardFocused, setKeyboardFocused] = useState(false);
+  const canRecord = useAuthStore(state => state.user?.role === 'admin' || state.user?.role === 'operator');
   const [playerStatus, setPlayerStatus] = useState<LivePlayerStatus | null>(null);
   const storedWallMode = useGridStore((state) => state.wallMode);
   const wallMode = wallModeProp ?? storedWallMode;
@@ -56,7 +61,7 @@ export function CameraTile({
   // Câmera privada que ESTE usuário não pode ver (ex.: admin numa câmera do
   // cliente). O player NÃO é montado — mostramos um aviso de privacidade limpo
   // no lugar. O backend já bloqueia o conteúdo; aqui é só a UX respeitosa.
-  const contentLocked = camera.isPrivate === true && camera.canViewContent === false;
+  const contentLocked = camera.canViewContent === false;
 
   // Overlay "Offline" do tile só quando o player também não tem imagem viva —
   // e tocar por contingência (`fallback`) CONTA como imagem viva. Ver
@@ -66,8 +71,8 @@ export function CameraTile({
   const isMotion   = camera.status === 'motion';
   // Regras de movimento/objeto podem estar gravando automaticamente; elas não
   // são o REC acionado na grade e não devem pintar o botão de vermelho.
-  const isManualRecordingActive = camera.manualRecordingActive === true
-    || (camera.recordingMode === 'manual' && camera.status === 'recording');
+  const isManualRecordingActive = camera.manualRecordingActive
+    ?? (camera.recordingMode === 'manual' && camera.status === 'recording');
 
   return (
     <motion.div
@@ -75,9 +80,11 @@ export function CameraTile({
         ${selected ? 'ring-2 ring-inset ring-[hsl(var(--primary))] shadow-[inset_0_0_0_1px_hsl(var(--primary)_/_0.28)]' : ''}
         ${isAlarm   ? 'alarm-glow ring-1 ring-[hsl(var(--status-alarm)_/_0.5)]' : ''}
       `}
-      style={{ background: 'hsl(var(--layer-base))', minHeight: compact ? 80 : 120 }}
+      style={{ background: 'hsl(var(--layer-base))', minHeight: 0 }}
       onHoverStart={() => setHovered(true)}
       onHoverEnd={() => setHovered(false)}
+      onFocusCapture={() => setKeyboardFocused(true)}
+      onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setKeyboardFocused(false); }}
       transition={{ duration: 0.12 }}
     >
       {/* O stream fica MONTADO mesmo com status "offline": o status vem de sondagem
@@ -91,8 +98,8 @@ export function CameraTile({
         <div className="absolute inset-0 flex items-center justify-center bg-[hsl(210,18%,9%)]">
           <div className="text-center px-4">
             <Lock className="mx-auto mb-2 h-6 w-6 text-white/30" />
-            <div className="text-[11px] font-medium text-white/60">Câmera privada</div>
-            <div className="mt-0.5 text-[9px] text-white/35">Conteúdo acessível somente ao cliente</div>
+            <div className="text-[11px] font-medium text-white/80">{camera.isPrivate ? 'Câmera privada' : 'Acesso restrito'}</div>
+            <div className="mt-0.5 text-[10px] text-white/65">Seu usuário não pode visualizar esta câmera.</div>
           </div>
         </div>
       ) : (
@@ -101,13 +108,14 @@ export function CameraTile({
             cameraId={camera.id}
             cameraName={camera.name}
             showOverlay={showDetectionOverlay && !wallMode && !showOfflineOverlay}
-            showEssentialStatus={wallMode}
+            showEssentialStatus
             aiEnabled={camera.aiEnabled}
             liveViewMode={liveViewMode}
             className="h-full w-full"
             muted
             startDelayMs={streamStartDelayMs}
             routeActive={routeActive}
+            playbackEnabled={playbackEnabled}
             onStatusChange={setPlayerStatus}
             onGridSourceIsOriginal={(isOriginal) => onGridSourceIsOriginal?.(camera.id, isOriginal)}
           />
@@ -176,7 +184,7 @@ export function CameraTile({
 
       {/* Hover action bar */}
       <AnimatePresence>
-        {(hovered || selected) && !showOfflineOverlay && !wallMode && (
+        {(hovered || selected || keyboardFocused) && !contentLocked && !showOfflineOverlay && !wallMode && (
           <motion.div
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
@@ -185,7 +193,7 @@ export function CameraTile({
             className="absolute bottom-1 left-1/2 -translate-x-1/2 z-30 flex items-center gap-0.5 rounded-md py-1.5 px-2 bg-black/75 backdrop-blur-[2px]"
             onClick={e => e.stopPropagation()}
           >
-            <button
+            {camera.ptzCapable && <button
               type="button"
               aria-label={`Abrir controle PTZ de ${camera.name}`}
               className="w-6 h-6 flex items-center justify-center rounded text-white/50 hover:text-[hsl(var(--primary))] hover:bg-white/8 transition-colors"
@@ -193,8 +201,8 @@ export function CameraTile({
               title="Controle PTZ"
             >
               <Crosshair className="w-3 h-3" />
-            </button>
-            {camera.recordingMode !== 'continuous' && <button
+            </button>}
+            {canRecord && camera.recordingMode !== 'continuous' && <button
               type="button"
               disabled={recordingBusy}
               aria-label={`${isManualRecordingActive ? 'Parar' : 'Iniciar'} gravação manual de ${camera.name}`}

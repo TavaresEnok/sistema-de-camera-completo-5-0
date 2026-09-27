@@ -91,7 +91,9 @@ const LIVE_PANEL_MAX_WIDTH = 480;
 
 function loadLivePanelWidth() {
   try {
-    const stored = Number(window.localStorage.getItem(LIVE_PANEL_WIDTH_STORAGE_KEY));
+    const raw = window.localStorage.getItem(LIVE_PANEL_WIDTH_STORAGE_KEY);
+    if (raw == null) return 280;
+    const stored = Number(raw);
     return Number.isFinite(stored)
       ? Math.max(LIVE_PANEL_MIN_WIDTH, Math.min(LIVE_PANEL_MAX_WIDTH, Math.round(stored)))
       : 280;
@@ -135,6 +137,8 @@ type ApiLiveLayout = {
   cameraIds: unknown;
   lastUsedAt?: string;
   createdAt?: string;
+  origem?: 'meu' | 'recebido';
+  podeEditar?: boolean;
 };
 
 type PosterTokenItem = { cameraId: string; streamToken: string; posterUrl: string };
@@ -146,31 +150,37 @@ function mapApiLiveLayout(layout: ApiLiveLayout): SavedLayout | null {
     name: layout.name,
     gridSize: layout.gridSize as GridSize,
     cameraIds: layout.cameraIds.map(String),
-    createdBy: useAuthStore.getState().user?.name ?? 'Operador',
+    createdBy: layout.origem === 'recebido' ? 'Compartilhado com você' : useAuthStore.getState().user?.name ?? 'Operador',
+    origem: layout.origem ?? 'meu',
+    podeEditar: layout.podeEditar ?? layout.origem !== 'recebido',
     lastUsed: layout.lastUsedAt ?? layout.createdAt ?? new Date().toISOString(),
   };
 }
 
-function loadSavedLayouts(): SavedLayout[] {
+function loadSavedLayouts(userId = useAuthStore.getState().user?.id): SavedLayout[] {
   if (typeof window === 'undefined') return [];
+  if (!userId) return [];
   try {
-    const raw = window.localStorage.getItem(LIVE_LAYOUTS_STORAGE_KEY);
+    const raw = window.localStorage.getItem(`${LIVE_LAYOUTS_STORAGE_KEY}.${userId}`);
     if (!raw) return [];
     const parsed = JSON.parse(raw) as SavedLayout[];
     return Array.isArray(parsed)
-      ? parsed.filter((layout) => layout && typeof layout.id === 'string' && Array.isArray(layout.cameraIds))
+      ? parsed.filter((layout) => layout && typeof layout.id === 'string' && typeof layout.name === 'string'
+        && /^[1-8]x[1-8]$/.test(layout.gridSize) && Array.isArray(layout.cameraIds)
+        && layout.cameraIds.length <= 64 && layout.cameraIds.every(id => typeof id === 'string'))
       : [];
   } catch {
     return [];
   }
 }
 
-function persistSavedLayouts(layouts: SavedLayout[]) {
-  if (typeof window === 'undefined') return;
+function persistSavedLayouts(layouts: SavedLayout[], userId = useAuthStore.getState().user?.id) {
+  if (typeof window === 'undefined' || !userId) return false;
   try {
-    window.localStorage.setItem(LIVE_LAYOUTS_STORAGE_KEY, JSON.stringify(layouts));
+    window.localStorage.setItem(`${LIVE_LAYOUTS_STORAGE_KEY}.${userId}`, JSON.stringify(layouts));
+    return true;
   } catch {
-    // A operação atual continua disponível mesmo sem cache do navegador.
+    return false;
   }
 }
 
@@ -178,6 +188,7 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
   const API_URL = getApiBaseUrl();
   const { toast } = useToast();
   const accessToken = useAuthStore((state) => state.accessToken);
+  const authUserId = useAuthStore((state) => state.user?.id);
   const allCameras = useVmsDataStore((state) => state.cameras);
   // Câmeras desativadas não aparecem no ao vivo (continuam na página Câmeras p/ reativar).
   const cameras = useMemo(() => allCameras.filter((camera) => camera.enabled !== false), [allCameras]);
@@ -213,10 +224,6 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
   }, [storeCameraIds]);
   const displayCoordination = useLiveDisplays(displayId, storedCameraIds, removeCameraById);
   const openAuxiliaryDisplay = useCallback((target: Exclude<LiveDisplayId, 'main'>) => {
-    const storageKey = `drac.live.grid.${target}.v1`;
-    if (!window.localStorage.getItem(storageKey)) {
-      window.localStorage.setItem(storageKey, JSON.stringify({ gridSize: '3x2', cameraIds: [] }));
-    }
     const url = new URL('/live', window.location.origin);
     url.searchParams.set('display', target);
     const popup = window.open(url.toString(), `drac-${target}`, 'popup=yes,width=1280,height=720');
@@ -256,16 +263,47 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
   const [statusFilter, setStatusFilter] = useState<(typeof STATUS_FILTERS)[number]>('all');
   const [recordingOverrides, setRecordingOverrides] = useState<Record<string, boolean>>({});
   const recordingCommandsInFlight = useRef(new Set<string>());
+  const recordingOverrideTimers = useRef(new Map<string, number>());
+  const pageMountedRef = useRef(true);
+  useEffect(() => {
+    pageMountedRef.current = true;
+    return () => {
+      pageMountedRef.current = false;
+      for (const timer of recordingOverrideTimers.current.values()) window.clearTimeout(timer);
+      recordingOverrideTimers.current.clear();
+    };
+  }, []);
   const [recordingBusyIds, setRecordingBusyIds] = useState<string[]>([]);
   const [savedLayouts, setSavedLayouts] = useState<SavedLayout[]>(() => loadSavedLayouts());
+  const savedLayoutsRef = useRef(savedLayouts);
+  savedLayoutsRef.current = savedLayouts;
+  const commitLayoutDialogRef = useRef(false);
+  const [layoutBusy, setLayoutBusy] = useState(false);
+  const [layoutsSyncing, setLayoutsSyncing] = useState(false);
+  const [layoutSyncNonce, setLayoutSyncNonce] = useState(0);
   const [selectedSlotIndex, setSelectedSlotIndex] = useState<number | null>(null);
   const [layoutSelectValue, setLayoutSelectValue] = useState('');
   const [layoutDialog, setLayoutDialog] = useState<{ mode: 'save' | 'rename'; id?: string; name: string } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<SavedLayout | null>(null);
   const [sidebarPosterUrls, setSidebarPosterUrls] = useState<Record<string, string>>({});
   const lastSidebarPosterRetryAtRef = useRef(0);
+  const posterRequestRef = useRef<AbortController | null>(null);
+  const resizeCleanupRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => resizeCleanupRef.current?.(), []);
+  const gridViewportRef = useRef<HTMLDivElement | null>(null);
+  const [gridViewport, setGridViewport] = useState({ width: 0, height: 0 });
+  useEffect(() => {
+    const viewport = gridViewportRef.current;
+    if (!viewport) return;
+    const observer = new ResizeObserver(([entry]) => {
+      setGridViewport({ width: entry.contentRect.width, height: entry.contentRect.height });
+    });
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, [pageActive, displayCoordination.isSuperseded]);
 
   const beginPanelResize = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    resizeCleanupRef.current?.();
     event.preventDefault();
     const startX = event.clientX;
     const startWidth = panelWidth;
@@ -281,52 +319,82 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
       try { window.localStorage.setItem(LIVE_PANEL_WIDTH_STORAGE_KEY, String(finalWidth)); } catch { /* preferência local */ }
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onCancel);
+      resizeCleanupRef.current = null;
     };
+    const onCancel = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onCancel);
+      resizeCleanupRef.current = null;
+    };
+    resizeCleanupRef.current = onCancel;
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp, { once: true });
+    window.addEventListener('pointercancel', onCancel, { once: true });
   }, [panelWidth]);
 
+  const filteredList = useMemo(() => {
+      const q = search.toLowerCase();
+      return cameras.filter((c) => {
+        const matchSearch = !q || c.name.toLowerCase().includes(q) || c.code.toLowerCase().includes(q) || c.ipAddress.includes(q);
+      const matchGroup = groupFilter === '__all__' || c.floor === groupFilter;
+      const matchZona = zoneFilter === '__all__' || c.zone === zoneFilter;
+      const matchStatus = statusFilter === 'all' || c.status === statusFilter;
+      return matchSearch && matchGroup && matchZona && matchStatus;
+    });
+  }, [cameras, search, groupFilter, zoneFilter, statusFilter]);
+  const [sidebarVisibleCount, setSidebarVisibleCount] = useState(100);
+  useEffect(() => { setSidebarVisibleCount(100); }, [search, groupFilter, zoneFilter, statusFilter]);
+
   const sidebarPosterCameraIdsKey = useMemo(
-    () => cameras
+    () => filteredList.slice(0, sidebarVisibleCount)
       .filter((camera) => camera.canViewContent !== false)
       .map((camera) => camera.id)
       .sort()
       .join(','),
-    [cameras],
+    [filteredList, sidebarVisibleCount],
   );
 
   const loadSidebarPosters = useCallback(async () => {
-    if (!accessToken) return;
-    const cameraIds = useVmsDataStore.getState().cameras
-      .filter((camera) => camera.enabled !== false && camera.canViewContent !== false)
-      .map((camera) => camera.id);
+    if (!accessToken || posterRequestRef.current || document.hidden) return;
+    const cameraIds = sidebarPosterCameraIdsKey.split(',').filter(Boolean);
     if (!cameraIds.length) {
       setSidebarPosterUrls({});
       return;
     }
+    const controller = new AbortController();
+    posterRequestRef.current = controller;
     try {
-      const { data } = await axios.post<{ items: PosterTokenItem[] }>(
-        `${API_URL}/camera-stream/poster-tokens`,
-        { cameraIds },
-        { headers: { Authorization: `Bearer ${accessToken}` } },
-      );
       const next: Record<string, string> = {};
       const version = Date.now();
-      for (const item of Array.isArray(data.items) ? data.items : []) {
-        const separator = item.posterUrl.includes('?') ? '&' : '?';
-        next[item.cameraId] = `${item.posterUrl}${separator}token=${encodeURIComponent(item.streamToken)}&v=${version}`;
+      for (let offset = 0; offset < cameraIds.length; offset += 200) {
+        const { data } = await axios.post<{ items: PosterTokenItem[] }>(
+          `${API_URL}/camera-stream/poster-tokens`,
+          { cameraIds: cameraIds.slice(offset, offset + 200) },
+          { headers: { Authorization: `Bearer ${accessToken}` }, signal: controller.signal, timeout: 15_000 },
+        );
+        if (controller.signal.aborted) return;
+        for (const item of Array.isArray(data.items) ? data.items : []) {
+          const separator = item.posterUrl.includes('?') ? '&' : '?';
+          next[item.cameraId] = `${item.posterUrl}${separator}token=${encodeURIComponent(item.streamToken)}&v=${version}`;
+        }
+        setSidebarPosterUrls(current => ({ ...current, ...next }));
       }
       setSidebarPosterUrls(next);
     } catch {
       // Mantém a última imagem válida quando a API ou uma câmera oscila.
+    } finally {
+      if (posterRequestRef.current === controller) posterRequestRef.current = null;
     }
-  }, [API_URL, accessToken]);
+  }, [API_URL, accessToken, sidebarPosterCameraIdsKey]);
 
   useEffect(() => {
     // O painel recolhido não gera trabalho de snapshot. Ao abrir, os tokens são
     // emitidos em um único lote; o navegador baixa somente as imagens visíveis.
     if (!panelOpen) return;
     if (!pageActive) return;
+    setSidebarPosterUrls({});
     void loadSidebarPosters();
     const renew = () => {
       if (document.visibilityState === 'visible') void loadSidebarPosters();
@@ -335,6 +403,8 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
     window.addEventListener('focus', renew);
     document.addEventListener('visibilitychange', renew);
     return () => {
+      posterRequestRef.current?.abort();
+      posterRequestRef.current = null;
       window.clearInterval(timer);
       window.removeEventListener('focus', renew);
       document.removeEventListener('visibilitychange', renew);
@@ -356,53 +426,59 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
     void loadSidebarPosters();
   }, [loadSidebarPosters]);
 
-  useEffect(() => {
-    if (!accessToken) return;
-    let cancelled = false;
-    const headers = { Authorization: `Bearer ${accessToken}` };
+  useEffect(() => { setSavedLayouts(loadSavedLayouts(authUserId)); }, [authUserId]);
 
+  useEffect(() => {
+    const onOnline = () => setLayoutSyncNonce(value => value + 1);
+    window.addEventListener('online', onOnline);
+    return () => window.removeEventListener('online', onOnline);
+  }, []);
+
+  useEffect(() => {
+    if (!accessToken || !authUserId) return;
+    if (commitLayoutDialogRef.current) { setLayoutsSyncing(false); return; }
+    let cancelled = false;
+    const controller = new AbortController();
+    const options = { headers: { Authorization: `Bearer ${accessToken}` }, signal: controller.signal, timeout: 10_000 };
+    setLayoutsSyncing(true);
     void (async () => {
       try {
-        const response = await axios.get<ApiLiveLayout[]>(`${API_URL}/live-layouts`, { headers });
+        const response = await axios.get<ApiLiveLayout[]>(`${API_URL}/live-layouts`, options);
         if (cancelled) return;
-        const remoteLayouts = response.data.map(mapApiLiveLayout).filter((layout): layout is SavedLayout => Boolean(layout));
-        if (remoteLayouts.length) {
-          const pendingLocal = loadSavedLayouts().filter(layout => layout.id.startsWith('local-'));
-          const merged = [...remoteLayouts, ...pendingLocal.filter(layout => !remoteLayouts.some(remote => remote.id === layout.id))];
-          setSavedLayouts(merged);
-          persistSavedLayouts(merged);
-          return;
+        const remote = response.data.map(mapApiLiveLayout).filter((layout): layout is SavedLayout => Boolean(layout));
+        // Preserva rascunhos mesmo quando o servidor já tem outros layouts.
+        const pendingLocal = Array.from(new Map([...loadSavedLayouts(authUserId), ...savedLayoutsRef.current]
+          .filter(layout => layout.id.startsWith('local-')).map(layout => [layout.id, layout])).values());
+        const merged = [...remote, ...pendingLocal];
+        setSavedLayouts(merged);
+        persistSavedLayouts(merged, authUserId);
+        for (const draft of pendingLocal) {
+          try {
+            const created = await axios.post<ApiLiveLayout>(`${API_URL}/live-layouts`, {
+              name: draft.name, gridSize: draft.gridSize, cameraIds: draft.cameraIds,
+              clientRequestId: draft.id,
+            }, options);
+            if (cancelled) return;
+            const layout = mapApiLiveLayout(created.data);
+            if (!layout) continue;
+            setSavedLayouts(current => {
+              const next = [layout, ...current.filter(item => item.id !== draft.id && item.id !== layout.id)];
+              persistSavedLayouts(next, authUserId);
+              return next;
+            });
+          } catch {
+            if (cancelled) return;
+            // Cada falha mantém somente o rascunho correspondente para nova tentativa.
+          }
         }
-
-        const localLayouts = loadSavedLayouts();
-        if (!localLayouts.length) return;
-        // Trava de migração ÚNICA (sessionStorage cobre duas abas do mesmo
-        // navegador): sem ela, duas abas de /live abertas com o servidor ainda
-        // vazio migravam as duas — layouts duplicados no servidor.
-        const TRAVA = 'drac-live-layouts-migrando';
-        if (window.sessionStorage.getItem(TRAVA)) return;
-        window.sessionStorage.setItem(TRAVA, String(Date.now()));
-        const migrated = await Promise.all(localLayouts.map(async (layout) => {
-          const created = await axios.post<ApiLiveLayout>(`${API_URL}/live-layouts`, {
-            name: layout.name,
-            gridSize: layout.gridSize,
-            cameraIds: layout.cameraIds,
-          }, { headers });
-          return mapApiLiveLayout(created.data);
-        }));
-        if (cancelled) return;
-        const valid = migrated.filter((layout): layout is SavedLayout => Boolean(layout));
-        setSavedLayouts(valid);
-        persistSavedLayouts(valid);
       } catch {
-        // O cache local continua funcional durante indisponibilidade da API.
+        // O cache deste usuário continua disponível durante indisponibilidade.
+      } finally {
+        if (!cancelled) setLayoutsSyncing(false);
       }
     })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [API_URL, accessToken]);
+    return () => { cancelled = true; controller.abort(); };
+  }, [API_URL, accessToken, authUserId, layoutSyncNonce]);
 
   const zoneFilters = useMemo(
     () => ['__all__', ...Array.from(new Set(cameras.map((camera) => camera.zone)))],
@@ -475,7 +551,7 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
       let changed = false;
       const next = { ...current };
       for (const camera of cameras) {
-        if (camera.id in next && camera.recordingMode === 'manual' && next[camera.id] === (camera.status === 'recording')) {
+        if (camera.id in next && next[camera.id] === camera.manualRecordingActive) {
           delete next[camera.id];
           changed = true;
         }
@@ -525,16 +601,6 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
   );
   const alarmCount = useMemo(() => cameras.filter((c) => c.status === 'alarm').length, [cameras]);
 
-  const filteredList = useMemo(() => {
-      const q = search.toLowerCase();
-      return cameras.filter((c) => {
-        const matchSearch = !q || c.name.toLowerCase().includes(q) || c.code.toLowerCase().includes(q) || c.ipAddress.includes(q);
-      const matchGroup = groupFilter === '__all__' || c.floor === groupFilter;
-      const matchZona = zoneFilter === '__all__' || c.zone === zoneFilter;
-      const matchStatus = statusFilter === 'all' || c.status === statusFilter;
-      return matchSearch && matchGroup && matchZona && matchStatus;
-    });
-  }, [cameras, search, groupFilter, zoneFilter, statusFilter]);
 
   const zoomToCamera = useCallback((cameraId: string) => {
     if (!focusedCameraId) {
@@ -569,6 +635,7 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       if (layoutDialog || deleteTarget) return;
+      if (document.querySelector('[data-radix-popper-content-wrapper], [role="dialog"][data-state="open"]')) return;
       // No mural em tela cheia, Esc é a primeira tecla que todo operador tenta
       // — e não fazia nada (o botão "Sair" é pequeno e fica no canto).
       if (focusedCameraId) { restoreLayout(); return; }
@@ -589,54 +656,48 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
     if (action === 'playback') setLocation(`/playback?cameraId=${encodeURIComponent(camera.id)}`);
     if (action === 'ptz') setLocation(`/ptz?cameraId=${encodeURIComponent(camera.id)}`);
     if (action === 'info') setLocation(`/cameras?cameraId=${encodeURIComponent(camera.id)}`);
-    if ((action === 'record-start' || action === 'record-stop') && (!accessToken || recordingCommandsInFlight.current.has(camera.id))) return;
-    if (action === 'record-start' && camera.recordingMode === 'continuous') {
-      toast({ title: 'Esta câmera já grava continuamente', description: 'Use a reprodução para consultar ou salvar um trecho.' });
-      return;
-    }
     if (action === 'record-start' || action === 'record-stop') {
+      if (!accessToken || recordingCommandsInFlight.current.has(camera.id)) return;
+      if (camera.recordingMode === 'continuous') {
+        toast({ title: 'Gravação contínua preservada', description: 'Use a reprodução para consultar ou salvar um trecho.' });
+        return;
+      }
+      const userId = useAuthStore.getState().user?.id;
       recordingCommandsInFlight.current.add(camera.id);
       setRecordingBusyIds(Array.from(recordingCommandsInFlight.current));
-    }
-    if (action === 'record-start') {
+      const clearOverride = () => {
+        const timer = recordingOverrideTimers.current.get(camera.id);
+        if (timer != null) window.clearTimeout(timer);
+        recordingOverrideTimers.current.delete(camera.id);
+        setRecordingOverrides(current => { const next = { ...current }; delete next[camera.id]; return next; });
+      };
       void (async () => {
-        setRecordingOverrides((current) => ({ ...current, [camera.id]: true }));
         try {
-          const { data } = await axios.post(`${API_URL}/cameras/${camera.id}/recording/start`, {}, {
-            headers: { Authorization: `Bearer ${accessToken}` },
+          const starting = action === 'record-start';
+          const { data } = await axios.post(`${API_URL}/cameras/${camera.id}/recording/${starting ? 'start' : 'stop'}`, {}, {
+            headers: { Authorization: `Bearer ${accessToken}` }, timeout: 15_000,
           });
-          void loadData();
-          if (data.status === 'already_recording' && camera.recordingMode === 'continuous') {
-            setRecordingOverrides(current => { const next = { ...current }; delete next[camera.id]; return next; });
-            toast({ title: 'Gravação contínua preservada' });
+          if (!pageMountedRef.current || useAuthStore.getState().user?.id !== userId) return;
+          clearOverride();
+          if (data.status === 'continuous_recording_protected' || data.status === 'automatic_recording_protected') {
+            toast({ title: 'Gravação automática preservada' });
           } else {
-            toast({ title: 'Gravação manual iniciada', description: `${camera.name} · para automaticamente em até 10 minutos.` });
-            window.setTimeout(() => setRecordingOverrides(current => { const next = { ...current }; delete next[camera.id]; return next; }), 600_000);
+            setRecordingOverrides(current => ({ ...current, [camera.id]: starting }));
+            recordingOverrideTimers.current.set(camera.id, window.setTimeout(clearOverride, 15_000));
+            toast({
+              title: starting ? 'Gravação manual solicitada' : 'Parada da gravação manual solicitada',
+              description: starting ? `${camera.name} · limite de 10 minutos.` : camera.name,
+            });
           }
-        } catch (error) {
-          setRecordingOverrides((current) => ({ ...current, [camera.id]: camera.status === 'recording' }));
-          toast({ title: 'Erro ao iniciar gravação', description: error instanceof Error ? error.message : 'Falha ao iniciar gravação manual.', variant: 'destructive' });
-        } finally {
-          recordingCommandsInFlight.current.delete(camera.id);
-          setRecordingBusyIds(Array.from(recordingCommandsInFlight.current));
-        }
-      })();
-    }
-    if (action === 'record-stop') {
-      void (async () => {
-        setRecordingOverrides((current) => ({ ...current, [camera.id]: false }));
-        try {
-          await axios.post(`${API_URL}/cameras/${camera.id}/recording/stop`, {}, {
-            headers: { Authorization: `Bearer ${accessToken}` },
-          });
           void loadData();
-          toast({ title: 'Gravação parada', description: camera.name });
-        } catch (error) {
-          setRecordingOverrides((current) => ({ ...current, [camera.id]: camera.status === 'recording' }));
-          toast({ title: 'Erro ao parar gravação', description: error instanceof Error ? error.message : 'Falha ao parar gravação manual.', variant: 'destructive' });
+        } catch {
+          if (!pageMountedRef.current || useAuthStore.getState().user?.id !== userId) return;
+          clearOverride();
+          void loadData();
+          toast({ title: 'Não foi possível confirmar a gravação', description: 'Confira o estado da câmera antes de tentar novamente.', variant: 'destructive' });
         } finally {
           recordingCommandsInFlight.current.delete(camera.id);
-          setRecordingBusyIds(Array.from(recordingCommandsInFlight.current));
+          if (pageMountedRef.current) setRecordingBusyIds(Array.from(recordingCommandsInFlight.current));
         }
       })();
     }
@@ -686,27 +747,25 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
     }, ORIGINAL_PREWARM_MAX_WAIT_MS);
   }, [stopOriginalPrewarm]);
 
+  useEffect(() => {
+    if (focusedCameraId) prewarmOriginal(focusedCameraId);
+    else stopOriginalPrewarm();
+  }, [focusedCameraId, prewarmOriginal, stopOriginalPrewarm]);
+
   useEffect(() => () => {
     if (prewarmTimeoutRef.current != null) window.clearTimeout(prewarmTimeoutRef.current);
     if (prewarmFallbackTimeoutRef.current != null) window.clearTimeout(prewarmFallbackTimeoutRef.current);
   }, []);
 
   const handleCamClick = useCallback((id: string) => {
-    setSelectedCam((current) => {
-      const next = current === id ? null : id;
-      if (next) prewarmOriginal(id);
-      else stopOriginalPrewarm();
-      return next;
-    });
-  }, [prewarmOriginal, stopOriginalPrewarm]);
+    setSelectedCam(current => current === id ? null : id);
+  }, []);
 
   const handleCamDoubleClick = useCallback((camera: Camera) => {
     if (focusedCameraId) { restoreLayout(); return; }
-    // O primeiro clique do duplo clique já iniciou o aquecimento. Esta chamada
-    // também cobre teclado/touch e qualquer caminho que amplie sem seleção.
-    prewarmOriginal(camera.id);
+    // O efeito da câmera focada prepara a imagem, inclusive por teclado/touch.
     zoomToCamera(camera.id);
-  }, [focusedCameraId, prewarmOriginal, restoreLayout, zoomToCamera]);
+  }, [focusedCameraId, restoreLayout, zoomToCamera]);
 
   const loadLayout = (layoutId: string) => {
     const layout = availableLayouts.find(l => l.id === layoutId);
@@ -714,8 +773,11 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
     // dispare onValueChange novamente (Radix não reemite o valor atual).
     setLayoutSelectValue('');
     if (!layout) return;
+    const conflicts = layout.cameraIds.filter(id => id && displayCoordination.findCameraDisplay(id));
     setGridSize(layout.gridSize);
-    setCameraIds(layout.cameraIds.slice(0, (() => { const d = gridDims(layout.gridSize); return d.cols * d.rows; })()));
+    setCameraIds(layout.cameraIds.slice(0, (() => { const d = gridDims(layout.gridSize); return d.cols * d.rows; })())
+      .map(id => conflicts.includes(id) ? '' : id));
+    if (conflicts.length) toast({ title: 'Algumas câmeras já estão em outra tela', description: 'Os quadros correspondentes ficaram vazios. Use a lista de câmeras para movê-las.' });
     setSelectedSlotIndex(null);
   };
 
@@ -771,9 +833,10 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
       title: `Câmera já aberta na ${liveDisplayLabel(other.displayId)}`,
       description: 'Para evitar duas conexões iguais e travamentos, mova a câmera ou escolha outra.',
       action: (
-        <ToastAction altText="Mover para esta tela" onClick={() => {
-          displayCoordination.moveFromOtherDisplay(other.displayId, camId);
-          window.setTimeout(() => placeCameraInGrid(camId), 150);
+        <ToastAction altText="Mover para esta tela" onClick={async () => {
+          const moved = await displayCoordination.moveFromOtherDisplay(other.displayId, camId);
+          if (moved) placeCameraInGrid(camId);
+          else toast({ title: 'A outra tela não confirmou a mudança', description: 'Verifique se ela continua aberta e tente novamente.', variant: 'destructive' });
         }}>
           Mover para esta tela
         </ToastAction>
@@ -797,28 +860,30 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
   };
 
   const saveCurrentLayout = () => {
+    if (layoutsSyncing) return;
     setLayoutDialog({ mode: 'save', name: `Layout ${savedLayouts.length + 1}` });
   };
 
   const renameLayout = (layoutId: string) => {
     const layout = savedLayouts.find((item) => item.id === layoutId);
-    if (!layout) return;
+    if (!layout || layout.podeEditar === false || layoutsSyncing) return;
     setLayoutDialog({ mode: 'rename', id: layoutId, name: layout.name });
   };
 
   const deleteLayout = (layoutId: string) => {
     const layout = savedLayouts.find((item) => item.id === layoutId);
-    if (!layout) return;
+    if (!layout || layout.podeEditar === false || layoutsSyncing) return;
     setDeleteTarget(layout);
   };
 
-  const commitLayoutDialogRef = useRef(false);
   const commitLayoutDialog = async () => {
-    if (!layoutDialog) return;
+    if (!layoutDialog || layoutsSyncing) return;
     // Reentrância: Enter duplo (ou Enter + clique em "Salvar") disparava dois
     // POSTs antes de o diálogo fechar — dois layouts idênticos no servidor.
     if (commitLayoutDialogRef.current) return;
     commitLayoutDialogRef.current = true;
+    setLayoutBusy(true);
+    const stillCurrent = () => pageMountedRef.current && useAuthStore.getState().user?.id === authUserId;
     try {
     const name = layoutDialog.name.trim();
     if (!name) return;
@@ -835,10 +900,12 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
         // esta guarda, o rename não. Localmente, renomear é só persistir.
         if (!layoutDialog.id.startsWith('local-')) {
           if (!headers) throw new Error('Sessão inválida.');
-          await axios.patch(`${API_URL}/live-layouts/${layoutDialog.id}`, { name }, { headers });
+          await axios.patch(`${API_URL}/live-layouts/${layoutDialog.id}`, { name }, { headers, timeout: 10_000 });
         }
+        if (!stillCurrent()) return;
         toast({ title: 'Layout renomeado', description: name });
       } catch {
+        if (!stillCurrent()) return;
         setSavedLayouts(previousLayouts);
         persistSavedLayouts(previousLayouts);
         toast({ title: 'Não foi possível renomear', description: 'O layout foi restaurado.', variant: 'destructive' });
@@ -846,7 +913,7 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
       }
     } else {
       const draft: SavedLayout = {
-        id: `local-live-layout-${Date.now()}`,
+        id: `local-live-layout-${crypto.randomUUID()}`,
         name,
         gridSize,
         cameraIds: cameraIds.slice(0, count),
@@ -861,28 +928,36 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
           name: draft.name,
           gridSize: draft.gridSize,
           cameraIds: draft.cameraIds,
-        }, { headers });
+          clientRequestId: draft.id,
+        }, { headers, timeout: 10_000 });
         nextLayout = mapApiLiveLayout(response.data) ?? draft;
-      } catch {
-        toast({
-          title: 'Layout salvo somente neste navegador',
-          description: 'A sincronização com o servidor falhou.',
-          variant: 'destructive',
-        });
+      } catch (error) {
+        if (!stillCurrent()) return;
+        if (axios.isAxiosError(error) && error.response && [400, 401, 403, 422].includes(error.response.status)) {
+          toast({ title: 'Não foi possível salvar o layout', description: 'Confira sua sessão, suas permissões e o nome informado.', variant: 'destructive' });
+          return;
+        }
       }
-      const nextLayouts = [nextLayout, ...savedLayouts];
+      if (!stillCurrent()) return;
+      const nextLayouts = [nextLayout, ...savedLayoutsRef.current.filter(item => item.id !== nextLayout.id)];
+      const persisted = persistSavedLayouts(nextLayouts, authUserId);
       setSavedLayouts(nextLayouts);
-      persistSavedLayouts(nextLayouts);
-      toast({ title: 'Layout salvo', description: name });
+      if (nextLayout.id.startsWith('local-')) {
+        toast({ title: persisted ? 'Layout salvo somente neste navegador' : 'Layout disponível somente nesta aba',
+          description: persisted ? 'Use Sincronizar quando a conexão voltar.' : 'O navegador bloqueou o armazenamento. Mantenha esta aba aberta até sincronizar.', variant: 'destructive' });
+      } else toast({ title: 'Layout salvo', description: name });
     }
     setLayoutDialog(null);
     } finally {
       commitLayoutDialogRef.current = false;
+      if (pageMountedRef.current) setLayoutBusy(false);
     }
   };
 
   const confirmDeleteLayout = async () => {
-    if (!deleteTarget) return;
+    if (!deleteTarget || deleteTarget.podeEditar === false || layoutsSyncing || commitLayoutDialogRef.current) return;
+    commitLayoutDialogRef.current = true;
+    setLayoutBusy(true);
     const previousLayouts = savedLayouts;
     const nextLayouts = savedLayouts.filter((item) => item.id !== deleteTarget.id);
     setSavedLayouts(nextLayouts);
@@ -891,14 +966,21 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
       if (accessToken && !deleteTarget.id.startsWith('local-')) {
         await axios.delete(`${API_URL}/live-layouts/${deleteTarget.id}`, {
           headers: { Authorization: `Bearer ${accessToken}` },
+          timeout: 10_000,
         });
       }
+      if (!pageMountedRef.current || useAuthStore.getState().user?.id !== authUserId) return;
       toast({ title: 'Layout apagado', description: deleteTarget.name });
     } catch {
+      if (!pageMountedRef.current || useAuthStore.getState().user?.id !== authUserId) return;
       setSavedLayouts(previousLayouts);
       persistSavedLayouts(previousLayouts);
       toast({ title: 'Não foi possível apagar', description: 'O layout foi restaurado.', variant: 'destructive' });
+    } finally {
+      commitLayoutDialogRef.current = false;
+      if (pageMountedRef.current) setLayoutBusy(false);
     }
+    commitLayoutDialogRef.current = false;
     setDeleteTarget(null);
   };
 
@@ -942,7 +1024,8 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
             aiEnabled={false}
             className="h-px w-px"
             onStatusChange={(status: LivePlayerStatus) => {
-              if (status.state !== 'playing') return;
+              if (focusedCameraIdRef.current !== prewarmCamera.id || !status.activeProtocol
+                || (status.state !== 'playing' && status.state !== 'fallback')) return;
               setOriginalReadyCameraId((current) => current === prewarmCamera.id ? current : prewarmCamera.id);
               if (prewarmFallbackTimeoutRef.current != null) {
                 window.clearTimeout(prewarmFallbackTimeoutRef.current);
@@ -960,11 +1043,13 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
                 <TooltipTrigger asChild>
                   <button
                     onClick={() => setGridSize(size)}
+                    aria-label={`Grade ${size}`}
+                    aria-pressed={gridSize === size}
                     className={`seg-btn ${gridSize === size ? 'active' : ''}`}
                     data-testid={`button-grid-${size}`}
                   >
                     {icon}
-                    <span className="grid-label">{size}</span>
+                    <span>{size}</span>
                   </button>
                 </TooltipTrigger>
                 <TooltipContent className="text-xs">Grade {size}</TooltipContent>
@@ -975,7 +1060,7 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
           {count > GRID_CELL_WARN ? (
             <Tooltip delayDuration={0}>
               <TooltipTrigger asChild>
-                <span className="hidden sm:inline-flex items-center gap-1 rounded-md bg-[hsl(var(--status-warning)_/_0.14)] px-2 py-1 text-[10px] font-semibold text-[hsl(var(--status-warning))]" data-testid="grid-cpu-warn">
+                <span className="inline-flex items-center gap-1 rounded-md bg-[hsl(var(--status-warning)_/_0.14)] px-2 py-1 text-[10px] font-semibold text-[hsl(var(--status-warning))]" data-testid="grid-cpu-warn">
                   ⚠ {count} câmeras
                 </span>
               </TooltipTrigger>
@@ -1022,11 +1107,12 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
                 <span className="text-[10px] font-mono uppercase tracking-wide text-[hsl(var(--muted-foreground))]">
                   Layouts
                 </span>
-                <button onClick={saveCurrentLayout} className="btn btn-secondary btn-xs">
+                <button disabled={layoutsSyncing || layoutBusy} onClick={saveCurrentLayout} className="btn btn-secondary btn-xs">
                   <Save className="w-3 h-3" />
                   Salvar atual
                 </button>
               </div>
+              {savedLayouts.some(layout => layout.id.startsWith('local-')) && <button disabled={layoutsSyncing || layoutBusy} className="btn btn-secondary btn-xs mb-2 w-full" onClick={() => setLayoutSyncNonce(value => value + 1)}>{layoutsSyncing ? 'Sincronizando…' : 'Sincronizar layouts deste navegador'}</button>}
               <Select value={layoutSelectValue} onValueChange={loadLayout}>
                 <SelectTrigger className="mb-2 h-8 w-full text-xs">
                   <SelectValue placeholder="Carregar layout" />
@@ -1049,12 +1135,12 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
                         {layout.gridSize} / {layout.cameraIds.filter(Boolean).length} câmeras
                       </span>
                     </button>
-                    <button onClick={() => renameLayout(layout.id)} className="h-7 w-7 rounded border border-border inline-flex items-center justify-center hover:bg-background" title="Renomear">
+                    {layout.podeEditar !== false && <><button disabled={layoutsSyncing} onClick={() => renameLayout(layout.id)} className="h-7 w-7 rounded border border-border inline-flex items-center justify-center hover:bg-background" title="Renomear" aria-label={`Renomear ${layout.name}`}>
                       <Pencil className="w-3 h-3" />
                     </button>
-                    <button onClick={() => deleteLayout(layout.id)} className="h-7 w-7 rounded border border-border inline-flex items-center justify-center hover:bg-[hsl(var(--destructive)_/_0.1)] hover:text-[hsl(var(--destructive))]" title="Apagar">
+                    <button disabled={layoutsSyncing} onClick={() => deleteLayout(layout.id)} className="h-7 w-7 rounded border border-border inline-flex items-center justify-center hover:bg-[hsl(var(--destructive)_/_0.1)] hover:text-[hsl(var(--destructive))]" title="Apagar" aria-label={`Apagar ${layout.name}`}>
                       <Trash2 className="w-3 h-3" />
-                    </button>
+                    </button></>}
                   </div>
                 )) : (
                   <div className="px-2 py-3 text-xs text-[hsl(var(--muted-foreground))]">
@@ -1094,7 +1180,7 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
           <div className="live-status-summary ml-auto flex min-w-0 items-center gap-1.5">
             <span className="hdr-chip">
               <span className="hdr-chip-dot status-online" />
-              {gridCameraCount.online}/{gridCameraCount.total} ao vivo
+              {gridCameraCount.online}/{gridCameraCount.total} disponíveis
             </span>
             {alarmCount > 0 && (
               <span className="hdr-chip">
@@ -1110,6 +1196,7 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
                 onClick={handleWallMode}
                 className="btn btn-secondary btn-sm btn-icon"
                 data-testid="button-wall-mode"
+                aria-label="Abrir modo mural"
               >
                 <Maximize2 className="w-3.5 h-3.5" />
               </button>
@@ -1136,14 +1223,16 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
             e uma câmera 1080p (1.78:1) ganhava tarjas dentro do próprio tile.
             Agora a pequena sobra fica apenas na BORDA EXTERNA da grade. Assim
             todos os vídeos permanecem inteiros, alinhados e com o mesmo tamanho. */}
-        <div className={`flex-1 min-h-0 grid place-items-center bg-black ${wallMode ? 'p-0.5' : 'p-1'}`}>
+        <div ref={gridViewportRef} className={`flex-1 min-h-0 grid place-items-center bg-black ${wallMode ? 'p-0.5' : 'p-1'}`}>
         <div
           className={`cam-grid-bg grid min-h-0 max-h-full max-w-full ${wallMode ? 'gap-0.5' : 'gap-1'}`}
           style={{
             gridTemplateColumns: `repeat(${visibleGridCols}, 1fr)`,
             gridTemplateRows: `repeat(${visibleGridRows}, 1fr)`,
             aspectRatio: `${visibleGridCols * 16} / ${visibleGridRows * 9}`,
-            width: '100%',
+            width: gridViewport.width > 0 && gridViewport.height > 0
+              ? Math.min(gridViewport.width, gridViewport.height * visibleGridCols * 16 / (visibleGridRows * 9))
+              : '100%',
             height: 'auto',
             maxWidth: '100%',
             maxHeight: '100%',
@@ -1155,7 +1244,7 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
               // (stream preservado) em vez de desmontar/remontar o player.
               key={cam ? `cam-${cam.id}` : `empty-${i}`}
               className={`group relative min-h-0 rounded-md ${focusedCameraId && cam?.id !== focusedCameraId ? 'hidden' : ''} ${!wallMode && selectedSlotIndex === i ? 'ring-2 ring-[hsl(var(--primary))]' : ''}`}
-              style={{ minHeight: 80 }}
+              style={{ minHeight: 0 }}
             >
               {cam ? (
                 <>
@@ -1165,7 +1254,7 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
                       // Só a ação manual do operador usa o estado visual vermelho.
                       // Gravação por movimento/objeto é uma política automática e
                       // não pode parecer que alguém apertou REC na grade.
-                      manualRecordingActive: recordingOverrides[cam.id] ?? (cam.recordingMode === 'manual' && cam.status === 'recording'),
+                      manualRecordingActive: recordingOverrides[cam.id] ?? cam.manualRecordingActive ?? (cam.recordingMode === 'manual' && cam.status === 'recording'),
                       status: cam.status === 'recording' && cam.recordingMode !== 'manual' ? 'online' : cam.status,
                     }}
                     selected={selectedCam === cam.id}
@@ -1191,6 +1280,7 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
                     recordingBusy={recordingBusyIds.includes(cam.id)}
                     streamStartDelayMs={displayIndex * 700 + streamStartDelay(i, count)}
                     routeActive={pageActive}
+                    playbackEnabled={!focusedCameraId || focusedCameraId === cam.id}
                     onGridSourceIsOriginal={markGridSourceIsOriginal}
                   />
                   <div // Aparecem também quando o quadro está SELECIONADO: em tela sensível
@@ -1208,7 +1298,7 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
                         selectSlotForCamera(i, cam);
                       }}
                       className="h-7 rounded-md border border-white/15 bg-black/70 px-2 text-[10px] font-mono text-white backdrop-blur hover:bg-black"
-                      title="Trocar câmera deste quadrado"
+                      title="Trocar câmera deste quadro"
                     >
                       Trocar
                     </button>
@@ -1218,7 +1308,8 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
                         removeCameraFromSlot(i);
                       }}
                       className="h-7 w-7 rounded-md border border-white/15 bg-black/70 text-white backdrop-blur hover:bg-[hsl(var(--destructive)_/_0.8)]"
-                      title="Remover câmera deste quadrado"
+                      title="Remover câmera deste quadro"
+                      aria-label={`Remover ${cam.name} do quadro ${i + 1}`}
                     >
                       <X className="w-3.5 h-3.5 mx-auto" />
                     </button>
@@ -1229,12 +1320,12 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
                   type="button"
                   onClick={() => selectSlotForCamera(i)}
                   className="cam-empty"
-                  style={{ minHeight: 80 }}
+                  style={{ minHeight: 0 }}
                   aria-label={`Escolher câmera para o quadro ${i + 1}`}
                 >
                   <Video className="w-4 h-4" />
                   <span style={{ fontFamily: 'var(--ff-mono)', fontSize: 10 }}>
-                    {selectedSlotIndex === i ? 'Escolha uma câmera' : 'Slot vazio'}
+                    {selectedSlotIndex === i ? 'Escolha uma câmera' : 'Quadro vazio'}
                   </span>
                 </button>
               )}
@@ -1257,6 +1348,18 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
               role="separator"
               aria-orientation="vertical"
               aria-label="Redimensionar painel de câmeras"
+              tabIndex={0}
+              aria-valuemin={LIVE_PANEL_MIN_WIDTH}
+              aria-valuemax={LIVE_PANEL_MAX_WIDTH}
+              aria-valuenow={panelWidth}
+              onKeyDown={(event) => {
+                if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+                event.preventDefault();
+                const next = event.key === 'Home' ? LIVE_PANEL_MIN_WIDTH : event.key === 'End' ? LIVE_PANEL_MAX_WIDTH
+                  : Math.max(LIVE_PANEL_MIN_WIDTH, Math.min(LIVE_PANEL_MAX_WIDTH, panelWidth + (event.key === 'ArrowLeft' ? 20 : -20)));
+                setPanelWidth(next);
+                try { window.localStorage.setItem(LIVE_PANEL_WIDTH_STORAGE_KEY, String(next)); } catch { /* Preferência opcional. */ }
+              }}
               title="Arraste para ajustar a largura do painel"
               onPointerDown={beginPanelResize}
               className="group absolute -left-1 top-0 z-50 flex h-full w-3 cursor-col-resize touch-none items-center justify-center"
@@ -1320,7 +1423,8 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
             </div>
 
             <div className="flex-1 overflow-y-auto divide-y divide-border/80">
-              {filteredList.map(cam => {
+              {!filteredList.length && <div role="status" className="p-4 text-sm text-muted-foreground">Nenhuma câmera encontrada. Ajuste os filtros ou cadastre uma câmera.</div>}
+              {filteredList.slice(0, sidebarVisibleCount).map(cam => {
                 const isInGrid = cameraIds.includes(cam.id);
                 const statusClass =
                   cam.status === 'alarm' ? 'status-alarm rec-pulse' :
@@ -1352,15 +1456,16 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
                     <span className="min-w-0">
                       <span className="block text-[12px] font-medium truncate">{cam.name}</span>
                       <span className="block text-[9px] text-[hsl(var(--muted-foreground))] truncate">
-                        {cam.code !== cam.name ? cam.code : `${cam.zone} · ${cam.ipAddress}`}
+                        {cam.code !== cam.name ? cam.code : cam.zone}
                       </span>
                     </span>
-                    <span className={`max-w-[42px] truncate text-[9px] shrink-0 ${isInGrid ? 'text-[hsl(var(--primary))]' : 'text-[hsl(var(--muted-foreground)_/_0.55)]'}`}>
+                    <span className={`text-[10px] shrink-0 ${isInGrid ? 'text-[hsl(var(--primary))]' : 'text-[hsl(var(--muted-foreground))]'}`}>
                       {selectedSlotIndex != null ? 'Usar' : isInGrid ? 'Grade' : STATUS_FILTER_LABEL[cam.status as (typeof STATUS_FILTERS)[number]] ?? cam.status.replace('_', ' ')}
                     </span>
                   </button>
                 );
               })}
+              {filteredList.length > sidebarVisibleCount && <button className="w-full p-3 text-sm underline" onClick={() => setSidebarVisibleCount(value => value + 100)}>Mostrar mais câmeras ({filteredList.length - sidebarVisibleCount} restantes)</button>}
             </div>
 
             <div className="px-2.5 py-2 border-t border-border shrink-0 flex items-center justify-between">

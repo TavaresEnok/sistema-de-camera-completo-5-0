@@ -4,6 +4,7 @@ import { AlertTriangle, LoaderCircle, VideoOff, Volume2, VolumeX } from 'lucide-
 import { getApiBaseUrl } from '../lib/api-base';
 import { useAuthStore } from '../store/authStore';
 import { useAiPreferencesStore } from '../store/aiPreferencesStore';
+import { prepareNativeHls } from '../lib/native-hls';
 import { streamUrlsCache } from '../lib/stream-urls-cache';
 import { liveDetectionsPoller } from '../lib/live-detections-poller';
 import { SmoothDetectionOverlay } from './SmoothDetectionOverlay';
@@ -34,6 +35,7 @@ type LiveStreamPlayerProps = {
   startDelayMs?: number;
   /** A rota que contém o player está realmente visível na SPA. */
   routeActive?: boolean;
+  playbackEnabled?: boolean;
   onStatusChange?: (status: LivePlayerStatus) => void;
   /** A API confirmou que a fonte efetiva da grade já é a fonte original. */
   onGridSourceIsOriginal?: (isOriginal: boolean) => void;
@@ -41,6 +43,9 @@ type LiveStreamPlayerProps = {
 };
 
 const API_URL = getApiBaseUrl();
+useAuthStore.subscribe((state, previous) => {
+  if (state.user?.id !== previous.user?.id) streamUrlsCache.clearAll();
+});
 const HLS_FIRST_FRAME_TIMEOUT_MS = 7000;
 const WEBRTC_FIRST_FRAME_TIMEOUT_MS = 8000;
 const WEBRTC_WHEP_NEGOTIATION_TIMEOUT_MS = 9500;
@@ -316,6 +321,7 @@ export function LiveStreamPlayer({
   liveViewMode = 'selected',
   startDelayMs = 0,
   routeActive = true,
+  playbackEnabled = true,
   onStatusChange,
   onGridSourceIsOriginal,
   showEssentialStatus = false,
@@ -325,7 +331,19 @@ export function LiveStreamPlayer({
   const mostrarCaixa = useAiPreferencesStore((state) => state.showObjectBox);
   const carregarPrefsDeIa = useAiPreferencesStore((state) => state.carregar);
   useEffect(() => { void carregarPrefsDeIa(); }, [carregarPrefsDeIa]);
-  const aiOverlayEnabled = showOverlay && aiEnabled && mostrarCaixa;
+  const [documentVisible, setDocumentVisible] = useState(() => !document.hidden);
+  const [inactiveSuspended, setInactiveSuspended] = useState(false);
+  const aiOverlayEnabled = showOverlay && aiEnabled && mostrarCaixa && routeActive && playbackEnabled && documentVisible;
+  useEffect(() => {
+    const update = () => setDocumentVisible(!document.hidden);
+    document.addEventListener('visibilitychange', update);
+    return () => document.removeEventListener('visibilitychange', update);
+  }, []);
+  useEffect(() => {
+    if (routeActive && playbackEnabled) { setInactiveSuspended(false); return; }
+    const timer = window.setTimeout(() => setInactiveSuspended(true), 10_000);
+    return () => window.clearTimeout(timer);
+  }, [routeActive, playbackEnabled]);
   const accessToken = useAuthStore((state) => state.accessToken);
   const authUserId = useAuthStore((state) => state.user?.id ?? 'anonymous');
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -344,6 +362,7 @@ export function LiveStreamPlayer({
   const primaryProtocolRef = useRef<LiveProtocol>('webrtc');
   const hiddenAtRef = useRef<number | null>(null);
   const routeWasActiveRef = useRef(routeActive);
+  const deniedTokenRef = useRef<string | null>(null);
   const routeResumeTimerRef = useRef<number | null>(null);
   const liveReloadAtRef = useRef(0);
   const preserveFrameOnReloadRef = useRef(false);
@@ -393,6 +412,15 @@ export function LiveStreamPlayer({
   // Aviso VISÍVEL e temporário para o usuário (ex.: "Máxima caiu p/ H.264 — sem HEVC").
   // Diferente do protocolReason (que só sobe pro pai); este aparece na tela e some só.
   const [notice, setNotice] = useState<string | null>(null);
+  const playMedia = useCallback(async (element: HTMLVideoElement) => {
+    try { await element.play(); } catch (error) {
+      if (!(error instanceof DOMException) || error.name !== 'NotAllowedError') return;
+      element.muted = true;
+      setIsMuted(true);
+      setNotice('O navegador bloqueou o áudio automático. Toque no botão de áudio para ativar.');
+      await element.play().catch(() => undefined);
+    }
+  }, []);
   useEffect(() => {
     if (!notice) return;
     const t = window.setTimeout(() => setNotice(null), 7000);
@@ -534,7 +562,6 @@ export function LiveStreamPlayer({
   const compactErrorLabel = error && TECHNICAL_LIVE_MESSAGE_REGEX.test(error)
     ? 'Reconectando…'
     : 'Sem vídeo';
-  const errorIsTechnical = Boolean(error && TECHNICAL_LIVE_MESSAGE_REGEX.test(error));
 
   const tokenHeaders = useMemo(
     () => (accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined),
@@ -759,6 +786,12 @@ export function LiveStreamPlayer({
   }, [autoPlay, requestFreshLiveBoot, routeActive]);
 
   useEffect(() => {
+    if (!accessToken || !deniedTokenRef.current || deniedTokenRef.current === accessToken) return;
+    deniedTokenRef.current = null;
+    requestFreshLiveBoot('Verificando acesso à câmera…', false, true);
+  }, [accessToken, requestFreshLiveBoot]);
+
+  useEffect(() => {
     if (previousLiveViewModeRef.current === liveViewMode) return;
     previousLiveViewModeRef.current = liveViewMode;
     failedProtocolsRef.current.clear();
@@ -918,6 +951,8 @@ export function LiveStreamPlayer({
     if (!element || !tokenHeadersRef.current) return;
 
     let cancelled = false;
+    const bootController = new AbortController();
+    let nativeHlsActive = false;
     let noFrameTimeout: number | null = null;
     let bootDelayTimeout: number | null = null;
 
@@ -1130,10 +1165,14 @@ export function LiveStreamPlayer({
             const response = await axios.post<{ streamToken: string; expiresAt?: string | null }>(
               `${API_URL}/camera-stream/${cameraId}/token`,
               {},
-              { headers: tokenHeadersRef.current },
+              { headers: tokenHeadersRef.current, timeout: 8000 },
             );
             if (cancelled) return;
             mediaAuthTokenRef.current = response.data.streamToken;
+            if (nativeHlsActive && hlsUrl) {
+              await prepareNativeHls(hlsUrl, response.data.streamToken, window.location.href, bootController.signal);
+              if (cancelled) return;
+            }
             if (rawPosterUrl && response.data.streamToken) {
               const separator = rawPosterUrl.includes('?') ? '&' : '?';
               setPosterUrl(`${rawPosterUrl}${separator}token=${encodeURIComponent(response.data.streamToken)}&v=${Date.now()}`);
@@ -1310,11 +1349,13 @@ export function LiveStreamPlayer({
         };
 
         const startWebrtc = async (whepUrl: string) => {
+          if (cancelled) return;
           cleanupHls();
           // Pass preserveVideo=true when a live frame is already visible so the
           // last decoded frame stays on screen while the new connection negotiates.
           const preserveVideoOnReconnect = preserveFrameOnReloadRef.current && hasFrameRef.current;
           await cleanupWebrtc(preserveVideoOnReconnect);
+          if (cancelled) return;
 
           if (typeof RTCPeerConnection === 'undefined') {
             throw new Error('Navegador sem suporte WebRTC.');
@@ -1447,7 +1488,7 @@ export function LiveStreamPlayer({
               if (element.srcObject !== stream) {
                 element.srcObject = stream;
               }
-              if (autoPlay) void element.play().catch(() => {});
+              if (autoPlay) void playMedia(element);
               if (event.track.kind !== 'video') return;
               videoTrackReceived = true;
               clearWebrtcDisconnectTimer();
@@ -1659,7 +1700,7 @@ export function LiveStreamPlayer({
                 hls.loadSource(hlsUrl);
               });
               hls.on(Hls.Events.MANIFEST_PARSED, () => {
-                if (autoPlay) void element.play().catch(() => {});
+                if (autoPlay) void playMedia(element);
               });
               hls.on(Hls.Events.ERROR, (_event, dataError) => {
                 if (cancelled) return;
@@ -1678,7 +1719,14 @@ export function LiveStreamPlayer({
           }
 
           if (element.canPlayType('application/vnd.apple.mpegurl')) {
-            throw new Error('HLS nativo sem suporte a token seguro; use um navegador com MediaSource/WebRTC.');
+            const nativeUrl = await prepareNativeHls(hlsUrl, mediaAuthTokenRef.current, window.location.href, bootController.signal);
+            if (cancelled) return;
+            nativeHlsActive = true;
+            element.src = nativeUrl;
+            if (autoPlay) void playMedia(element);
+            await waitForVisibleFrame(protocolName, HLS_FIRST_FRAME_TIMEOUT_MS);
+            markHealthy(protocolName);
+            return;
           }
 
           throw new Error('Navegador sem suporte para HLS.');
@@ -1763,10 +1811,12 @@ export function LiveStreamPlayer({
       } catch (streamError) {
         if (cancelled) return;
         if (axios.isAxiosError(streamError) && streamError.response?.status === 401) {
+          void useAuthStore.getState().revalidate();
           scheduleReconnect('Renovando a sessão para retomar a imagem');
           return;
         }
         if (axios.isAxiosError(streamError) && streamError.response?.status === 403) {
+          deniedTokenRef.current = useAuthStore.getState().accessToken;
           setError('Você não tem permissão para ver esta câmera.');
           setRetryMessage(null);
           setIsLoading(false);
@@ -1804,9 +1854,8 @@ export function LiveStreamPlayer({
         }
         const message = streamError instanceof Error ? streamError.message : 'Falha ao iniciar stream.';
         if (/401|403|unauthorized|forbidden|auth|credencial|senha/i.test(message)) {
-          setError('Falha de autenticação da câmera: valide usuário/senha RTSP/ONVIF.');
-          setRetryMessage(null);
-          setIsLoading(false);
+          streamUrlsCache.clear(`stream-urls:${authUserId}:${cameraId}:${deliveryMode}`);
+          scheduleReconnect('Não foi possível autorizar a transmissão. Tentando novamente…');
         } else {
           if (/Nenhum protocolo iniciou|MediaMTX|WebRTC|WHEP|HLS|codec/i.test(message) && !hasFrameRef.current) {
             setError(message);
@@ -1824,14 +1873,21 @@ export function LiveStreamPlayer({
     // já derrubou o WebRTC e deu DELETE na sessão; aqui apenas não rebootamos.
     // Ao voltar a ficar visível, `suspended` volta a false e o effect reexecuta,
     // disparando um boot fresco que re-anexa ao FFmpeg ainda aquecido no servidor.
-    if (!suspended) {
+    if (!suspended && !inactiveSuspended) {
       bootDelayTimeout = window.setTimeout(() => {
         void boot();
       }, Math.max(0, startDelayMsRef.current));
+    } else {
+      hasFrameRef.current = false;
+      setHasLiveFrame(false);
+      setActiveProtocol(null);
+      activeProtocolRef.current = null;
+      setIsLoading(true);
     }
 
     return () => {
       cancelled = true;
+      bootController.abort();
       if (bootDelayTimeout != null) window.clearTimeout(bootDelayTimeout);
       clearRetryTimer();
       if (noFrameTimeout != null) window.clearTimeout(noFrameTimeout);
@@ -1892,7 +1948,7 @@ export function LiveStreamPlayer({
         element.load();
       }
     };
-  }, [hasAccessToken, authUserId, autoPlay, cameraId, deliveryMode, failActiveProtocol, framesAreProgressing, getFastRetryDelay, isLikelyBlackFrame, reportLiveFailure, requestFreshLiveBoot, reloadNonce, suspended]);
+  }, [hasAccessToken, authUserId, autoPlay, cameraId, deliveryMode, failActiveProtocol, framesAreProgressing, getFastRetryDelay, isLikelyBlackFrame, reportLiveFailure, requestFreshLiveBoot, reloadNonce, suspended, inactiveSuspended, playMedia]);
 
   useEffect(() => {
     const element = videoRef.current;
@@ -2241,7 +2297,7 @@ export function LiveStreamPlayer({
     };
 
     const interval = window.setInterval(() => {
-      if (!routeActive || document.hidden || isLoading || error || !hasFrameRef.current) return;
+      if (!routeActive || document.hidden || !playbackEnabled || inactiveSuspended || isLoading || error || !hasFrameRef.current) return;
 
       const element = videoRef.current;
       if (!element) return;
@@ -2353,13 +2409,18 @@ export function LiveStreamPlayer({
     }, LIVE_STALL_CHECK_INTERVAL_MS);
 
     return () => window.clearInterval(interval);
-  }, [autoPlay, error, failActiveProtocol, framesAreProgressing, isLikelyBlackFrame, isLoading, liveViewMode, reportLiveFailure, requestFreshLiveBoot, routeActive]);
+  }, [autoPlay, error, failActiveProtocol, framesAreProgressing, isLikelyBlackFrame, isLoading, liveViewMode, reportLiveFailure, requestFreshLiveBoot, routeActive, playbackEnabled, inactiveSuspended]);
 
   useEffect(() => {
     if (!aiOverlayEnabled || !tokenHeadersRef.current) return;
-    const sessionId = liveViewSessionIdRef.current;
+    const sessionId = crypto.randomUUID();
+    const headers = tokenHeadersRef.current;
+    let stopped = false;
+    let leasePending = false;
 
     const postLease = async (action: 'start' | 'heartbeat' | 'stop') => {
+      if (action !== 'stop' && (stopped || leasePending)) return;
+      leasePending = true;
       try {
         await axios.post(
           `${API_URL}/ai/live-view/${action}/${cameraId}`,
@@ -2370,9 +2431,12 @@ export function LiveStreamPlayer({
           // o stop chegasse depois, matava o lease recém-criado e a análise
           // daquela câmera ficava morta até o próximo heartbeat. Numa grade de
           // 20 câmeras eram 40 requisições inúteis a cada 5 minutos.
-          { headers: tokenHeadersRef.current },
+          { headers: action === 'stop' ? headers : tokenHeadersRef.current, timeout: 4000 },
         );
       } catch {
+      } finally {
+        leasePending = false;
+        if (stopped && action !== 'stop') void postLease('stop');
       }
     };
 
@@ -2382,10 +2446,11 @@ export function LiveStreamPlayer({
     }, LIVE_VIEW_HEARTBEAT_MS);
 
     return () => {
+      stopped = true;
       window.clearInterval(heartbeat);
-      void postLease('stop');
+      if (!leasePending) void postLease('stop');
     };
-  }, [aiOverlayEnabled, cameraId]);
+  }, [aiOverlayEnabled, cameraId, authUserId, hasAccessToken]);
 
   useEffect(() => {
     if (!aiOverlayEnabled || !accessToken || error) {
@@ -2486,6 +2551,12 @@ export function LiveStreamPlayer({
         </div>
       )}
 
+      {showEssentialStatus && retryMessage && !isLoading && !error && (
+        <div role="status" className="pointer-events-none absolute inset-x-1 bottom-1 z-20 rounded bg-black/80 px-2 py-1 text-center text-xs text-white">
+          Reconectando câmera… a imagem pode estar desatualizada.
+        </div>
+      )}
+
       {(showOverlay || showEssentialStatus) && error && compactLiveOverlay && (
         <div className="absolute inset-x-1 bottom-1 z-20 flex justify-center">
           <div className="flex max-w-[92%] items-center gap-1.5 rounded border border-white/10 bg-black/68 px-2 py-1 text-[10px] text-white/75 backdrop-blur-[2px]">
@@ -2503,12 +2574,6 @@ export function LiveStreamPlayer({
               Sem imagem da câmera
             </div>
             <div>{friendlyLiveText(error, 'Não foi possível conectar à câmera agora. A reconexão é automática — verifique se a câmera está ligada e com rede.')}</div>
-            {errorIsTechnical && (
-              <details className="mt-2 text-left text-[10px] text-[hsl(var(--destructive))]/70">
-                <summary className="cursor-pointer select-none">Detalhes técnicos</summary>
-                <div className="mt-1 break-words font-mono text-[9px]">{error}</div>
-              </details>
-            )}
             <button
               type="button"
               onClick={() => {
@@ -2683,14 +2748,14 @@ export function LiveStreamPlayer({
               element.muted = nextMuted;
               element.volume = nextMuted ? element.volume : 1;
               if (!nextMuted) {
-                void element.play().catch(() => {
-                  // Alguns navegadores exigem novo gesto se a aba perdeu foco; o botão continua disponível.
-                });
+                void playMedia(element);
               }
             }
           }}
           className="absolute bottom-2 right-2 z-30 flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-black/55 text-white/80 transition-colors hover:bg-black/70 hover:text-white"
           title={isMuted ? 'Ativar áudio' : 'Mutar áudio'}
+          aria-label={isMuted ? 'Ativar áudio' : 'Desativar áudio'}
+          aria-pressed={!isMuted}
         >
           {isMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
         </button>

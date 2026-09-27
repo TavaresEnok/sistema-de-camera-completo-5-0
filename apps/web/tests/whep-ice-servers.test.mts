@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { parseWhepIceServers } from '../src/lib/whep-ice-servers.ts';
+import { discoverWhepIceServers, parseWhepIceServers } from '../src/lib/whep-ice-servers.ts';
 
 test('WHEP transforma Link TURN do MediaMTX em RTCIceServer', () => {
   assert.deepEqual(parseWhepIceServers(
@@ -10,6 +10,21 @@ test('WHEP transforma Link TURN do MediaMTX em RTCIceServer', () => {
     username: '1720000000:abc',
     credential: 'segredo+/=',
   }]);
+});
+
+test('OPTIONS travado é abortado no prazo e não impede fallback', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const original = globalThis.fetch;
+  let aborted = false;
+  globalThis.fetch = async (_input, options) => new Promise((_resolve, reject) => {
+    options?.signal?.addEventListener('abort', () => { aborted = true; reject(new Error('aborted')); });
+  });
+  try {
+    const result = discoverWhepIceServers('https://site.test/whep', null);
+    t.mock.timers.tick(3000);
+    assert.deepEqual(await result, []);
+    assert.equal(aborted, true);
+  } finally { globalThis.fetch = original; t.mock.timers.reset(); }
 });
 
 test('WHEP aceita vários Links, ignora relações e esquemas que não são ICE', () => {

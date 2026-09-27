@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { useAuthStore } from './authStore';
 
 // Grade livre "colunas x linhas" (ex.: '4x4', '4x6', '6x4'). Os presets são só
 // atalhos; qualquer CxL válido (1..8 cada) é aceito.
@@ -19,6 +20,7 @@ export function liveDisplayLabel(id: LiveDisplayId) {
 const LIVE_DISPLAY_ID = getLiveDisplayId();
 const GRID_STORAGE_KEY = LIVE_DISPLAY_ID === 'main' ? 'drac.live.grid.v1' : `drac.live.grid.${LIVE_DISPLAY_ID}.v1`;
 const PREV_LAYOUT_SESSION_KEY = `drac.live.prevLayout.${LIVE_DISPLAY_ID}.v1`;
+const userKey = (key: string) => `${key}.${useAuthStore.getState().user?.id ?? 'anonymous'}`;
 
 type PersistedGrid = {
   gridSize?: GridSize;
@@ -31,7 +33,7 @@ export type PrevLayout = { gridSize: GridSize; cameraIds: string[] };
 function loadPersistedGrid(): PersistedGrid {
   if (typeof window === 'undefined') return {};
   try {
-    const raw = window.localStorage.getItem(GRID_STORAGE_KEY);
+    const raw = window.localStorage.getItem(userKey(GRID_STORAGE_KEY));
     if (!raw) return {};
     const parsed = JSON.parse(raw) as PersistedGrid;
     const valid = typeof parsed.gridSize === 'string' && /^[1-8]x[1-8]$/.test(parsed.gridSize);
@@ -48,7 +50,7 @@ function persistGrid(next: PersistedGrid) {
   if (typeof window === 'undefined') return;
   try {
     const current = loadPersistedGrid();
-    window.localStorage.setItem(GRID_STORAGE_KEY, JSON.stringify({ ...current, ...next }));
+    window.localStorage.setItem(userKey(GRID_STORAGE_KEY), JSON.stringify({ ...current, ...next }));
   } catch {
     // A grade continua funcional em memória quando o armazenamento está indisponível.
   }
@@ -58,7 +60,7 @@ function persistGrid(next: PersistedGrid) {
 function loadPrevLayout(): PrevLayout | null {
   if (typeof window === 'undefined') return null;
   try {
-    const raw = window.sessionStorage.getItem(PREV_LAYOUT_SESSION_KEY);
+    const raw = window.sessionStorage.getItem(userKey(PREV_LAYOUT_SESSION_KEY));
     if (!raw) return null;
     const parsed = JSON.parse(raw) as PrevLayout;
     if (typeof parsed.gridSize === 'string' && /^[1-8]x[1-8]$/.test(parsed.gridSize) && Array.isArray(parsed.cameraIds)) {
@@ -74,9 +76,9 @@ function persistPrevLayout(layout: PrevLayout | null) {
   if (typeof window === 'undefined') return;
   try {
     if (layout) {
-      window.sessionStorage.setItem(PREV_LAYOUT_SESSION_KEY, JSON.stringify(layout));
+      window.sessionStorage.setItem(userKey(PREV_LAYOUT_SESSION_KEY), JSON.stringify(layout));
     } else {
-      window.sessionStorage.removeItem(PREV_LAYOUT_SESSION_KEY);
+      window.sessionStorage.removeItem(userKey(PREV_LAYOUT_SESSION_KEY));
     }
   } catch {
     // A ausência de sessionStorage não deve impedir o retorno à grade.
@@ -99,7 +101,7 @@ interface GridState {
 const persistedGrid = loadPersistedGrid();
 
 export const useGridStore = create<GridState>((set) => ({
-  gridSize: persistedGrid.gridSize ?? '2x2',
+  gridSize: persistedGrid.gridSize ?? (LIVE_DISPLAY_ID === 'main' ? '2x2' : '3x2'),
   cameraIds: persistedGrid.cameraIds ?? [],
   // A auxiliar abre em modo de configuração, com lista de câmeras disponível.
   // Depois o operador aciona o mural/tela cheia na própria janela.
@@ -123,3 +125,14 @@ export const useGridStore = create<GridState>((set) => ({
     set({ prevLayout: null });
   },
 }));
+
+useAuthStore.subscribe((state, previous) => {
+  if (state.user?.id === previous.user?.id) return;
+  const persisted = loadPersistedGrid();
+  useGridStore.setState({
+    gridSize: persisted.gridSize ?? (LIVE_DISPLAY_ID === 'main' ? '2x2' : '3x2'),
+    cameraIds: persisted.cameraIds ?? [],
+    prevLayout: loadPrevLayout(),
+    wallMode: false,
+  });
+});

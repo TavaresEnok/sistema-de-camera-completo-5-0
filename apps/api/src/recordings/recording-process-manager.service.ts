@@ -174,6 +174,18 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
   // permanente da política da câmera. Este timer garante que um clique esquecido
   // não transforme uma câmera em gravação contínua indefinida.
   private readonly manualStopTimers = new Map<string, NodeJS.Timeout>();
+  private manualCommands = new Map<string, Promise<unknown>>();
+
+  private withManualCommand<T>(cameraId: string, action: () => Promise<T>): Promise<T> {
+    this.manualCommands ??= new Map();
+    const previous = this.manualCommands.get(cameraId) ?? Promise.resolve();
+    const request = previous.catch(() => undefined).then(action);
+    this.manualCommands.set(cameraId, request);
+    void request.finally(() => {
+      if (this.manualCommands.get(cameraId) === request) this.manualCommands.delete(cameraId);
+    }).catch(() => undefined);
+    return request;
+  }
   private lastMotionRecordingFailureEventAt = new Map<string, number>();
 
   /**
@@ -817,38 +829,60 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
    * aberto.
    */
   async startManualRecording(cameraId: string, segmentSeconds: number, maxDurationSeconds = 600) {
+    return this.withManualCommand(cameraId, () => this.startManualRecordingInternal(cameraId, segmentSeconds, maxDurationSeconds));
+  }
+
+  private async startManualRecordingInternal(cameraId: string, segmentSeconds: number, maxDurationSeconds: number) {
     const policy = await this.prisma.camera.findUnique({
       where: { id: cameraId }, select: { recordingMode: true },
     });
     // A gravação contínua é uma política permanente. Um pedido avulso não pode
     // substituí-la por manual nem instalar o timer que a desligaria em 10 min.
     if (policy?.recordingMode === 'continuous') {
-      return this.start(cameraId, segmentSeconds, { recordingMode: 'continuous' });
+      this.clearManualStopTimer(cameraId);
+      return { status: 'continuous_recording_protected', cameraId, manualRecordingActive: false };
     }
     const duration = Math.min(600, Math.max(10, Math.round(maxDurationSeconds) || 600));
+    const result = await this.start(cameraId, segmentSeconds, { recordingMode: 'manual' });
     this.clearMotionStopTimer(cameraId);
     this.clearManualStopTimer(cameraId);
-    const result = await this.start(cameraId, segmentSeconds, { recordingMode: 'manual' });
-    const timer = setTimeout(() => {
-      void this.stopManualRecording(cameraId).catch((error) => {
+    const expire = () => {
+      void this.withManualCommand(cameraId, async () => {
+        if (this.manualStopTimers.get(cameraId) === timer) return this.stopManualRecordingInternal(cameraId);
+      }).catch((error) => {
         this.logger.error(`Falha ao encerrar gravação manual camera=${cameraId}: ${sanitizeSensitiveText(error)}`);
+        if (this.manualStopTimers.get(cameraId) === timer) {
+          timer = setTimeout(expire, 30_000);
+          timer.unref();
+          this.manualStopTimers.set(cameraId, timer);
+        }
       });
-    }, duration * 1000);
+    };
+    let timer = setTimeout(expire, duration * 1000);
     timer.unref();
     this.manualStopTimers.set(cameraId, timer);
-    return { ...result, manualStopAfterSeconds: duration };
+    return { ...result, manualRecordingActive: true, manualStopAfterSeconds: duration };
   }
 
   /** Parada explícita ou automática da gravação manual; mantém o modo armado. */
   async stopManualRecording(cameraId: string) {
+    return this.withManualCommand(cameraId, () => this.stopManualRecordingInternal(cameraId));
+  }
+
+  private async stopManualRecordingInternal(cameraId: string) {
     const policy = await this.prisma.camera.findUnique({
       where: { id: cameraId }, select: { recordingMode: true },
     });
     if (policy?.recordingMode === 'continuous') {
+      this.clearManualStopTimer(cameraId);
       return { status: 'continuous_recording_protected', cameraId };
     }
+    if (modoArmado(policy?.recordingMode) && !this.manualStopTimers.has(cameraId)) {
+      return { status: 'automatic_recording_protected', cameraId };
+    }
+    const result = await this.stop(cameraId, { recordingMode: 'manual' });
     this.clearManualStopTimer(cameraId);
-    return this.stop(cameraId, { recordingMode: 'manual' });
+    return result;
   }
 
   private scheduleMotionStop(cameraId: string, postRollSeconds: number) {
@@ -962,6 +996,7 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
 
   private async stopMotionRecordingAfterQuiet(cameraId: string, postRollSeconds: number) {
     this.motionStopTimers.delete(cameraId);
+    if (this.manualStopTimers?.has(cameraId) || this.manualCommands?.has(cameraId)) return;
     // Enquanto o detector estiver cego, NINGUÉM para esta gravação. Um post-roll
     // agendado antes da cegueira (ou o de um movimento que ainda pingou) cairia
     // aqui e desligaria justamente a cobertura de emergência.
@@ -2682,6 +2717,7 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
       return {
         cameraId,
         isRecording,
+        manualRecordingActive: intended && (this.manualStopTimers?.has(cameraId) ?? false),
         intendedRecording: intended,
         startedAt: latestRecording?.startedAt?.toISOString() ?? null,
         lastSegmentAt: lastSegmentAtMs == null ? null : new Date(lastSegmentAtMs).toISOString(),
@@ -2714,6 +2750,7 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
       return {
         cameraId,
         isRecording,
+        manualRecordingActive: intended && (this.manualStopTimers?.has(cameraId) ?? false),
         intendedRecording: intended,
         startedAt: latestRecording?.startedAt?.toISOString() ?? null,
         lastSegmentAt: lastSegmentAtMs == null ? null : new Date(lastSegmentAtMs).toISOString(),
@@ -2733,6 +2770,7 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
     return {
       cameraId,
       isRecording: processAlive,
+      manualRecordingActive: processAlive && (this.manualStopTimers?.has(cameraId) ?? false),
       intendedRecording: true,
       startedAt: state.startedAt.toISOString(),
       lastSegmentAt: lastSegmentAtMs == null ? null : new Date(lastSegmentAtMs).toISOString(),

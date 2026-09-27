@@ -4,6 +4,9 @@ import { getApiBaseUrl } from '../lib/api-base';
 import { useAuthStore } from './authStore';
 
 let pendingLoad: Promise<void> | null = null;
+let generation = 0;
+let retryAfter = 0;
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
 /**
  * Preferências de EXIBIÇÃO da IA, compartilhadas por toda a tela.
@@ -30,22 +33,25 @@ export const useAiPreferencesStore = create<AiPreferencesState>((set, get) => ({
   carregar: async () => {
     if (get().carregado) return;
     if (pendingLoad) return pendingLoad;
+    if (Date.now() < retryAfter) return;
     const token = useAuthStore.getState().accessToken;
     if (!token) return;
+    const requestGeneration = generation;
     pendingLoad = (async () => { try {
       const { data } = await axios.get<{ showObjectBox?: boolean }>(`${getApiBaseUrl()}/ai/settings`, {
         headers: { Authorization: `Bearer ${token}` },
         timeout: 10_000,
       });
       // Ausente = instalação com API antiga: mantém o comportamento de mostrar.
-      set({ showObjectBox: data?.showObjectBox !== false, carregado: true });
+      if (generation === requestGeneration) set({ showObjectBox: data?.showObjectBox !== false, carregado: true });
     } catch {
-      // Falha de rede não pode ESCONDER a marcação: o operador acharia que a
-      // detecção parou de funcionar. Marca como carregado para não repetir a
-      // tentativa a cada tile do mural.
-      set({ carregado: true });
+      if (generation === requestGeneration) {
+        retryAfter = Date.now() + 30_000;
+        if (retryTimer) clearTimeout(retryTimer);
+        retryTimer = setTimeout(() => { retryTimer = null; void useAiPreferencesStore.getState().carregar(); }, 30_000);
+      }
     } finally {
-      pendingLoad = null;
+      if (generation === requestGeneration) pendingLoad = null;
     } })();
     return pendingLoad;
   },
@@ -53,3 +59,13 @@ export const useAiPreferencesStore = create<AiPreferencesState>((set, get) => ({
   /** Atualização otimista vinda da tela de IA, sem esperar o próximo ciclo. */
   definirCaixa: (valor: boolean) => set({ showObjectBox: valor }),
 }));
+
+useAuthStore.subscribe((state, previous) => {
+  if (state.user?.id === previous.user?.id) return;
+  generation += 1;
+  pendingLoad = null;
+  retryAfter = 0;
+  if (retryTimer) clearTimeout(retryTimer);
+  retryTimer = null;
+  useAiPreferencesStore.setState({ showObjectBox: true, carregado: false });
+});

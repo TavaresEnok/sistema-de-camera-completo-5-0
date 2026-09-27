@@ -35,6 +35,8 @@ class LiveDetectionsPoller {
   private readonly subscribers = new Map<string, Set<Subscriber>>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private inFlight = false;
+  private request: AbortController | null = null;
+  private generation = 0;
   // Falha de rede/auth NÃO deve apagar a grade inteira num piscar: seguramos o
   // último payload bom por até MAX_FAILURE_HOLDS ciclos (e nunca além do TTL),
   // depois limpamos para não exibir caixa obsoleta.
@@ -56,7 +58,10 @@ class LiveDetectionsPoller {
       const current = this.subscribers.get(cameraId);
       if (!current) return;
       current.delete(callback);
-      if (current.size === 0) this.subscribers.delete(cameraId);
+      if (current.size === 0) {
+        this.subscribers.delete(cameraId);
+        this.lastGood.delete(cameraId);
+      }
       if (this.subscribers.size === 0) this.stopTimer();
     };
   }
@@ -68,15 +73,22 @@ class LiveDetectionsPoller {
   }
 
   private stopTimer() {
-    if (this.timer == null) return;
-    clearInterval(this.timer);
+    if (this.timer != null) clearInterval(this.timer);
     this.timer = null;
+    this.generation += 1;
+    this.request?.abort();
+    this.request = null;
+    this.inFlight = false;
+    this.lastGood.clear();
+    this.consecutiveFailures = 0;
   }
 
   private emit(cameraId: string, detections: LiveDetection[]) {
     const set = this.subscribers.get(cameraId);
     if (!set) return;
-    for (const callback of set) callback(detections);
+    for (const callback of set) {
+      try { callback(detections); } catch { /* Uma tela não interrompe as demais. */ }
+    }
   }
 
   private async poll() {
@@ -88,6 +100,10 @@ class LiveDetectionsPoller {
     if (!accessToken) return;
 
     this.inFlight = true;
+    const generation = this.generation;
+    const controller = new AbortController();
+    this.request = controller;
+    const userId = useAuthStore.getState().user?.id;
     try {
       const response = await axios.get<{ cameras?: Record<string, { detections?: LiveDetection[] }> }>(
         `${getApiBaseUrl()}/ai/detections/latest-batch`,
@@ -95,12 +111,15 @@ class LiveDetectionsPoller {
           params: { cameraIds: cameraIds.join(','), maxAgeMs: MAX_AGE_MS, limit: PER_CAMERA_LIMIT },
           headers: { Authorization: `Bearer ${accessToken}` },
           timeout: 4000,
+          signal: controller.signal,
         },
       );
+      if (generation !== this.generation || useAuthStore.getState().user?.id !== userId) return;
       const cameras = response.data?.cameras ?? {};
       this.consecutiveFailures = 0;
       const now = Date.now();
       for (const cameraId of cameraIds) {
+        if (!this.subscribers.has(cameraId)) continue;
         const detections = Array.isArray(cameras[cameraId]?.detections) ? cameras[cameraId]!.detections! : [];
         if (detections.length > 0) {
           this.lastGood.set(cameraId, { detections, at: now });
@@ -110,10 +129,12 @@ class LiveDetectionsPoller {
         this.emit(cameraId, detections);
       }
     } catch {
+      if (generation !== this.generation || useAuthStore.getState().user?.id !== userId) return;
       this.consecutiveFailures += 1;
       const now = Date.now();
       const withinHold = this.consecutiveFailures <= LiveDetectionsPoller.MAX_FAILURE_HOLDS;
       for (const cameraId of cameraIds) {
+        if (!this.subscribers.has(cameraId)) continue;
         const held = this.lastGood.get(cameraId);
         const fresh = held != null && now - held.at <= LiveDetectionsPoller.FAILURE_HOLD_TTL_MS;
         if (withinHold && fresh) {
@@ -124,7 +145,10 @@ class LiveDetectionsPoller {
         }
       }
     } finally {
-      this.inFlight = false;
+      if (generation === this.generation) {
+        this.inFlight = false;
+        this.request = null;
+      }
     }
   }
 }

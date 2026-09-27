@@ -150,6 +150,8 @@ export interface SavedLayout {
   cameraIds: string[];
   createdBy: string;
   lastUsed: string;
+  origem?: 'meu' | 'recebido';
+  podeEditar?: boolean;
 }
 
 interface OverviewSummary {
@@ -258,6 +260,7 @@ interface VmsDataState {
 type RecordingRuntimeStatus = {
   cameraId: string;
   isRecording: boolean;
+  manualRecordingActive?: boolean;
   intendedRecording?: boolean;
   stale?: boolean;
   statusDetail?: string;
@@ -418,6 +421,7 @@ function mapCameraItems(
       lastMotion: lastEvent ?? previous?.lastMotion,
       thumbnailColor: previous?.thumbnailColor ?? THUMBNAIL_COLORS[index % THUMBNAIL_COLORS.length],
       recordingStatusDetail: runtime?.statusDetail ?? previous?.recordingStatusDetail,
+      manualRecordingActive: runtime?.manualRecordingActive ?? previous?.manualRecordingActive,
       recordingStale: runtime?.stale ?? previous?.recordingStale ?? false,
       lastSegmentAt: runtime?.lastSegmentAt ?? previous?.lastSegmentAt ?? null,
       lastSegmentAgeSeconds: typeof runtime?.lastSegmentAgeSeconds === 'number'

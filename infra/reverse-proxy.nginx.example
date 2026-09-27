@@ -18,9 +18,13 @@ map $media_header_or_query $media_authorization {
   ""      "Bearer $cookie_s2cam_stream_token";
   default $media_header_or_query;
 }
+map $uri $media_cookie_path {
+    ~^(/hls/cam_[a-zA-Z0-9_-]+/) $1;
+    default /hls/;
+}
 map $arg_token $media_token_cookie {
   ""      "";
-  default "s2cam_stream_token=$arg_token; Path=/hls/; Max-Age=300; HttpOnly; Secure; SameSite=Strict";
+    default "s2cam_stream_token=$arg_token; Path=$media_cookie_path; Max-Age=300; HttpOnly; Secure; SameSite=Strict";
 }
 
 server {
@@ -74,7 +78,8 @@ server {
   }
 
   # HLS fallback under the same HTTPS origin.
-  location /hls/ {
+    location /hls/ {
+        add_header X-S2Cam-Hls-Session "camera" always;
     proxy_pass http://127.0.0.1:8888/;
     proxy_set_header Authorization $media_authorization;
     add_header Set-Cookie $media_token_cookie always;

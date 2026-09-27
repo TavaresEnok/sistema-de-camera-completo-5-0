@@ -105,5 +105,6 @@ test('HLS aceita o token do app na query sem quebrar o Bearer do navegador', () 
   const hls = conf.split('location /hls/ {')[1]?.split('\n    }')[0] ?? '';
   assert.match(hls, /proxy_set_header\s+Authorization\s+\$media_authorization;/);
   assert.match(hls, /add_header\s+Set-Cookie\s+\$media_token_cookie\s+always;/);
-  assert.match(conf, /Path=\/hls\/; Max-Age=300; HttpOnly; Secure; SameSite=Strict/);
+  assert.match(conf, /map \$uri \$media_cookie_path/);
+  assert.match(conf, /Path=\$media_cookie_path; Max-Age=300; HttpOnly; Secure; SameSite=Strict/);
 });

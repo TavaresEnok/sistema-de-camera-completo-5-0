@@ -53,7 +53,7 @@ test('todas as telas de câmera única usam o player no modo selected', async ()
 test('sinal vermelho da grade é exclusivo de gravação manual', async () => {
   const source = await readFile(livePagePath, 'utf8');
   assert.match(source, /cam\.recordingMode === 'manual' && cam\.status === 'recording'/);
-  assert.match(source, /manualRecordingActive: recordingOverrides\[cam\.id\] \?\? \(cam\.recordingMode === 'manual' && cam\.status === 'recording'\)/);
+  assert.match(source, /manualRecordingActive: recordingOverrides\[cam\.id\] \?\? cam\.manualRecordingActive \?\? \(cam\.recordingMode === 'manual' && cam\.status === 'recording'\)/);
   assert.match(source, /status: cam\.status === 'recording' && cam\.recordingMode !== 'manual' \? 'online' : cam\.status/);
 });
 
