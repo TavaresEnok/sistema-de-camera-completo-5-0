@@ -94,6 +94,7 @@ class LiveDetectionsPoller {
         {
           params: { cameraIds: cameraIds.join(','), maxAgeMs: MAX_AGE_MS, limit: PER_CAMERA_LIMIT },
           headers: { Authorization: `Bearer ${accessToken}` },
+          timeout: 4000,
         },
       );
       const cameras = response.data?.cameras ?? {};

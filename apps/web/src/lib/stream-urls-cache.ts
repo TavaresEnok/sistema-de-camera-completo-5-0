@@ -71,11 +71,11 @@ class StreamUrlsCache {
 
     const request = factory()
       .then((data) => {
-        this.set(key, data, ttlMs);
+        if (this.inflight.get(key) === request) this.set(key, data, ttlMs);
         return data;
       })
       .finally(() => {
-        this.inflight.delete(key);
+        if (this.inflight.get(key) === request) this.inflight.delete(key);
       });
 
     this.inflight.set(key, request);

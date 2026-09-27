@@ -37,6 +37,7 @@ type LiveStreamPlayerProps = {
   onStatusChange?: (status: LivePlayerStatus) => void;
   /** A API confirmou que a fonte efetiva da grade já é a fonte original. */
   onGridSourceIsOriginal?: (isOriginal: boolean) => void;
+  showEssentialStatus?: boolean;
 };
 
 const API_URL = getApiBaseUrl();
@@ -317,6 +318,7 @@ export function LiveStreamPlayer({
   routeActive = true,
   onStatusChange,
   onGridSourceIsOriginal,
+  showEssentialStatus = false,
 }: LiveStreamPlayerProps) {
   // "Mostrar quadrado no objeto" (tela de IA). Só afeta o DESENHO — a detecção
   // continua rodando e os eventos seguem sendo registrados.
@@ -926,6 +928,7 @@ export function LiveStreamPlayer({
     };
 
     const markHealthy = (protocol: ActiveLiveProtocol) => {
+      if (cancelled) return;
       retryAttemptRef.current = 0;
       rtmpBackgroundRecoveryRef.current = false;
       setRetryMessage(null);
@@ -1631,8 +1634,10 @@ export function LiveStreamPlayer({
           }
           cleanupHls();
           await cleanupWebrtc();
+          if (cancelled) return;
 
           const HlsModule = await import('hls.js/dist/hls.mjs');
+          if (cancelled) return;
           const Hls = HlsModule.default;
 
           if (Hls.isSupported()) {
@@ -1697,6 +1702,7 @@ export function LiveStreamPlayer({
               }
               break;
             } catch (protocolError) {
+              if (cancelled) return;
               const protocolName = protocol === 'webrtc' ? 'WebRTC' : protocol === 'llhls' ? 'LL-HLS' : 'HLS';
               const failureReason = protocolError instanceof Error ? protocolError.message : 'falha desconhecida';
               const retrySameWebrtc = protocol === 'webrtc'
@@ -1706,6 +1712,7 @@ export function LiveStreamPlayer({
               noFrameTimeout = null;
               cleanupHls();
               await cleanupWebrtc();
+              if (cancelled) return;
               if (!hasFrameRef.current) {
                 setActiveProtocol(null);
                 activeProtocolRef.current = null;
@@ -1755,6 +1762,16 @@ export function LiveStreamPlayer({
         throw new Error('Nenhum protocolo iniciou. Verifique WebRTC/WHEP, HLS, codec da câmera e conectividade com o MediaMTX.');
       } catch (streamError) {
         if (cancelled) return;
+        if (axios.isAxiosError(streamError) && streamError.response?.status === 401) {
+          scheduleReconnect('Renovando a sessão para retomar a imagem');
+          return;
+        }
+        if (axios.isAxiosError(streamError) && streamError.response?.status === 403) {
+          setError('Você não tem permissão para ver esta câmera.');
+          setRetryMessage(null);
+          setIsLoading(false);
+          return;
+        }
         if (axios.isAxiosError<CommercialRestrictionError>(streamError) && streamError.response?.status === 423) {
           const friendlyMessage =
             streamError.response.data?.userMessage
@@ -2438,6 +2455,7 @@ export function LiveStreamPlayer({
           playsInline
           autoPlay={autoPlay}
         />
+        {aiOverlayEnabled && <SmoothDetectionOverlay detections={detections} videoRef={videoRef} containerRef={containerRef} />}
       </div>
 
       {/* MÃOZINHA — só existe quando ampliado. Fica ACIMA do botão de seleção
@@ -2457,20 +2475,7 @@ export function LiveStreamPlayer({
         />
       )}
 
-      {aiOverlayEnabled && (
-        // Overlay em componente PRÓPRIO: o hook de interpolação re-renderiza a
-        // 60 fps, mas só o overlay — o player fica no ritmo do poller. A
-        // identidade por trackId e a matemática de posicionamento foram para
-        // lá; o que eu tinha feito com transição CSS vira interpolação real em
-        // JS (pacote de tracking, 15/08/2026).
-        <SmoothDetectionOverlay
-          detections={detections}
-          videoRef={videoRef}
-          containerRef={containerRef}
-        />
-      )}
-
-      {showOverlay && (isLoading || audioSwitchMessage) && (
+      {(showOverlay || showEssentialStatus) && (isLoading || audioSwitchMessage) && (
         <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/20 backdrop-blur-[1px]">
           <div className={`flex items-center gap-2 rounded-md border border-white/10 bg-black/45 text-white/75 ${
             compactLiveOverlay ? 'px-2 py-1 text-[10px]' : 'px-3 py-2 text-xs'
@@ -2481,7 +2486,7 @@ export function LiveStreamPlayer({
         </div>
       )}
 
-      {showOverlay && error && compactLiveOverlay && (
+      {(showOverlay || showEssentialStatus) && error && compactLiveOverlay && (
         <div className="absolute inset-x-1 bottom-1 z-20 flex justify-center">
           <div className="flex max-w-[92%] items-center gap-1.5 rounded border border-white/10 bg-black/68 px-2 py-1 text-[10px] text-white/75 backdrop-blur-[2px]">
             <AlertTriangle className="h-3 w-3 shrink-0 text-[hsl(var(--status-warning))]" />
@@ -2490,7 +2495,7 @@ export function LiveStreamPlayer({
         </div>
       )}
 
-      {showOverlay && error && !compactLiveOverlay && (
+      {(showOverlay || showEssentialStatus) && error && !compactLiveOverlay && (
         <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/60">
           <div className="max-w-[85%] rounded-lg border border-[hsl(var(--destructive)_/_0.3)] bg-[hsl(var(--destructive)_/_0.1)] px-4 py-3 text-center text-xs text-[hsl(var(--destructive))]">
             <div className="mb-2 flex items-center justify-center gap-2">

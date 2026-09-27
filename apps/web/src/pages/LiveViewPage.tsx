@@ -167,7 +167,11 @@ function loadSavedLayouts(): SavedLayout[] {
 
 function persistSavedLayouts(layouts: SavedLayout[]) {
   if (typeof window === 'undefined') return;
-  window.localStorage.setItem(LIVE_LAYOUTS_STORAGE_KEY, JSON.stringify(layouts));
+  try {
+    window.localStorage.setItem(LIVE_LAYOUTS_STORAGE_KEY, JSON.stringify(layouts));
+  } catch {
+    // A operação atual continua disponível mesmo sem cache do navegador.
+  }
 }
 
 export default function LiveViewPage({ pageActive = true }: { pageActive?: boolean }) {
@@ -194,6 +198,8 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
   // A ampliação é um estado visual temporário. A grade persistida nunca é
   // substituída por 1x1, portanto voltar restaura os mesmos quadros e posições.
   const [focusedCameraId, setFocusedCameraId] = useState<string | null>(null);
+  const focusedCameraIdRef = useRef(focusedCameraId);
+  focusedCameraIdRef.current = focusedCameraId;
   // A ampliação não pode depender do estado que a grade venha a receber depois
   // (sincronização, cache legado, clique acidental). Guardamos o retrato exato
   // do operador antes do zoom para o botão Voltar sempre restaurar aquela grade.
@@ -249,6 +255,8 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
   const [zoneFilter, setZoneFilter] = useState('__all__');
   const [statusFilter, setStatusFilter] = useState<(typeof STATUS_FILTERS)[number]>('all');
   const [recordingOverrides, setRecordingOverrides] = useState<Record<string, boolean>>({});
+  const recordingCommandsInFlight = useRef(new Set<string>());
+  const [recordingBusyIds, setRecordingBusyIds] = useState<string[]>([]);
   const [savedLayouts, setSavedLayouts] = useState<SavedLayout[]>(() => loadSavedLayouts());
   const [selectedSlotIndex, setSelectedSlotIndex] = useState<number | null>(null);
   const [layoutSelectValue, setLayoutSelectValue] = useState('');
@@ -359,8 +367,10 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
         if (cancelled) return;
         const remoteLayouts = response.data.map(mapApiLiveLayout).filter((layout): layout is SavedLayout => Boolean(layout));
         if (remoteLayouts.length) {
-          setSavedLayouts(remoteLayouts);
-          persistSavedLayouts(remoteLayouts);
+          const pendingLocal = loadSavedLayouts().filter(layout => layout.id.startsWith('local-'));
+          const merged = [...remoteLayouts, ...pendingLocal.filter(layout => !remoteLayouts.some(remote => remote.id === layout.id))];
+          setSavedLayouts(merged);
+          persistSavedLayouts(merged);
           return;
         }
 
@@ -465,7 +475,7 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
       let changed = false;
       const next = { ...current };
       for (const camera of cameras) {
-        if (camera.id in next && next[camera.id] === (camera.status === 'recording')) {
+        if (camera.id in next && camera.recordingMode === 'manual' && next[camera.id] === (camera.status === 'recording')) {
           delete next[camera.id];
           changed = true;
         }
@@ -548,6 +558,10 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
     }
   }, [storeGridSize, storeCameraIds]);
 
+  useEffect(() => {
+    if (focusedCameraId && !displayedCams.some(cam => cam?.id === focusedCameraId)) restoreLayout();
+  }, [displayedCams, focusedCameraId, restoreLayout]);
+
   // Esc volta para a grade anterior — exceto digitando num campo ou com diálogo
   // aberto (nesses casos o Esc pertence ao campo/diálogo).
   useEffect(() => {
@@ -575,25 +589,41 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
     if (action === 'playback') setLocation(`/playback?cameraId=${encodeURIComponent(camera.id)}`);
     if (action === 'ptz') setLocation(`/ptz?cameraId=${encodeURIComponent(camera.id)}`);
     if (action === 'info') setLocation(`/cameras?cameraId=${encodeURIComponent(camera.id)}`);
+    if ((action === 'record-start' || action === 'record-stop') && (!accessToken || recordingCommandsInFlight.current.has(camera.id))) return;
+    if (action === 'record-start' && camera.recordingMode === 'continuous') {
+      toast({ title: 'Esta câmera já grava continuamente', description: 'Use a reprodução para consultar ou salvar um trecho.' });
+      return;
+    }
+    if (action === 'record-start' || action === 'record-stop') {
+      recordingCommandsInFlight.current.add(camera.id);
+      setRecordingBusyIds(Array.from(recordingCommandsInFlight.current));
+    }
     if (action === 'record-start') {
       void (async () => {
-        if (!accessToken) return;
         setRecordingOverrides((current) => ({ ...current, [camera.id]: true }));
         try {
-          await axios.post(`${API_URL}/cameras/${camera.id}/recording/start`, {}, {
+          const { data } = await axios.post(`${API_URL}/cameras/${camera.id}/recording/start`, {}, {
             headers: { Authorization: `Bearer ${accessToken}` },
           });
           void loadData();
-          toast({ title: 'Gravação manual iniciada', description: `${camera.name} · para automaticamente em até 10 minutos.` });
+          if (data.status === 'already_recording' && camera.recordingMode === 'continuous') {
+            setRecordingOverrides(current => { const next = { ...current }; delete next[camera.id]; return next; });
+            toast({ title: 'Gravação contínua preservada' });
+          } else {
+            toast({ title: 'Gravação manual iniciada', description: `${camera.name} · para automaticamente em até 10 minutos.` });
+            window.setTimeout(() => setRecordingOverrides(current => { const next = { ...current }; delete next[camera.id]; return next; }), 600_000);
+          }
         } catch (error) {
           setRecordingOverrides((current) => ({ ...current, [camera.id]: camera.status === 'recording' }));
           toast({ title: 'Erro ao iniciar gravação', description: error instanceof Error ? error.message : 'Falha ao iniciar gravação manual.', variant: 'destructive' });
+        } finally {
+          recordingCommandsInFlight.current.delete(camera.id);
+          setRecordingBusyIds(Array.from(recordingCommandsInFlight.current));
         }
       })();
     }
     if (action === 'record-stop') {
       void (async () => {
-        if (!accessToken) return;
         setRecordingOverrides((current) => ({ ...current, [camera.id]: false }));
         try {
           await axios.post(`${API_URL}/cameras/${camera.id}/recording/stop`, {}, {
@@ -604,6 +634,9 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
         } catch (error) {
           setRecordingOverrides((current) => ({ ...current, [camera.id]: camera.status === 'recording' }));
           toast({ title: 'Erro ao parar gravação', description: error instanceof Error ? error.message : 'Falha ao parar gravação manual.', variant: 'destructive' });
+        } finally {
+          recordingCommandsInFlight.current.delete(camera.id);
+          setRecordingBusyIds(Array.from(recordingCommandsInFlight.current));
         }
       })();
     }
@@ -627,7 +660,7 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
 
   const markGridSourceIsOriginal = useCallback((cameraId: string, isOriginal: boolean) => {
     gridOriginalSourcesRef.current = { ...gridOriginalSourcesRef.current, [cameraId]: isOriginal };
-    if (isOriginal) setOriginalReadyCameraId(cameraId);
+    if (isOriginal && focusedCameraIdRef.current === cameraId) setOriginalReadyCameraId(cameraId);
   }, []);
 
   const prewarmOriginal = useCallback((cameraId: string) => {
@@ -1155,6 +1188,7 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
                     }}
                     onDoubleClick={() => handleCamDoubleClick(cam)}
                     onAction={handleCamAction}
+                    recordingBusy={recordingBusyIds.includes(cam.id)}
                     streamStartDelayMs={displayIndex * 700 + streamStartDelay(i, count)}
                     routeActive={pageActive}
                     onGridSourceIsOriginal={markGridSourceIsOriginal}

@@ -13,6 +13,7 @@ interface CameraTileProps {
   onClick?: () => void;
   onDoubleClick?: () => void;
   onAction?: (action: string, camera: Camera) => void;
+  recordingBusy?: boolean;
   compact?: boolean;
   streamStartDelayMs?: number;
   routeActive?: boolean;
@@ -38,6 +39,7 @@ export function CameraTile({
   onClick,
   onDoubleClick,
   onAction,
+  recordingBusy = false,
   compact,
   streamStartDelayMs = 0,
   routeActive = true,
@@ -99,6 +101,7 @@ export function CameraTile({
             cameraId={camera.id}
             cameraName={camera.name}
             showOverlay={showDetectionOverlay && !wallMode && !showOfflineOverlay}
+            showEssentialStatus={wallMode}
             aiEnabled={camera.aiEnabled}
             liveViewMode={liveViewMode}
             className="h-full w-full"
@@ -191,8 +194,9 @@ export function CameraTile({
             >
               <Crosshair className="w-3 h-3" />
             </button>
-            <button
+            {camera.recordingMode !== 'continuous' && <button
               type="button"
+              disabled={recordingBusy}
               aria-label={`${isManualRecordingActive ? 'Parar' : 'Iniciar'} gravação manual de ${camera.name}`}
               className={`flex h-6 items-center justify-center gap-1 rounded border px-1.5 text-[9px] font-medium transition-colors ${
                 isManualRecordingActive
@@ -203,8 +207,8 @@ export function CameraTile({
               title={isManualRecordingActive ? 'Parar gravação manual' : 'Iniciar gravação manual (máximo de 10 minutos)'}
             >
               <Circle className={`w-3 h-3 ${isManualRecordingActive ? 'fill-current' : ''}`} />
-              <span>{isManualRecordingActive ? 'Manual' : 'Gravar'}</span>
-            </button>
+              <span>{recordingBusy ? 'Aguarde' : isManualRecordingActive ? 'Manual' : 'Gravar'}</span>
+            </button>}
             <button
               type="button"
               aria-label={`Abrir reprodução de ${camera.name}`}

@@ -817,6 +817,14 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
    * aberto.
    */
   async startManualRecording(cameraId: string, segmentSeconds: number, maxDurationSeconds = 600) {
+    const policy = await this.prisma.camera.findUnique({
+      where: { id: cameraId }, select: { recordingMode: true },
+    });
+    // A gravação contínua é uma política permanente. Um pedido avulso não pode
+    // substituí-la por manual nem instalar o timer que a desligaria em 10 min.
+    if (policy?.recordingMode === 'continuous') {
+      return this.start(cameraId, segmentSeconds, { recordingMode: 'continuous' });
+    }
     const duration = Math.min(600, Math.max(10, Math.round(maxDurationSeconds) || 600));
     this.clearMotionStopTimer(cameraId);
     this.clearManualStopTimer(cameraId);
@@ -833,6 +841,12 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
 
   /** Parada explícita ou automática da gravação manual; mantém o modo armado. */
   async stopManualRecording(cameraId: string) {
+    const policy = await this.prisma.camera.findUnique({
+      where: { id: cameraId }, select: { recordingMode: true },
+    });
+    if (policy?.recordingMode === 'continuous') {
+      return { status: 'continuous_recording_protected', cameraId };
+    }
     this.clearManualStopTimer(cameraId);
     return this.stop(cameraId, { recordingMode: 'manual' });
   }
@@ -2359,7 +2373,7 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
         where: { id: cameraId },
         select: { recordingMode: true },
       });
-      if (modoArmado(cam?.recordingMode)) return {};
+      if (modoArmado(cam?.recordingMode) || cam?.recordingMode === 'continuous') return {};
     }
     return { recordingMode: requested };
   }

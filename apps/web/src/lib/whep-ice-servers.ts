@@ -98,17 +98,25 @@ export async function discoverWhepIceServers(
   authorization: string | null,
   signal?: AbortSignal,
 ): Promise<WhepIceServer[]> {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  signal?.addEventListener('abort', abort, { once: true });
+  if (signal?.aborted) controller.abort();
+  const deadline = setTimeout(abort, 3000);
   try {
     const response = await fetch(whepUrl, {
       method: 'OPTIONS',
       mode: 'cors',
       redirect: 'error',
       headers: authorization ? { Authorization: authorization } : undefined,
-      signal,
+      signal: controller.signal,
     });
     if (!response.ok) return [];
     return parseWhepIceServers(response.headers.get('link'));
   } catch {
     return [];
+  } finally {
+    clearTimeout(deadline);
+    signal?.removeEventListener('abort', abort);
   }
 }

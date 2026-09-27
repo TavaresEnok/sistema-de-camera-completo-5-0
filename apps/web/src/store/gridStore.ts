@@ -46,8 +46,12 @@ function loadPersistedGrid(): PersistedGrid {
 
 function persistGrid(next: PersistedGrid) {
   if (typeof window === 'undefined') return;
-  const current = loadPersistedGrid();
-  window.localStorage.setItem(GRID_STORAGE_KEY, JSON.stringify({ ...current, ...next }));
+  try {
+    const current = loadPersistedGrid();
+    window.localStorage.setItem(GRID_STORAGE_KEY, JSON.stringify({ ...current, ...next }));
+  } catch {
+    // A grade continua funcional em memória quando o armazenamento está indisponível.
+  }
 }
 
 /** Persiste o layout anterior em sessionStorage (sobrevive refresh, não fecha de aba). */
@@ -68,10 +72,14 @@ function loadPrevLayout(): PrevLayout | null {
 
 function persistPrevLayout(layout: PrevLayout | null) {
   if (typeof window === 'undefined') return;
-  if (layout) {
-    window.sessionStorage.setItem(PREV_LAYOUT_SESSION_KEY, JSON.stringify(layout));
-  } else {
-    window.sessionStorage.removeItem(PREV_LAYOUT_SESSION_KEY);
+  try {
+    if (layout) {
+      window.sessionStorage.setItem(PREV_LAYOUT_SESSION_KEY, JSON.stringify(layout));
+    } else {
+      window.sessionStorage.removeItem(PREV_LAYOUT_SESSION_KEY);
+    }
+  } catch {
+    // A ausência de sessionStorage não deve impedir o retorno à grade.
   }
 }
 

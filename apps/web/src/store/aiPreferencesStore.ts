@@ -3,6 +3,8 @@ import { create } from 'zustand';
 import { getApiBaseUrl } from '../lib/api-base';
 import { useAuthStore } from './authStore';
 
+let pendingLoad: Promise<void> | null = null;
+
 /**
  * Preferências de EXIBIÇÃO da IA, compartilhadas por toda a tela.
  *
@@ -27,9 +29,10 @@ export const useAiPreferencesStore = create<AiPreferencesState>((set, get) => ({
 
   carregar: async () => {
     if (get().carregado) return;
+    if (pendingLoad) return pendingLoad;
     const token = useAuthStore.getState().accessToken;
     if (!token) return;
-    try {
+    pendingLoad = (async () => { try {
       const { data } = await axios.get<{ showObjectBox?: boolean }>(`${getApiBaseUrl()}/ai/settings`, {
         headers: { Authorization: `Bearer ${token}` },
         timeout: 10_000,
@@ -41,7 +44,10 @@ export const useAiPreferencesStore = create<AiPreferencesState>((set, get) => ({
       // detecção parou de funcionar. Marca como carregado para não repetir a
       // tentativa a cada tile do mural.
       set({ carregado: true });
-    }
+    } finally {
+      pendingLoad = null;
+    } })();
+    return pendingLoad;
   },
 
   /** Atualização otimista vinda da tela de IA, sem esperar o próximo ciclo. */
