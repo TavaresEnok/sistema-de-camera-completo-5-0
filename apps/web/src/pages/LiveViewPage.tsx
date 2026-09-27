@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useCallback, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import axios from 'axios';
+import { recoverLegacyLayoutData } from '../lib/recover-legacy-layouts';
 import { useLocation } from 'wouter';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -279,6 +280,33 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
   savedLayoutsRef.current = savedLayouts;
   const commitLayoutDialogRef = useRef(false);
   const [layoutBusy, setLayoutBusy] = useState(false);
+  const [recoverLegacyOpen, setRecoverLegacyOpen] = useState(false);
+  const [hasLegacyLayouts, setHasLegacyLayouts] = useState(() => {
+    try { return Boolean(window.localStorage.getItem(LIVE_LAYOUTS_STORAGE_KEY)) && window.localStorage.getItem(`${LIVE_LAYOUTS_STORAGE_KEY}.recovered.${authUserId}`) !== 'true'; } catch { return false; }
+  });
+  useEffect(() => {
+    setRecoverLegacyOpen(false);
+    try { setHasLegacyLayouts(Boolean(window.localStorage.getItem(LIVE_LAYOUTS_STORAGE_KEY)) && window.localStorage.getItem(`${LIVE_LAYOUTS_STORAGE_KEY}.recovered.${authUserId}`) !== 'true'); }
+    catch { setHasLegacyLayouts(false); }
+  }, [authUserId]);
+  const recoverLegacyLayouts = () => {
+    try {
+      if (!authUserId || authUserId !== useAuthStore.getState().user?.id) return;
+      const allowed = new Set(cameras.filter(camera => camera.canViewContent !== false).map(camera => camera.id));
+      const recovered: SavedLayout[] = recoverLegacyLayoutData(window.localStorage.getItem(LIVE_LAYOUTS_STORAGE_KEY) ?? '[]', allowed)
+        .map(item => ({ ...item, gridSize: item.gridSize as GridSize, id: `local-recovered-${crypto.randomUUID()}`,
+          createdBy: useAuthStore.getState().user?.name ?? 'Operador', lastUsed: new Date().toISOString(), podeEditar: true }));
+      const next = [...savedLayoutsRef.current, ...recovered];
+      if (!persistSavedLayouts(next, authUserId)) throw new Error('storage');
+      setSavedLayouts(next);
+      try { window.localStorage.setItem(`${LIVE_LAYOUTS_STORAGE_KEY}.recovered.${authUserId}`, 'true'); } catch { /* Layouts já persistidos. */ }
+      setHasLegacyLayouts(false);
+      toast({ title: `${recovered.length} layouts recuperados`, description: 'Confira os quadros e use Sincronizar para salvar na sua conta.' });
+    } catch {
+      toast({ title: 'Não foi possível recuperar os layouts', description: 'Os dados antigos foram preservados neste navegador.', variant: 'destructive' });
+    }
+    setRecoverLegacyOpen(false);
+  };
   const [layoutsSyncing, setLayoutsSyncing] = useState(false);
   const [layoutSyncNonce, setLayoutSyncNonce] = useState(0);
   const [selectedSlotIndex, setSelectedSlotIndex] = useState<number | null>(null);
@@ -1126,6 +1154,7 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
                   )}
                 </SelectContent>
               </Select>
+              {hasLegacyLayouts && <button className="mb-2 text-xs underline" disabled={layoutsSyncing || layoutBusy} onClick={() => setRecoverLegacyOpen(true)}>Recuperar layouts antigos deste navegador</button>}
               <div className="max-h-64 overflow-y-auto border-t border-border pt-1">
                 {savedLayouts.length ? savedLayouts.map((layout) => (
                   <div key={layout.id} className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-[hsl(var(--accent))]">
@@ -1513,6 +1542,15 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
         </DialogContent>
       </Dialog>
 
+      <AlertDialog open={recoverLegacyOpen} onOpenChange={setRecoverLegacyOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Recuperar layouts antigos?</AlertDialogTitle>
+            <AlertDialogDescription>Esses layouts não identificam quem os criou e podem pertencer a outra pessoa que usou este navegador. Recupere apenas se forem seus. Somente câmeras permitidas para sua conta serão incluídas. Os originais serão preservados.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter><AlertDialogCancel>Cancelar</AlertDialogCancel><AlertDialogAction onClick={recoverLegacyLayouts}>São meus, recuperar</AlertDialogAction></AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <AlertDialog open={deleteTarget !== null} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
         <AlertDialogContent>
           <AlertDialogHeader>

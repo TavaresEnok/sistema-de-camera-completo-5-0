@@ -70,6 +70,7 @@ enum RecordingSource {
 }
 
 model Camera {
+  manualRecordingSession ManualRecordingSession?
   id                String  @id @default(uuid())
   /// Identificador operacional curto, único e imutável. O UUID continua sendo
   /// a chave primária interna; este número serve à tela, pesquisa e suporte.
@@ -369,6 +370,17 @@ model ExportedClip {
   @@index([cameraId, startedAt])
   @@index([sourceRecordingId])
   @@index([createdAt])
+}
+
+model ManualRecordingSession {
+  cameraId       String   @id
+  camera         Camera   @relation(fields: [cameraId], references: [id], onDelete: Cascade)
+  expiresAt      DateTime @db.Timestamptz(6)
+  segmentSeconds Int
+  owner          String?
+  leaseUntil     DateTime? @db.Timestamptz(6)
+  updatedAt      DateTime @default(now()) @db.Timestamptz(6)
+  @@index([expiresAt])
 }
 
 model CameraEvent {

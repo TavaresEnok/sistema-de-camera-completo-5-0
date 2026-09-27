@@ -27,6 +27,7 @@ import { buildRtspUrl, resolveRecordingRtspProfile } from '../cameras/helpers/rt
 import { CryptoService } from '../common/crypto/crypto.service';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { envNumber } from '../common/config/env-number.helper';
+import { ManualRecordingSessions } from './manual-recording-sessions';
 import { sanitizeSensitiveText } from '../common/security/sensitive-text.helper';
 import { spawnWithSecretUrl } from '../common/process/secret-url-process.helper';
 // Registro de métricas por câmera. Importado como SINGLETON de módulo (e não por
@@ -175,6 +176,9 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
   // não transforme uma câmera em gravação contínua indefinida.
   private readonly manualStopTimers = new Map<string, NodeJS.Timeout>();
   private manualCommands = new Map<string, Promise<unknown>>();
+  private durableManual: ManualRecordingSessions | null = null;
+  private durableManualTimer: NodeJS.Timeout | null = null;
+  private durableManualActive = new Set<string>();
 
   private withManualCommand<T>(cameraId: string, action: () => Promise<T>): Promise<T> {
     this.manualCommands ??= new Map();
@@ -257,7 +261,47 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
     this.preEventSeconds = envNumber('MOTION_PRE_EVENT_SECONDS', 0, { min: 0, max: 30 });
   }
 
+  private initializeDurableManual() {
+    this.durableManual = new ManualRecordingSessions(this.prisma, {
+      protected: async cameraId => {
+        const camera = await this.prisma.camera.findUnique({ where: { id: cameraId }, select: { recordingMode: true } });
+        const protectedRecording = !camera || camera.recordingMode === 'continuous';
+        if (protectedRecording) this.durableManualActive.delete(cameraId);
+        return protectedRecording;
+      },
+      start: async (cameraId, segmentSeconds) => {
+        if (this.shuttingDown) throw new Error('Serviço encerrando');
+        const result = await this.start(cameraId, segmentSeconds, { recordingMode: 'manual' });
+        this.clearMotionStopTimer(cameraId);
+        this.durableManualActive.add(cameraId);
+        return result;
+      },
+      stop: async cameraId => {
+        const result = await this.stop(cameraId, { recordingMode: 'manual' });
+        this.durableManualActive.delete(cameraId);
+        return result;
+      },
+      relinquish: async cameraId => {
+        this.durableManualActive.delete(cameraId);
+        this.cancelPendingRestart(cameraId);
+        const state = this.active.get(cameraId);
+        if (!state) return;
+        state.stopRequested = true;
+        await this.stopProcessAndWait(state);
+        await this.finalizeRecordingState(cameraId, state, state.process.exitCode);
+      },
+    });
+    const reconcileManual = () => {
+      if (this.shuttingDown) return;
+      void this.durableManual!.reconcile().catch(error => this.logger.warn(`Recuperação de sessões manuais: ${sanitizeSensitiveText(error)}`));
+    };
+    reconcileManual();
+    this.durableManualTimer = setInterval(reconcileManual, 5_000);
+    this.durableManualTimer.unref();
+  }
+
   onModuleInit() {
+    if (this.controlMode === 'local') this.initializeDurableManual();
     // Delegar a gravação ao worker Go troca a política de arquivamento sem que
     // nada na interface indique isso: o worker é LEGADO e transcodifica para
     // H.264 baseline/ultrafast (com perda), enquanto o caminho local desta classe
@@ -829,6 +873,15 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
    * aberto.
    */
   async startManualRecording(cameraId: string, segmentSeconds: number, maxDurationSeconds = 600) {
+    if (this.durableManual) {
+      const camera = await this.prisma.camera.findUnique({ where: { id: cameraId }, select: { recordingMode: true, enabled: true } });
+      if (!camera) throw new NotFoundException('Câmera não encontrada.');
+      if (!camera.enabled) throw new BadRequestException('Câmera desativada.');
+      if (camera.recordingMode === 'continuous') return { status: 'continuous_recording_protected', cameraId, manualRecordingActive: false };
+      const duration = Math.min(600, Math.max(10, Math.round(maxDurationSeconds) || 600));
+      await this.durableManual.requestStart(cameraId, segmentSeconds, duration);
+      return { status: 'recording_start_requested', cameraId, manualRecordingActive: true, manualStopAfterSeconds: duration };
+    }
     return this.withManualCommand(cameraId, () => this.startManualRecordingInternal(cameraId, segmentSeconds, maxDurationSeconds));
   }
 
@@ -866,6 +919,12 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
 
   /** Parada explícita ou automática da gravação manual; mantém o modo armado. */
   async stopManualRecording(cameraId: string) {
+    if (this.durableManual) {
+      if (!await this.durableManual.requestStop(cameraId)) {
+        return this.withManualCommand(cameraId, () => this.stopManualRecordingInternal(cameraId));
+      }
+      return { status: 'recording_stop_requested', cameraId };
+    }
     return this.withManualCommand(cameraId, () => this.stopManualRecordingInternal(cameraId));
   }
 
@@ -996,7 +1055,9 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
 
   private async stopMotionRecordingAfterQuiet(cameraId: string, postRollSeconds: number) {
     this.motionStopTimers.delete(cameraId);
-    if (this.manualStopTimers?.has(cameraId) || this.manualCommands?.has(cameraId)) return;
+    if (this.manualStopTimers?.has(cameraId) || this.manualCommands?.has(cameraId)
+      || this.durableManualActive?.has(cameraId)) return;
+    if (this.durableManual && (await this.durableManual.active([cameraId])).has(cameraId)) return;
     // Enquanto o detector estiver cego, NINGUÉM para esta gravação. Um post-roll
     // agendado antes da cegueira (ou o de um movimento que ainda pingou) cairia
     // aqui e desligaria justamente a cobertura de emergência.
@@ -2682,7 +2743,9 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
   }
 
   async getStatus(cameraId: string) {
-    return this.montarStatus(cameraId, await this.contextoDeStatus([cameraId]));
+    const status = this.montarStatus(cameraId, await this.contextoDeStatus([cameraId]));
+    if (this.durableManual) status.manualRecordingActive = (await this.durableManual.active([cameraId])).has(cameraId);
+    return status;
   }
 
   private montarStatus(cameraId: string, contexto: Awaited<ReturnType<RecordingProcessManagerService['contextoDeStatus']>>) {
@@ -2793,6 +2856,10 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
     const uniqueIds = [...new Set(cameraIds)].filter((id) => id.trim().length > 0).slice(0, 500);
     const contexto = await this.contextoDeStatus(uniqueIds);
     const items = uniqueIds.map((cameraId) => this.montarStatus(cameraId, contexto));
+    if (this.durableManual) {
+      const active = await this.durableManual.active(uniqueIds);
+      for (const item of items) item.manualRecordingActive = active.has(item.cameraId);
+    }
     const staleCount = items.filter((item: any) => item.stale).length;
     const recordingCount = items.filter((item: any) => item.isRecording).length;
     return {
@@ -2853,6 +2920,8 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
   async onApplicationShutdown() {
     // ANTES de qualquer kill: desligar a API não pode disparar gravação nova.
     this.shuttingDown = true;
+    if (this.durableManualTimer) clearInterval(this.durableManualTimer);
+    await this.durableManual?.pause();
     for (const cameraId of [...this.restartTimers.keys()]) {
       this.cancelPendingRestart(cameraId);
     }
@@ -2886,6 +2955,7 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
     if (this.controlMode === 'local') {
       await this.stopAll();
     }
+    await this.durableManual?.release().catch(error => this.logger.warn(sanitizeSensitiveText(error)));
     if (this.redisPublisher) {
       await this.redisPublisher.quit();
       this.redisPublisher = null;
