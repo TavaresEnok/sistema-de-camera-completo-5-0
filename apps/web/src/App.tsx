@@ -64,7 +64,7 @@ const AiPage          = lazyWithReload(() => import('./pages/AiPage'));
 const InvestigationPage = lazyWithReload(() => import('./pages/InvestigationPage'));
 const StoragePage     = lazyWithReload(() => import('./pages/StoragePage'));
 const SettingsPage    = lazyWithReload(() => import('./pages/SettingsPage'));
-const CameraDetailPage = lazyWithReload(() => import('./pages/CameraDetailPage'));
+const LegacyCameraRedirect = lazyWithReload(() => import('./pages/LegacyCameraRedirect'));
 const WallModePage    = lazyWithReload(() => import('./pages/WallModePage'));
 const RondaPage       = lazyWithReload(() => import('./pages/RondaPage'));
 const DistribuicaoPage = lazyWithReload(() => import('./pages/DistribuicaoPage'));
@@ -337,7 +337,7 @@ function AppRoutes() {
 
       {/* ── Rotas exclusivas de operadores e admins ── */}
       <Route path="/cameras/:id">
-        {() => <ProtectedRoute component={CameraDetailPage} minRole="operator" />}
+        {() => <ProtectedRoute component={LegacyCameraRedirect} minRole="operator" />}
       </Route>
       <Route path="/cameras">
         {() => <ProtectedRoute component={CamerasPage} minRole="operator" />}

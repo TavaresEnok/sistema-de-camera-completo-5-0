@@ -5,7 +5,6 @@ import { fileURLToPath } from 'node:url';
 
 const addDialogPath = fileURLToPath(new URL('../src/components/AddPushCameraDialog.tsx', import.meta.url));
 const editSheetPath = fileURLToPath(new URL('../src/components/CameraEditSheet.tsx', import.meta.url));
-const detailPagePath = fileURLToPath(new URL('../src/pages/CameraDetailPage.tsx', import.meta.url));
 const storePath = fileURLToPath(new URL('../src/store/vmsDataStore.ts', import.meta.url));
 
 test('cadastro RTMP recomenda URL compacta e nunca orienta recortar a chave', async () => {
@@ -42,14 +41,13 @@ test('edição RTMP bloqueia a falsa recomendação quando a URL excede o equipa
 
 test('detalhe e listagens não apresentam o marcador 0.0.0.0 como endereço de câmera RTMP', async () => {
   const [detail, store] = await Promise.all([
-    readFile(detailPagePath, 'utf8'),
+    readFile(editSheetPath, 'utf8'),
     readFile(storePath, 'utf8'),
   ]);
 
   assert.match(store, /sourceMode === 'rtmp_push' \? 'RTMP push' : camera\.ip/);
-  assert.match(detail, /Identificação e publicação RTMP/);
-  assert.match(detail, /A câmera envia \(RTMP push\)/);
-  assert.match(detail, /Publicação RTMP da câmera/);
-  assert.match(detail, /modoPush \? \{/);
+  assert.match(detail, /ingest\?\.sourceMode \?\? sourceMode/);
+  assert.match(detail, /!modoPush \? \{/);
+  assert.doesNotMatch(detail, /\{camera\.ipAddress\}/);
   assert.doesNotMatch(detail, />\{cam\.ipAddress\}<\/span>/);
 });

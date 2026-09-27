@@ -316,7 +316,7 @@ export function PainelDeCamerasDaIa({
                           aba Gravação da câmera (é decisão de gravar), mas quem
                           está aqui precisa entender que as duas conversam. */}
                       {gravaPorObjeto && (
-                        <Link href={`/cameras/${cam.cameraId}`}>
+                        <Link href={`/cameras?cameraId=${encodeURIComponent(cam.cameraId)}`}>
                           <span className="mt-1 inline-flex cursor-pointer items-center gap-1 text-[10px] text-[hsl(var(--primary))] hover:underline">
                             <Video className="h-3 w-3" aria-hidden />
                             Grava quando a IA confirma pessoa ou veículo

@@ -573,8 +573,8 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
 
   const handleCamAction = useCallback((action: string, camera: Camera) => {
     if (action === 'playback') setLocation(`/playback?cameraId=${encodeURIComponent(camera.id)}`);
-    if (action === 'ptz') setLocation(`/cameras/${camera.id}?tab=ptz`);
-    if (action === 'info') setLocation(`/cameras/${camera.id}`);
+    if (action === 'ptz') setLocation(`/ptz?cameraId=${encodeURIComponent(camera.id)}`);
+    if (action === 'info') setLocation(`/cameras?cameraId=${encodeURIComponent(camera.id)}`);
     if (action === 'record-start') {
       void (async () => {
         if (!accessToken) return;

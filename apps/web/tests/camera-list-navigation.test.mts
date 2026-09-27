@@ -9,7 +9,8 @@ const editSheet = readFileSync(new URL('../src/components/CameraEditSheet.tsx', 
 const css = readFileSync(new URL('../src/index.css', import.meta.url), 'utf8');
 
 test('clicar na linha ou no cartão abre a câmera individual, sem roubar o botão editar', () => {
-  assert.match(camerasPage, /setLocation\(`\/cameras\/\$\{encodeURIComponent\(cameraId\)\}`\)/);
+  assert.match(camerasPage, /setSelectedCam\(cameras.find/);
+  assert.match(camerasPage, /liveViewMode="selected"/);
   assert.ok(
     (camerasPage.match(/onClick=\{\(\) => openCamera\(cam\.id\)\}/g) ?? []).length >= 2,
     'tabela e cartões precisam compartilhar a navegação individual',

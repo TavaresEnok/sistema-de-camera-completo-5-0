@@ -108,7 +108,6 @@ const ler = (c: string) => readFileSync(c, 'utf8');
 
 const TELAS = [
   'src/components/CameraEditSheet.tsx',
-  'src/pages/CameraDetailPage.tsx',
   'src/pages/CamerasPage.tsx',
 ];
 

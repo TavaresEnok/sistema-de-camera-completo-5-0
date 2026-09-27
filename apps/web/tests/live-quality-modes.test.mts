@@ -5,7 +5,7 @@ import test from 'node:test';
 const playerPath = new URL('../src/components/LiveStreamPlayer.tsx', import.meta.url);
 const livePagePath = new URL('../src/pages/LiveViewPage.tsx', import.meta.url);
 const mapPagePath = new URL('../src/pages/MapPage.tsx', import.meta.url);
-const cameraDetailPagePath = new URL('../src/pages/CameraDetailPage.tsx', import.meta.url);
+const cameraDetailPagePath = new URL('../src/pages/CamerasPage.tsx', import.meta.url);
 const ptzPagePath = new URL('../src/pages/PTZPage.tsx', import.meta.url);
 const apiProfilePath = new URL('../../api/src/camera-stream/helpers/live-delivery-profile.helper.ts', import.meta.url);
 const pushDialogPath = new URL('../src/components/AddPushCameraDialog.tsx', import.meta.url);

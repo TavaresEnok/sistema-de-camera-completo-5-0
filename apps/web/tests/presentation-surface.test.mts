@@ -45,7 +45,7 @@ test('nenhuma tela oferecida ao operador finge ter conteúdo que não tem', () =
 test('interfaces de câmera não oferecem agenda sem executor', () => {
   assert.doesNotMatch(read('src/components/CameraEditSheet.tsx'), /label:\s*'Agendada'/);
   assert.doesNotMatch(read('src/pages/CamerasPage.tsx'), /<SelectItem value="schedule"/);
-  assert.match(read('src/pages/CameraDetailPage.tsx'), /Agenda \(indisponível\)/);
+  assert.match(read('src/components/CameraEditSheet.tsx'), /Agenda ainda não está disponível/);
 });
 
 test('PTZ permite tentar o controle em toda câmera ativa', () => {

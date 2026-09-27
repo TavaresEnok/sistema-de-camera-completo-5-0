@@ -199,11 +199,8 @@ test('câmera com IA OBRIGATÓRIA não ganha botão que o servidor ignoraria', (
   assert.match(painel, /IA obrigatória aqui/, 'não explica por que não há botão');
 });
 
-test('a aba da câmera e a da IA chamam o desenho pelo MESMO nome', () => {
-  // Eram "Zonas" e "Onde olhar" para o mesmo campo e o mesmo editor.
-  const detalhe = ler('src/pages/CameraDetailPage.tsx');
-  assert.match(detalhe, /\['zones', 'Onde olhar'\]/, 'a aba da câmera continua com nome antigo');
-  assert.doesNotMatch(detalhe, /Zonas de detecção/, 'o título antigo sobreviveu');
-  assert.match(detalhe, /mesmo desenho que aparece em Inteligência/,
-    'não avisa que é o mesmo desenho — a queixa era desenhar duas vezes');
+test('edição da câmera encaminha o desenho para o perímetro, sem outro editor', () => {
+  const detalhe = ler('src/components/CameraEditSheet.tsx');
+  assert.match(detalhe, /\['perimetro', 'Editar perímetro'\]/);
+  assert.doesNotMatch(detalhe, /DetectionZonesEditor/);
 });

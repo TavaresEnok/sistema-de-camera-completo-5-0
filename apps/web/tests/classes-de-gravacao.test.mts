@@ -59,7 +59,6 @@ test('a lista cobre pessoa e os veículos que importam a um VMS', () => {
 // ── AS TRÊS TELAS QUE EDITAM GRAVAÇÃO ───────────────────────────────────────
 
 const TELAS = [
-  { arquivo: 'src/pages/CameraDetailPage.tsx', nome: 'detalhe da câmera' },
   { arquivo: 'src/components/CameraEditSheet.tsx', nome: 'edição rápida da lista' },
   { arquivo: 'src/pages/CamerasPage.tsx', nome: 'assistente de nova câmera' },
 ];

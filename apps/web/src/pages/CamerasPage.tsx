@@ -10,6 +10,8 @@ import {
 import { format } from 'date-fns';
 import { Camera, useVmsDataStore } from '../store/vmsDataStore';
 import { CameraEditSheet } from '../components/CameraEditSheet';
+import { CameraRelayControl } from '../components/CameraRelayControl';
+import { LiveStreamPlayer } from '../components/LiveStreamPlayer';
 import { SeletorDeClassesDeGravacao } from '../components/SeletorDeClassesDeGravacao';
 import { AddPushCameraDialog } from '../components/AddPushCameraDialog';
 import { RtmpDiscoveryDialog } from '../components/RtmpDiscoveryDialog';
@@ -24,7 +26,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Link, useLocation } from 'wouter';
+import { Link, useLocation, useSearch } from 'wouter';
 import { getApiBaseUrl } from '../lib/api-base';
 import { useAuthStore } from '../store/authStore';
 import { toast } from '../hooks/use-toast';
@@ -966,6 +968,9 @@ export default function CamerasPage() {
   const API_URL = getApiBaseUrl();
   const [, setLocation] = useLocation();
   const accessToken = useAuthStore((state) => state.accessToken);
+  const canEdit = useAuthStore((state) => state.user?.role === 'admin');
+  const cameraSearch = useSearch();
+  const consumedCameraSearch = useRef('');
   const cameras = useVmsDataStore((state) => state.cameras);
   const loadData = useVmsDataStore((state) => state.load);
   const [viewMode, setViewMode] = useState<'table' | 'card'>(() => {
@@ -986,6 +991,7 @@ export default function CamerasPage() {
   const [showPushDialog, setShowPushDialog] = useState(false);
   const [showDiscovery, setShowDiscovery] = useState(false);
   const [selectedCam, setSelectedCam] = useState<Camera | null>(null);
+  const livePreviewRef = useRef<HTMLDivElement>(null);
   const [editCamera, setEditCamera] = useState<Camera | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Camera | null>(null);
   const [wizardSites, setWizardSites] = useState<LocationOption[]>([]);
@@ -999,14 +1005,19 @@ export default function CamerasPage() {
   const [posterUrls, setPosterUrls] = useState<Record<string, string>>({});
   const lastPosterRetryAtRef = useRef(0);
   const openCamera = useCallback((cameraId: string) => {
-    setLocation(`/cameras/${encodeURIComponent(cameraId)}`);
-  }, [setLocation]);
-  useEffect(() => {
-    const editId = new URLSearchParams(window.location.search).get('edit');
-    if (!editId) return;
-    const camera = cameras.find((item) => item.id === editId);
-    if (camera) setEditCamera(camera);
+    setSelectedCam(cameras.find(camera => camera.id === cameraId) ?? null);
   }, [cameras]);
+  useEffect(() => {
+    if (!cameraSearch) { consumedCameraSearch.current = ''; return; }
+    if (consumedCameraSearch.current === cameraSearch) return;
+    const params = new URLSearchParams(cameraSearch);
+    const id = params.get('edit') ?? params.get('cameraId');
+    const camera = cameras.find(item => item.id === id);
+    if (!camera) return;
+    consumedCameraSearch.current = cameraSearch;
+    if (params.has('edit') && canEdit) setEditCamera(camera);
+    else setSelectedCam(camera);
+  }, [cameras, cameraSearch, canEdit]);
   const [recordingHealthByCamera, setRecordingHealthByCamera] = useState<Record<string, {
     total: number;
     broken: number;
@@ -1562,8 +1573,8 @@ export default function CamerasPage() {
                     </td>
                     <td className="px-3 py-2.5">
                       <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
-                        <button onClick={() => setEditCamera(cam)} className="w-6 h-6 flex items-center justify-center rounded text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--chart-2))] hover:bg-[hsl(var(--accent))] transition-colors" title="Editar câmera"><Edit className="w-3.5 h-3.5" /></button>
-                        <button onClick={() => setDeleteTarget(cam)} className="w-6 h-6 flex items-center justify-center rounded text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--destructive))] hover:bg-[hsl(var(--accent))] transition-colors" title="Excluir câmera"><Trash2 className="w-3.5 h-3.5" /></button>
+                        {canEdit && <button onClick={() => setEditCamera(cam)} className="w-6 h-6 flex items-center justify-center rounded text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--chart-2))] hover:bg-[hsl(var(--accent))] transition-colors" title="Editar câmera"><Edit className="w-3.5 h-3.5" /></button>}
+                        {canEdit && <button onClick={() => setDeleteTarget(cam)} className="w-6 h-6 flex items-center justify-center rounded text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--destructive))] hover:bg-[hsl(var(--accent))] transition-colors" title="Excluir câmera"><Trash2 className="w-3.5 h-3.5" /></button>}
                       </div>
                     </td>
                   </tr>
@@ -1672,12 +1683,12 @@ export default function CamerasPage() {
                       <Link href={`/playback?cameraId=${cam.id}`} className="flex-1 h-7 rounded-md text-[11px] flex items-center justify-center gap-1.5 text-muted-foreground hover:text-foreground hover:bg-[hsl(var(--accent))] transition-colors">
                         <PlaySquare className="w-3.5 h-3.5" /> Playback
                       </Link>
-                      <button onClick={() => setEditCamera(cam)} className="flex-1 h-7 rounded-md text-[11px] flex items-center justify-center gap-1.5 text-muted-foreground hover:text-foreground hover:bg-[hsl(var(--accent))] transition-colors">
+                      {canEdit && <button onClick={() => setEditCamera(cam)} className="flex-1 h-7 rounded-md text-[11px] flex items-center justify-center gap-1.5 text-muted-foreground hover:text-foreground hover:bg-[hsl(var(--accent))] transition-colors">
                         <Edit className="w-3.5 h-3.5" /> Editar
-                      </button>
-                      <button onClick={() => setDeleteTarget(cam)} title="Excluir" className="w-7 h-7 rounded-md flex items-center justify-center text-muted-foreground hover:text-[hsl(var(--destructive))] hover:bg-[hsl(var(--accent))] transition-colors">
+                      </button>}
+                      {canEdit && <button onClick={() => setDeleteTarget(cam)} title="Excluir" className="w-7 h-7 rounded-md flex items-center justify-center text-muted-foreground hover:text-[hsl(var(--destructive))] hover:bg-[hsl(var(--accent))] transition-colors">
                         <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      </button>}
                     </div>
                   </div>
                 </div>
@@ -1710,13 +1721,14 @@ export default function CamerasPage() {
               </button>
             </div>
             <div className="flex-1 overflow-y-auto p-5 space-y-5">
-              <div className="relative h-28 overflow-hidden rounded border border-border bg-[hsl(220_18%_8%)] flex items-center justify-center">
-                {posterUrls[liveCam.id] ? (
-                  <img src={posterUrls[liveCam.id]} onError={() => retryPoster(liveCam.id)} alt={`Amostra de ${liveCam.name}`} className="h-full w-full bg-black object-contain" />
-                ) : (
-                  <CameraIcon className="w-10 h-10 text-white/25" />
-                )}
+              <div ref={livePreviewRef} className="relative aspect-video overflow-hidden rounded border border-border bg-black [&:fullscreen]:h-screen [&:fullscreen]:w-screen">
+                <LiveStreamPlayer key={liveCam.id} cameraId={liveCam.id} cameraName={liveCam.name} className="absolute inset-0 h-full w-full" muted showOverlay aiEnabled={liveCam.aiEnabled} liveViewMode="selected" />
               </div>
+              <button type="button" className="text-xs underline" onClick={() => {
+                const preview = livePreviewRef.current;
+                if (!preview?.requestFullscreen) { toast({ title: 'Tela cheia indisponível neste navegador' }); return; }
+                void preview.requestFullscreen().catch(() => toast({ title: 'Não foi possível ampliar o vídeo' }));
+              }}>Ampliar vídeo</button>
               <div>
                 <div className="text-sm font-semibold mb-0.5">{liveCam.name}</div>
                 <div className="mt-2 flex flex-wrap items-center gap-1.5">
@@ -1809,15 +1821,17 @@ export default function CamerasPage() {
                   <span className="font-semibold text-foreground">Regra atual:</span> {recordingModeCopy.detail}
                   {recordingActive ? ' Está gravando agora.' : ' Não está gravando agora.'}
                 </div>
-                <Link href={`/cameras/${selectedCam.id}?tab=settings`} className="w-full h-9 rounded border border-border text-xs flex items-center justify-center gap-2 hover:bg-[hsl(var(--accent))] transition-colors">
+                {canEdit && <button onClick={() => setEditCamera(selectedCam)} className="w-full h-9 rounded border border-border text-xs flex items-center justify-center gap-2 hover:bg-[hsl(var(--accent))] transition-colors">
                   <Edit className="w-4 h-4" /> Editar Câmera
-                </Link>
-                <button onClick={() => setDeleteTarget(selectedCam)} className="w-full h-9 rounded border border-border text-xs flex items-center justify-center gap-2 hover:bg-[hsl(var(--accent))] transition-colors text-[hsl(var(--destructive))]">
+                </button>}
+                {canEdit && <button onClick={() => setDeleteTarget(selectedCam)} className="w-full h-9 rounded border border-border text-xs flex items-center justify-center gap-2 hover:bg-[hsl(var(--accent))] transition-colors text-[hsl(var(--destructive))]">
                   <Trash2 className="w-4 h-4" /> Excluir Câmera
-                </button>
-                <Link href="/playback" className="w-full h-9 rounded border border-border text-xs flex items-center justify-center gap-2 hover:bg-[hsl(var(--accent))] transition-colors">
+                </button>}
+                <Link href={`/playback?cameraId=${encodeURIComponent(selectedCam.id)}`} className="w-full h-9 rounded border border-border text-xs flex items-center justify-center gap-2 hover:bg-[hsl(var(--accent))] transition-colors">
                   <PlaySquare className="w-4 h-4" /> Abrir Reprodução
                 </Link>
+                <CameraRelayControl key={selectedCam.id} cameraId={selectedCam.id} />
+                <Link href={`/perimetro?cameraId=${encodeURIComponent(selectedCam.id)}`} className="text-xs underline">Editar perímetro</Link>
                 <Link href={`/ptz?cameraId=${encodeURIComponent(selectedCam.id)}`} className="w-full h-9 rounded border border-border text-xs flex items-center justify-center gap-2 hover:bg-[hsl(var(--accent))] transition-colors">
                   <Crosshair className="w-4 h-4" /> Controle PTZ
                 </Link>
@@ -1837,6 +1851,7 @@ export default function CamerasPage() {
       </AnimatePresence>
 
       <CameraEditSheet
+        key={editCamera?.id ?? 'closed'}
         camera={editCamera}
         open={!!editCamera}
         onClose={() => {

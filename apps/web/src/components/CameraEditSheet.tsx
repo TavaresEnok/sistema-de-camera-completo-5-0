@@ -19,6 +19,10 @@ import { descreverCredencial, deveEnviarSenha } from '../lib/senha-da-camera';
 import { normalizeVideoCodec, normalizePreferredLiveProtocol } from '../lib/camera-format';
 import { SeletorDeClassesDeGravacao } from './SeletorDeClassesDeGravacao';
 import { useClassesLiberadas } from '../hooks/use-classes-liberadas';
+import { CameraConnectionCheck } from './CameraConnectionCheck';
+import { equipmentFields, equipmentError, equipmentPayload, readEquipment, type EquipmentForm } from '../lib/camera-edit';
+import { getRequestErrorMessage } from '../lib/request-error';
+import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction } from './ui/alert-dialog';
 import {
   rotuloDoGatilhoDeObjeto,
   descricaoDoGatilhoDeObjeto,
@@ -32,7 +36,8 @@ interface CameraEditSheetProps {
   onDeleted?: (id: string) => void;
 }
 
-type Form = {
+type Form = EquipmentForm & {
+  recordingEnabled: boolean;
   name: string;
   ip: string;
   rtspPort: string;
@@ -111,6 +116,11 @@ type PendingIngest = {
 export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEditSheetProps) {
   const [, setLocation] = useLocation();
   const accessToken = useAuthStore((s) => s.accessToken);
+  const canEdit = useAuthStore((s) => s.user?.role === 'admin');
+  const [sourceMode, setSourceMode] = useState('');
+  const [dirty, setDirty] = useState(false);
+  const [pendingClose, setPendingClose] = useState<string | null>(null);
+  const initialForm = useRef<Form | null>(null);
   const loadData = useVmsDataStore((s) => s.load);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -161,9 +171,12 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
   const cameraId = camera?.id ?? null;
   useEffect(() => {
     const selectedCamera = camera;
-    if (!cameraId || !accessToken || !selectedCamera) return;
+    if (!open || !canEdit || !cameraId || !accessToken || !selectedCamera) return;
     let cancelled = false;
     setForm(null);
+    setDirty(false);
+    setPendingClose(null);
+    setSourceMode('');
     setIngest(null);
     setConfirmDelete(false);
     setSenhaVisivel(false);
@@ -183,7 +196,10 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
       .get(`${getApiBaseUrl()}/cameras/${cameraId}`, { headers: { Authorization: `Bearer ${accessToken}` } })
       .then(({ data }) => {
         if (cancelled) return;
-        setForm({
+        setSourceMode(data.sourceMode ?? 'rtsp_pull');
+        const loaded: Form = {
+          ...readEquipment(data),
+          recordingEnabled: data.recordingEnabled !== false,
           name: data.name ?? selectedCamera.name,
           ip: data.ip ?? selectedCamera.ipAddress,
           rtspPort: String(data.rtspPort ?? selectedCamera.rtspPort ?? 554),
@@ -208,13 +224,15 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
           aiEnabled: data.aiEnabled !== false,
           alarmsEnabled: data.alarmsEnabled !== false,
           enabled: data.enabled !== false,
-        });
+        };
+        initialForm.current = loaded;
+        setForm(loaded);
       })
       .catch((err) => {
         if (cancelled) return;
         toast({
           title: 'Falha ao carregar câmera',
-          description: err instanceof Error ? err.message : 'Não foi possível carregar a configuração.',
+          description: getRequestErrorMessage(err, 'Não foi possível carregar a configuração.'),
           variant: 'destructive',
         });
         onCloseRef.current();
@@ -225,14 +243,14 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
     return () => {
       cancelled = true;
     };
-  }, [cameraId, accessToken]);
+  }, [cameraId, accessToken, open, canEdit]);
 
   // A câmera costuma tentar uma vez por minuto. Atualizar apenas ao abrir a
   // gaveta fazia a linha aparecer só depois de fechar e abrir de novo, parecendo
   // que a detecção não existia. Enquanto a edição está aberta, acompanha as
   // tentativas sem exigir ação do instalador.
   useEffect(() => {
-    if (!open || !cameraId || !accessToken) return;
+    if (!open || !canEdit || !cameraId || !accessToken) return;
     let cancelled = false;
     const carregarPendentes = () => {
       void axios
@@ -248,12 +266,28 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [open, cameraId, accessToken]);
+  }, [open, cameraId, accessToken, canEdit]);
 
-  if (!camera) return null;
-  const upd = <K extends keyof Form>(k: K, v: Form[K]) => setForm((f) => (f ? { ...f, [k]: v } : f));
+  useEffect(() => {
+    if (!open || !dirty) return;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [open, dirty]);
 
-  const modoPush = ingest?.sourceMode === 'rtmp_push';
+  if (!camera || !canEdit) return null;
+  const upd = <K extends keyof Form>(k: K, v: Form[K]) => { setDirty(true); setForm((f) => (f ? { ...f, [k]: v } : f)); };
+  const finishClose = (destination = '') => {
+    onClose();
+    if (destination) setLocation(destination);
+  };
+  const close = (destination = '') => {
+    if (saving || ingestBusy) return;
+    if (dirty) { setPendingClose(destination); return; }
+    finishClose(destination);
+  };
+
+  const modoPush = (ingest?.sourceMode ?? sourceMode) === 'rtmp_push';
   const usaEnderecoCompacto = Boolean(ingest?.canonicalFullUrl && ingest.fullUrl !== ingest.canonicalFullUrl);
   const urlCompletaCompativel = ingest?.fullUrlFitsSingleField !== false;
   const auth = { headers: { Authorization: `Bearer ${accessToken}` } };
@@ -334,7 +368,15 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
   };
 
   const handleSave = async () => {
-    if (!accessToken || !form) return;
+    if (!accessToken || !form || saving || ingestBusy) return;
+    const invalidEquipment = equipmentError(form);
+    const invalidPort = !modoPush && [form.rtspPort, ...(form.onvifPort.trim() ? [form.onvifPort] : [])]
+      .some(value => !Number.isInteger(Number(value)) || Number(value) < 1 || Number(value) > 65535);
+    if (!form.name.trim() || (!modoPush && !form.ip.trim()) || invalidPort || invalidEquipment
+      || !Number.isInteger(Number(form.retentionDays)) || Number(form.retentionDays) < 1) {
+      toast({ title: 'Confira os dados', description: invalidEquipment ?? 'Preencha nome, endereço, portas e prazo de armazenamento com valores válidos.', variant: 'destructive' });
+      return;
+    }
     if (!modoPush) {
       const httpPort = Number(form.httpPort);
       if (!Number.isInteger(httpPort) || httpPort < 1 || httpPort > 65535) {
@@ -364,21 +406,23 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
     }
     setSaving(true);
     try {
-      await axios.patch(
-        `${getApiBaseUrl()}/cameras/${camera.id}`,
-        {
+      const payload = {
           name: form.name.trim(),
           locationAddress: form.locationAddress.trim() || null,
           latitude,
           longitude,
+          ...(!modoPush ? {
           ip: form.ip.trim(),
           rtspPort: Number(form.rtspPort),
-          username: form.username.trim() || undefined,
+          username: form.username.trim(),
           ...(deveEnviarSenha(form.password, senhaRevelada) ? { password: form.password } : {}),
           // ONVIF vazio significa usar primeiro a porta web e depois descobrir.
           onvifPort: form.onvifPort.trim() ? Number(form.onvifPort) : null,
-          httpPort: modoPush ? null : Number(form.httpPort),
+          httpPort: Number(form.httpPort),
           rtspPath: form.rtspPath.trim(),
+          } : {}),
+          ...equipmentPayload(form, modoPush),
+          recordingEnabled: form.recordingEnabled,
           preferredRtspTransport: form.preferredRtspTransport,
           preferredLiveProtocol: form.preferredLiveProtocol === 'mjpeg' ? 'webrtc' : form.preferredLiveProtocol,
           streamVideoCodec: 'h264',
@@ -393,16 +437,21 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
           aiEnabled: form.aiEnabled,
           alarmsEnabled: form.alarmsEnabled,
           enabled: form.enabled,
-        },
+      };
+      // A polling refresh or another editor must not have unrelated fields overwritten.
+      const changes = Object.fromEntries(Object.entries(payload).filter(([key]) =>
+        JSON.stringify(form[key as keyof Form]) !== JSON.stringify(initialForm.current?.[key as keyof Form])));
+      if (!Object.keys(changes).length) { onClose(); return; }
+      await axios.patch(
+        `${getApiBaseUrl()}/cameras/${camera.id}`,
+        changes,
         { headers: { Authorization: `Bearer ${accessToken}` } },
       );
       await loadData();
       toast({ title: 'Câmera atualizada', description: form.name });
       onClose();
     } catch (err) {
-      const message = axios.isAxiosError(err)
-        ? (Array.isArray(err.response?.data?.message) ? err.response?.data?.message.join('\n') : err.response?.data?.message) ?? err.message
-        : err instanceof Error ? err.message : 'Falha ao salvar.';
+      const message = getRequestErrorMessage(err, 'Não foi possível salvar a câmera. Tente novamente.');
       toast({ title: 'Erro ao salvar', description: message, variant: 'destructive' });
     } finally {
       setSaving(false);
@@ -423,6 +472,7 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
         latitude: String(data.latitude),
         longitude: String(data.longitude),
       } : current);
+      setDirty(true);
       toast({ title: 'Endereço localizado', description: 'Confira o ponto no mapa e salve a câmera.' });
     } catch (error) {
       const description = axios.isAxiosError(error)
@@ -448,15 +498,15 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
   };
 
   return (
-    <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
-      <SheetContent className="w-[460px] sm:max-w-[460px] flex flex-col p-0 gap-0">
+    <Sheet open={open} onOpenChange={(o) => !o && close()}>
+      <SheetContent className="w-full sm:max-w-[560px] flex flex-col p-0 gap-0" onInteractOutside={(event) => { if (dirty || saving || ingestBusy) event.preventDefault(); }}>
         <SheetHeader className="px-5 py-4 border-b border-border shrink-0 space-y-0 text-left">
           <div className="flex items-center gap-3">
             <span className={cn('w-2 h-2 rounded-full shrink-0', camera.isOnline ? 'bg-[hsl(var(--status-online))]' : 'bg-[hsl(var(--status-offline))]')} />
             <div className="min-w-0">
               <SheetTitle className="text-[14px] font-semibold truncate">{camera.name}</SheetTitle>
               <SheetDescription className="sr-only">Editar identificação, transmissão e gravação da câmera {camera.name}.</SheetDescription>
-              <p className="text-[10px] text-muted-foreground font-mono mt-0.5 truncate">{camera.zone} · {camera.ipAddress}</p>
+              <p className="text-xs text-muted-foreground mt-0.5 truncate">{camera.zone} · {camera.isOnline ? 'Online' : 'Sem conexão'}</p>
             </div>
           </div>
         </SheetHeader>
@@ -467,7 +517,7 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
           </div>
         ) : (
           <>
-            <div className="flex-1 overflow-y-auto">
+            <fieldset disabled={saving || ingestBusy} className="flex-1 overflow-y-auto min-h-0">
               <Tabs defaultValue="geral" className="flex flex-col">
                 <TabsList className="mx-4 mt-4 grid h-10 shrink-0 grid-cols-4 gap-1 rounded-lg border border-border bg-muted/45 p-1">
                   <TabsTrigger value="geral" className="rounded-md text-xs text-muted-foreground data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Geral</TabsTrigger>
@@ -493,7 +543,7 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
                       </div>
                       <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">
                         {form.enabled
-                          ? 'Transmitindo e gravando normalmente. Desligue para pausar sem apagar o cadastro nem as gravações.'
+                          ? 'Habilitada para funcionar. A disponibilidade do vídeo depende da conexão. Desligue para pausar sem apagar o cadastro.'
                           : 'Não está transmitindo nem gravando. As gravações antigas e o cadastro continuam salvos.'}
                       </p>
                     </div>
@@ -794,6 +844,32 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
 
                 {/* STREAM */}
                 <TabsContent value="stream" className="px-5 py-4 space-y-4 mt-0">
+                  <CameraConnectionCheck cameraId={camera.id} push={modoPush}
+                    onDiscover={values => { setForm(current => current ? { ...current, ...values } : current); setDirty(true); }}
+                    discoveryDraft={{
+                      ip: form.ip.trim(), rtspPort: Number(form.rtspPort), httpPort: Number(form.httpPort) || undefined,
+                      username: form.username.trim(), password: form.password || undefined,
+                      onvifPort: Number(form.onvifPort) || undefined, onvifPath: form.onvifPath || undefined,
+                      onvifProfileToken: form.onvifProfileToken || undefined, rtspPath: form.rtspPath || undefined,
+                      channel: Number(form.channel), subtype: Number(form.subtype),
+                    }} draft={{
+                    ip: form.ip.trim() || undefined, rtspPort: Number(form.rtspPort) || undefined,
+                    username: form.username.trim() || undefined,
+                    ...(deveEnviarSenha(form.password, senhaRevelada) ? { password: form.password } : {}),
+                    rtspPath: form.rtspPath.trim(), channel: Number(form.channel), subtype: Number(form.liveSubtype || form.subtype),
+                  }} />
+                  {!modoPush && <FormField label="Qualidade recebida ao vivo" hint="depende dos perfis disponíveis na câmera">
+                    <Select value={!form.liveSubtype ? 'auto' : ['0', '1'].includes(form.liveSubtype) ? form.liveSubtype : 'custom'} onValueChange={v => { if (v !== 'custom') upd('liveSubtype', v === 'auto' ? '' : v); }}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="auto">Automática</SelectItem>
+                        <SelectItem value="0">Principal — mais detalhes</SelectItem>
+                        <SelectItem value="1">Secundária — economiza conexão</SelectItem>
+                        {form.liveSubtype && !['0', '1'].includes(form.liveSubtype) && <SelectItem value="custom" disabled>Perfil personalizado {form.liveSubtype}</SelectItem>}
+                      </SelectContent>
+                    </Select>
+                  </FormField>}
+                  <details className="space-y-3"><summary className="cursor-pointer text-xs">Compatibilidade de vídeo (instalador)</summary>
                   <div className="grid grid-cols-2 gap-3">
                     <FormField label="Codec da live">
                       <Input value="H.264" readOnly className="text-sm font-mono text-muted-foreground" />
@@ -816,8 +892,9 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
                       </Select>
                     </FormField>
                   </div>
+                  </details>
                   <div className="rounded-lg border border-border bg-background/70 px-3 py-2 text-[11px] text-muted-foreground">
-                    Grid padronizado em até 720p / 20 FPS. Ao abrir a câmera sozinha, o S2Cam usa a resolução original do perfil live.
+                    O mosaico usa uma imagem mais leve. Ao abrir uma câmera sozinha, você vê a qualidade original do perfil escolhido.
                   </div>
                   <Separator />
                   <ToggleRow label="Áudio" desc="Captura de áudio da câmera" value={form.audioEnabled} onChange={(v) => upd('audioEnabled', v)} />
@@ -825,6 +902,9 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
 
                 {/* GRAVAÇÃO */}
                 <TabsContent value="gravacao" className="px-5 py-4 space-y-4 mt-0">
+                  <ToggleRow label="Permitir gravação" desc="Autoriza o armazenamento de vídeo conforme o modo escolhido abaixo." value={form.recordingEnabled} onChange={v => upd('recordingEnabled', v)} />
+                  <ToggleRow label="Alertas desta câmera" desc="Permite os alertas configurados para esta câmera." value={form.alarmsEnabled} onChange={v => upd('alarmsEnabled', v)} />
+                  {!form.recordingEnabled && <p role="status" className="text-xs text-muted-foreground">A gravação está desativada. Escolher um modo não a ativa; ligue “Permitir gravação” para gravar.</p>}
                   <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Modo de gravação</p>
                   {form.recordingMode === 'schedule' && (
                     <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-[11px] leading-relaxed text-amber-600 dark:text-amber-400">
@@ -922,16 +1002,22 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
               {/* Avançado + Danger zone */}
               <div className="px-5 pb-5 space-y-4">
                 <Separator />
-                <button
-                  onClick={() => { onClose(); setLocation(`/cameras/${camera.id}?tab=settings`); }}
-                  className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg border border-border hover:bg-[hsl(var(--accent))] transition-colors text-left"
-                >
-                  <div>
-                    <div className="text-[12px] font-medium">Configuração avançada</div>
-                    <div className="text-[10px] text-muted-foreground">Teste de conexão, canais, resolução e diagnóstico</div>
+                <details className="space-y-3">
+                  <summary className="cursor-pointer text-sm font-medium">Ajustes do equipamento (instalador)</summary>
+                  <p className="text-xs text-muted-foreground">Altere somente com orientação do responsável pela instalação. Campos opcionais em branco mantêm a escolha automática.</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    {equipmentFields.filter(([key]) => !modoPush || /^(streamBitrate|recording(?:Width|Height|Fps|Bitrate))/.test(key)).map(([key, label, min]) =>
+                      <FormField key={key} label={label}><Input aria-label={label} type="number" min={min} value={form[key]} onChange={e => upd(key, e.target.value)} placeholder="Automático" /></FormField>)}
+                    {!modoPush && <>
+                      <FormField label="Caminho ONVIF"><Input aria-label="Caminho ONVIF" value={form.onvifPath} onChange={e => upd('onvifPath', e.target.value)} /></FormField>
+                      <FormField label="Identificador do perfil ONVIF"><Input aria-label="Identificador do perfil ONVIF" value={form.onvifProfileToken} onChange={e => upd('onvifProfileToken', e.target.value)} /></FormField>
+                    </>}
                   </div>
-                  <ExternalLink className="w-3.5 h-3.5 text-muted-foreground" />
-                </button>
+                </details>
+                <div className="flex flex-wrap gap-2">
+                  {[['playback', 'Ver gravações'], ['perimetro', 'Editar perímetro'], ['ptz', 'Controle da câmera'], ['alarms', 'Ver ocorrências']].map(([page, label]) =>
+                    <Button key={page} size="sm" variant="outline" onClick={() => close(`/${page}?cameraId=${encodeURIComponent(camera.id)}`)}><ExternalLink className="mr-1 h-3 w-3" />{label}</Button>)}
+                </div>
 
                 <details>
                 <summary className="cursor-pointer text-xs text-muted-foreground py-2">Remover câmera</summary>
@@ -953,17 +1039,23 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
                 )}
                 </details>
               </div>
-            </div>
+            </fieldset>
 
             <SheetFooter className="px-5 py-3 border-t border-border shrink-0 flex-row gap-2">
-              <Button variant="ghost" size="sm" onClick={onClose}>Cancelar</Button>
-              <Button size="sm" onClick={() => void handleSave()} disabled={saving} className="ml-auto min-w-[140px]">
+              <Button variant="ghost" size="sm" onClick={() => close()} disabled={saving || ingestBusy}>Cancelar</Button>
+              <Button size="sm" onClick={() => void handleSave()} disabled={!dirty || saving || ingestBusy} className="ml-auto min-w-[140px]">
                 {saving ? <LoaderCircle className="w-3.5 h-3.5 mr-2 animate-spin" /> : <Save className="w-3.5 h-3.5 mr-2" />}
                 Salvar alterações
               </Button>
             </SheetFooter>
           </>
         )}
+        <AlertDialog open={pendingClose !== null} onOpenChange={value => { if (!value) setPendingClose(null); }}>
+          <AlertDialogContent>
+            <AlertDialogHeader><AlertDialogTitle>Descartar as alterações?</AlertDialogTitle><AlertDialogDescription>As alterações que ainda não foram salvas serão perdidas. Ações de publicação já confirmadas não serão desfeitas.</AlertDialogDescription></AlertDialogHeader>
+            <AlertDialogFooter><AlertDialogCancel>Continuar editando</AlertDialogCancel><AlertDialogAction onClick={() => { const destination = pendingClose ?? ''; setPendingClose(null); finishClose(destination); }}>Descartar e sair</AlertDialogAction></AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
         {/* Confirmação da troca de modo: apagar a chave de publicação para uma
             câmera em campo é irreversível pelo lado do equipamento. */}
         {confirmarVoltarRtsp && (

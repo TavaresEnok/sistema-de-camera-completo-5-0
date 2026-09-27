@@ -6,8 +6,7 @@ const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.ur
 
 test('PTZ mostra deslocamento em graus e não expõe velocidade ao operador', () => {
   const page = read('src/pages/PTZPage.tsx');
-  const detail = read('src/pages/CameraDetailPage.tsx');
-  for (const source of [page, detail]) {
+  for (const source of [page]) {
     assert.match(source, /Movimento por toque/);
     assert.match(source, /angleDegrees/);
   }

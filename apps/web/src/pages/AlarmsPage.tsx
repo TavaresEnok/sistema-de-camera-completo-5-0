@@ -3,7 +3,7 @@ import axios from 'axios';
 import { toast } from '../hooks/use-toast';
 import { motion, AnimatePresence } from 'framer-motion';
 import { format } from 'date-fns';
-import { Link, useLocation } from 'wouter';
+import { Link, useLocation, useSearch } from 'wouter';
 import {
   Bell, BellOff, CheckCheck, ChevronUp, ChevronDown,
   AlertTriangle, Flame, DoorOpen, Shield, MapPin,
@@ -325,7 +325,9 @@ export default function AlertasPage() {
   const [ultimaAtualizacao, setUltimaAtualizacao] = useState<Date | null>(null);
   const [falhaDeFundo, setFalhaDeFundo] = useState(false);
   const [alarmsError, setAlarmsError] = useState<string | null>(null);
-  const [cameraFilter, setCameraFilter] = useState('all');
+  const requestedCameraId = new URLSearchParams(useSearch()).get('cameraId');
+  const [cameraFilter, setCameraFilter] = useState(requestedCameraId ?? 'all');
+  useEffect(() => { setCameraFilter(requestedCameraId ?? 'all'); }, [requestedCameraId]);
   const [zoneFilter, setZoneFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState<'all' | 'OPEN' | 'ACKED' | 'RESOLVED'>('all');
   const [priorityFilter, setPriorityFilter] = useState<'all' | 'P1' | 'P2' | 'P3' | 'P4'>('all');

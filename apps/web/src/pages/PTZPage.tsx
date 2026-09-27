@@ -346,7 +346,7 @@ export default function PTZPage() {
                 {!resultadoDoTeste.sucesso && (
                   <button
                     type="button"
-                    onClick={() => setLocation(`/cameras/${cameraParaTestar}`)}
+                    onClick={() => setLocation(`/cameras?${userRole === 'admin' ? 'edit' : 'cameraId'}=${encodeURIComponent(cameraParaTestar)}`)}
                     className="btn btn-secondary btn-sm mt-2"
                   >
                     Abrir cadastro desta câmera
@@ -403,7 +403,7 @@ export default function PTZPage() {
 
         <button
           type="button"
-          onClick={() => selectedCam && setLocation(`/cameras/${selectedCam.id}?tab=ptz`)}
+          onClick={() => selectedCam && setLocation(`/cameras?cameraId=${encodeURIComponent(selectedCam.id)}`)}
           disabled={!selectedCam}
           className="btn btn-secondary btn-sm"
         >
