@@ -34,7 +34,7 @@ O estado de implantação mais recente está na seção final. A tabela abaixo r
 | V11 | Codec/ausência tratados quando runtime informa. Falta probe de áudio RTSP compartilhado e validação HLS/HEVC/Opus nos aparelhos suportados. |
 | V12 | Seleção/mute corrigidos; matriz completa de dispositivos ainda não executada. |
 | V13 | Proteções implementadas; nenhuma exploração foi realizada. |
-| V14 | Template corrigido e sintaxe validada com SRS 6 local. Gateway SRS 5 efetiva ainda requer validação/aplicação cuidadosa e teste de acesso. |
+| V14 | Bloqueio PLAY aplicado e verificado nos sete vhosts da Gateway SRS 5; publicação e encaminhamento preservados. Evidências na seção final. |
 | V15/V16 | Instrumentação de receptor adicionada; medições A/B, origem/PTS/GOP, TURN e carga ainda pendentes. Nenhuma alteração especulativa de timestamp. |
 | V17 | Captura bloqueada para desativadas; origem exata dos pedidos antigos ainda deve ser rastreada. |
 | V18 | Git não equivale a implantação: API/web/APK/Gateway não foram atualizados nesta etapa. |
@@ -103,3 +103,17 @@ Management: checkout real `/opt/ajustcam-management/repo` avançado por fast-for
 - Gateway: permanece operacional com a configuração restaurada, **sem bloqueio PLAY**. Nova reprodução isolada na versão SRS 5.0.213 aceitou as sete regras e permaneceu ativa após HUP, mas sem publishers/forward ativos. Esse resultado não explica a saída anterior em produção e não autoriza declarar V14 resolvido. Containers temporários e configuração de teste foram removidos.
 
 Continuam pendentes os trabalhos técnicos explicitados na tabela, especialmente orçamento ponderado, compartilhamento RTSP completo, monitoramento por trilha, sondagem compartilhada de áudio RTSP e medições A/B nos clientes. Implantação e build não substituem essas validações.
+
+### Bloqueio RTMP aplicado e verificado — substitui a pendência V14
+
+Em 28/09/2026, aproximadamente às 16:45 UTC, foi aplicado `security { enabled on; allow publish all; deny play all; }` nos sete vhosts da Gateway, mantendo os destinos originais. O template agora inclui também demo-04 → `10.10.0.23:1935`.
+
+Validação isolada usou **a imagem exata de produção**, `ossrs/srs@sha256:b429bdb565f0a533e60634856760a500a1b673f8cadce072b2a2eb2674cd7b31`, SRS 5.0.213, em uma rede Docker interna sem portas públicas. FFmpeg publicou vídeo sintético H.264/AAC numa Gateway de teste, que o encaminhou a outra instância SRS. Com a regra ativa, ffprobe da Gateway falhou e o SRS registrou `1053(SecurityDeny)`; ffprobe da origem recebeu H.264 e AAC. A regra foi desligada e religada por HUP enquanto um leitor acompanhava a origem: leitura direta voltou a funcionar com security desligada, foi negada ao religar e o encaminhamento continuou com quadros crescentes, sem reiniciar o SRS. O contador do leitor passou de 254 para 697 quadros, sem drops reportados nessa amostra. O teste usou explicitamente `-c conf/srs.conf`; o comando padrão da imagem lê `conf/docker.conf` e não serve como evidência da configuração montada.
+
+Aplicação: configuração completa preparada em arquivo temporário, sete blocos conferidos e `srs -t` aprovado na mesma imagem. Backup remoto preservado em `/opt/ajustcam-gateway/srs/srs.conf.before-validated-security-20260928`. Para impedir que a recarga automática leia um arquivo parcialmente escrito, o contêiner foi brevemente pausado durante a cópia integral; o inode do arquivo montado foi preservado (`1439110`), depois o contêiner foi liberado e recebeu HUP. SRS manteve início `2026-09-28T15:52:32.239306187Z` e zero reinícios. A causa do incidente anterior continua não estabelecida; a proteção de escrita não é uma conclusão causal.
+
+Verificação externa: sete conexões ffprobe ao IP público/1935 com tcUrl de cada vhost (seis domínios e fallback por IP), usando nome de stream sintético e sem credenciais de câmera. Todas falharam; sete erros `SecurityDeny` foram registrados na Gateway entre 16:45:35 e 16:45:37 UTC. Antes e depois, Gateway reportou dez publicações ativas. Vibe manteve trinta entradas RTMP prontas após a recarga. Esses números são observações dos dois servidores, não contagens equivalentes da mesma frota.
+
+A regra protege novas conexões PLAY, conforme https://ossrs.net/lts/en-us/docs/v5/doc/security . Ela não encerra leitores previamente conectados; não houve expulsão indiscriminada de sessões. A reprodução autorizada no navegador/app continua via a instalação, não por PLAY público da Gateway.
+
+Para futuras alterações: preservar os sete destinos, validar a configuração completa com a imagem exata, guardar backup, evitar troca de inode do bind mount e leitura de conteúdo incompleto, recarregar e conferir publicações/saúde/negação explícita nos logs. Se houver regressão, restaurar o backup com o mesmo cuidado de escrita; iniciar o SRS somente se tiver saído. Não substituir a configuração remota inteira por um template sem comparar suas particularidades.
