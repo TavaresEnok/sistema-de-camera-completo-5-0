@@ -2,6 +2,12 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system/legacy';
 
 const CACHE_VERSION = 1;
+const writes = new Map<string, Promise<unknown>>();
+async function serialized<T>(scope: string, action: () => Promise<T>): Promise<T> {
+  const next = (writes.get(scope) ?? Promise.resolve()).catch(() => undefined).then(action);
+  writes.set(scope, next);
+  try { return await next; } finally { if (writes.get(scope) === next) writes.delete(scope); }
+}
 export const POSTER_REFRESH_MS = 3 * 24 * 60 * 60 * 1000;
 
 type Entry = { uri: string; updatedAt: number };
@@ -35,6 +41,9 @@ async function writeIndex(scope: string, index: Index) {
 }
 
 export async function loadCachedPosters(scope: string, cameraIds: string[]) {
+  return serialized(scope, () => loadCachedPostersInternal(scope, cameraIds));
+}
+async function loadCachedPostersInternal(scope: string, cameraIds: string[]) {
   const index = await readIndex(scope);
   const allowed = new Set(cameraIds);
   const posters: Record<string, string> = {};
@@ -59,6 +68,9 @@ export async function loadCachedPosters(scope: string, cameraIds: string[]) {
 }
 
 export async function savePoster(scope: string, cameraId: string, sourceUrl: string): Promise<string> {
+  return serialized(scope, () => savePosterInternal(scope, cameraId, sourceUrl));
+}
+async function savePosterInternal(scope: string, cameraId: string, sourceUrl: string): Promise<string> {
   // documentDirectory é persistente. cacheDirectory pode ser limpo pelo
   // Android justamente quando o aparelho está sob pressão de armazenamento.
   const root = FileSystem.documentDirectory ?? FileSystem.cacheDirectory;
@@ -66,10 +78,16 @@ export async function savePoster(scope: string, cameraId: string, sourceUrl: str
   const index = await readIndex(scope);
   const previous = index.entries[cameraId];
   const target = `${root}s2cam-poster-${hash(scope)}-${safeCameraId(cameraId)}-${Date.now()}.jpg`;
-  const result = await FileSystem.downloadAsync(sourceUrl, target);
-  if (result.status && result.status >= 400) throw new Error(`Poster HTTP ${result.status}`);
-  index.entries[cameraId] = { uri: result.uri, updatedAt: Date.now() };
-  await writeIndex(scope, index);
+  let result: FileSystem.FileSystemDownloadResult;
+  try {
+    result = await FileSystem.downloadAsync(sourceUrl, target);
+    if (result.status && result.status >= 400) throw new Error(`Poster HTTP ${result.status}`);
+    index.entries[cameraId] = { uri: result.uri, updatedAt: Date.now() };
+    await writeIndex(scope, index);
+  } catch (error) {
+    await FileSystem.deleteAsync(target, { idempotent: true }).catch(() => undefined);
+    throw error;
+  }
   if (previous?.uri && previous.uri !== result.uri) {
     void FileSystem.deleteAsync(previous.uri, { idempotent: true }).catch(() => undefined);
   }
@@ -77,6 +95,9 @@ export async function savePoster(scope: string, cameraId: string, sourceUrl: str
 }
 
 export async function forgetCachedPoster(scope: string, cameraId: string) {
+  return serialized(scope, () => forgetCachedPosterInternal(scope, cameraId));
+}
+async function forgetCachedPosterInternal(scope: string, cameraId: string) {
   const index = await readIndex(scope);
   const previous = index.entries[cameraId];
   if (!previous) return;

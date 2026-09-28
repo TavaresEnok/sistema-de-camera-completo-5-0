@@ -4,7 +4,7 @@
  * tipo + título + câmera·hora + hora mono. Ligada aos alarmes reais.
  */
 import { useMemo, useState } from 'react';
-import { Image, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Image, RefreshControl, SectionList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useTheme } from '../../theme/ThemeProvider';
 import { Icon } from '../../components/Icon';
 import type { Alarm, Camera } from '../../types';
@@ -26,6 +26,7 @@ interface Props {
   canManage?: boolean;
   onAck?: (alarm: Alarm) => void;
   onResolve?: (alarm: Alarm) => void;
+  onOpenOccurrence?: (alarm: Alarm) => void;
   /** Falha ao carregar — distingue "sem eventos" de "não consegui perguntar". */
   erro?: string | null;
 }
@@ -62,39 +63,40 @@ function dayLabel(iso: string): string {
   return d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long' }).toUpperCase();
 }
 
-export function EventsRedesign({ alarms, cameras, streamPosters, refreshing, onRefresh, onOpenCamera, highlightedAlarmId, canManage, onAck, onResolve, erro }: Props) {
+export function EventsRedesign({ alarms, cameras, streamPosters, refreshing, onRefresh, onOpenCamera, highlightedAlarmId, canManage, onAck, onResolve, onOpenOccurrence, erro }: Props) {
   const { theme } = useTheme();
   const [filter, setFilter] = useState<'all' | 'motion'>('all');
   const s = makeStyles(theme);
 
-  // Teto de renderização: a lista NÃO é virtualizada (ScrollView), então sem
-  // limite uma instalação movimentada travaria a tela. 50 mais recentes bastam;
-  // o histórico completo vive no servidor/painel web.
-  const EVENT_CAP = 50;
-  const { groups, truncated } = useMemo(() => {
+  const groups = useMemo(() => {
     // O aplicativo do cliente mostra ocorrências das câmeras. Alertas internos
     // de disco, storage, servidor e conexão pertencem somente à operação web.
     const clientEvents = alarms.filter((a) => !isSystemEvent(a.type) && Boolean(a.cameraId));
     const list = clientEvents.filter((a) => filter === 'all'
       || /motion|movimento/i.test(String(a.type ?? '')));
-    const capped = list.slice(0, EVENT_CAP);
     const byDay = new Map<string, Alarm[]>();
-    for (const a of capped) {
+    for (const a of list) {
       const key = dayLabel(a.occurredAt);
       if (!byDay.has(key)) byDay.set(key, []);
       byDay.get(key)!.push(a);
     }
-    return { groups: Array.from(byDay.entries()), truncated: list.length > EVENT_CAP };
+    return Array.from(byDay.entries()).map(([title, data]) => ({ title, data }));
   }, [alarms, filter]);
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
-      <ScrollView
+      <SectionList
+        sections={groups}
+        keyExtractor={item => item.id}
+        initialNumToRender={12}
+        windowSize={7}
+        stickySectionHeadersEnabled={false}
         contentContainerStyle={s.root}
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.accent} />}
-      >
+        ListHeaderComponent={<>
         <Text style={s.title}>Eventos</Text>
+        <Text style={s.rowSub}>As miniaturas são prévias da câmera, não imagens do evento. Toque para abrir o vídeo ao vivo.</Text>
 
         <View style={s.chips}>
           {FILTERS.map((f) => {
@@ -107,11 +109,10 @@ export function EventsRedesign({ alarms, cameras, streamPosters, refreshing, onR
           })}
         </View>
 
-        {groups.map(([day, items]) => (
-          <View key={day} style={{ marginTop: 18 }}>
-            <Text style={s.day}>{day}</Text>
-            <View style={{ gap: 9, marginTop: 10 }}>
-              {items.map((a) => {
+        </>}
+        renderSectionHeader={({ section }) => <Text style={[s.day, { marginTop: 18, marginBottom: 10 }]}>{section.title}</Text>}
+        ItemSeparatorComponent={() => <View style={{ height: 9 }} />}
+        renderItem={({ item: a }) => {
                 const cam = a.cameraId ? cameras.find((c) => c.id === a.cameraId) : undefined;
                 const poster = cam ? streamPosters[cam.id] : null;
                 return (
@@ -137,6 +138,10 @@ export function EventsRedesign({ alarms, cameras, streamPosters, refreshing, onR
                     <View style={{ flex: 1 }}>
                       <Text style={s.rowTitle} numberOfLines={1}>{(() => { const k = labelForEvent(a.type); return k !== 'Evento detectado' ? k : (a.title || k); })()}</Text>
                       <Text style={s.rowSub} numberOfLines={1}>{(a.cameraName || cam?.name || 'Câmera')}</Text>
+                      {onOpenOccurrence && <TouchableOpacity accessibilityRole="button" onPress={e => { e.stopPropagation(); onOpenOccurrence(a); }} style={{ paddingVertical: 8 }}>
+                        <Text style={[s.acaoTexto, { color: theme.accent }]}>Ver ocorrência</Text>
+                      </TouchableOpacity>}
+                      <Text style={s.rowSub}>Abrir ao vivo →</Text>
                     </View>
                     <View style={{ alignItems: 'flex-end', gap: 6 }}>
                       <Text style={s.time}>{new Date(a.occurredAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</Text>
@@ -171,10 +176,8 @@ export function EventsRedesign({ alarms, cameras, streamPosters, refreshing, onR
                     </View>
                   </TouchableOpacity>
                 );
-              })}
-            </View>
-          </View>
-        ))}
+        }}
+        ListFooterComponent={<>
         {alarms.length === 0 && erro ? (
           <View style={{ alignItems: 'center', paddingVertical: 24, gap: 8 }}>
             <Text style={[s.empty, { color: theme.danger }]}>Não foi possível carregar os eventos.</Text>
@@ -186,10 +189,9 @@ export function EventsRedesign({ alarms, cameras, streamPosters, refreshing, onR
         ) : alarms.length === 0 ? <Text style={s.empty}>Nenhum evento ainda.</Text>
           : groups.length === 0 ? <Text style={s.empty}>Nenhum evento neste filtro.</Text>
           : null}
-        {truncated ? (
-          <Text style={s.capNote}>Mostrando os 50 eventos mais recentes.</Text>
-        ) : null}
-      </ScrollView>
+        {alarms.length > 0 && erro ? <Text style={[s.empty, { color: theme.danger }]}>{erro}</Text> : null}
+        </>}
+      />
     </View>
   );
 }

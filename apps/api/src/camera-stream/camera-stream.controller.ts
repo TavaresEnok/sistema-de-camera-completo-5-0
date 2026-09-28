@@ -14,7 +14,7 @@ import { timingSafeTextEquals } from '../common/security/timing-safe.helper';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { type AuthUser } from '../common/types/auth-user.type';
 import { RequirePermission } from '../role-permissions/require-permission.decorator';
-import { createReadStream } from 'node:fs';
+import { createReadStream, statSync } from 'node:fs';
 import { ClipCaptureService } from './clip-capture.service';
 import { FfmpegMjpegService } from './ffmpeg-mjpeg.service';
 import { MediamtxProxyService } from './mediamtx-proxy.service';
@@ -739,21 +739,26 @@ export class CameraStreamController {
   }
 
   @Roles(UserRole.VIEWER)
+  @RequirePermission('liveView')
   @Get('clip/:clipId/download')
   async downloadClip(
     @CurrentUser() user: AuthUser,
     @Param('clipId') clipId: string,
     @Res() res: Response,
   ) {
+    const cameraId = this.clipCaptureService.getCameraId(clipId, user.id);
+    await this.accessControlService.assertCanViewCamera(user, cameraId);
+    await this.commercialPolicy.assertFeature('localLive', user);
     const filePath = this.clipCaptureService.getClipFile(clipId, user.id);
     res.setHeader('Content-Type', 'video/mp4');
     res.setHeader('Content-Disposition', `attachment; filename="clip-${clipId}.mp4"`);
+    res.setHeader('Content-Length', String(statSync(filePath).size));
+    res.setHeader('Cache-Control', 'private, no-store');
     const stream = createReadStream(filePath);
     stream.pipe(res);
-    // Apaga o arquivo temporário quando o download termina (ou falha).
-    const done = () => this.clipCaptureService.cleanup(clipId);
-    res.on('close', done);
-    stream.on('error', () => { try { res.end(); } catch { /* */ } this.clipCaptureService.cleanup(clipId); });
+    // Download é repetível: fechar a conexão não comprova persistência no app.
+    res.on('close', () => stream.destroy());
+    stream.on('error', () => { try { res.end(); } catch { /* */ } });
   }
 
   @Public()
@@ -764,6 +769,7 @@ export class CameraStreamController {
     @Req() req: Request,
     @Res() res: Response,
     @Query('fresh') fresh?: string,
+    @Query('capture') capture?: string,
   ) {
     const bearerToken = this.extractBearerToken(req);
     const tokenValue = token?.trim() || bearerToken;
@@ -780,11 +786,11 @@ export class CameraStreamController {
 
     // A primeira chamada pode responder instantaneamente com a última gravação.
     // `fresh=1` aguarda a captura live já iniciada por ela, sem duplicar FFmpeg.
-    const poster = await this.ffmpegMjpegService.getLivePosterFrame(cameraId, fresh === '1');
+    const poster = await this.ffmpegMjpegService.getLivePosterFrame(cameraId, fresh === '1', capture === '1');
     res.status(200);
     res.setHeader('Content-Type', 'image/jpeg');
     res.setHeader('Content-Length', String(poster.buffer.length));
-    res.setHeader('Cache-Control', 'private, max-age=10, stale-while-revalidate=20');
+    res.setHeader('Cache-Control', capture === '1' ? 'private, no-store' : 'private, max-age=10, stale-while-revalidate=20');
     res.setHeader('X-Poster-Generated-At', new Date(poster.generatedAt).toISOString());
     res.setHeader('X-Poster-Source', poster.source);
     res.end(poster.buffer);

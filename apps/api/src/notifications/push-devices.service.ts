@@ -1,4 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional, UnauthorizedException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { createHmac } from 'node:crypto';
+import { timingSafeTextEquals } from '../common/security/timing-safe.helper';
 import { UserRole } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { AccessControlService } from '../access-control/access-control.service';
@@ -10,6 +13,7 @@ export class PushDevicesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly accessControl: AccessControlService,
+    @Optional() private readonly config?: ConfigService,
   ) {}
 
   /** Registra (ou revalida) um token de push para o usuário. Idempotente. */
@@ -22,6 +26,28 @@ export class PushDevicesService {
       create: { userId, token, platform: platform ?? null, deviceName: deviceName ?? null, lastSeenAt: now },
       update: { userId, platform: platform ?? undefined, deviceName: deviceName ?? undefined, lastSeenAt: now },
     });
+    // Capacidade restrita a remover ESTE cadastro, sem guardar login após sair.
+    const secret = this.config?.get<string>('jwtSecret');
+    const payload = Buffer.from(JSON.stringify({ userId, token, registeredAt: now.toISOString() })).toString('base64url');
+    const revocationReceipt = secret ? `${payload}.${this.signReceipt(payload, secret)}` : undefined;
+    return { ok: true, revocationReceipt };
+  }
+
+  private signReceipt(payload: string, secret: string) {
+    return createHmac('sha256', secret).update(`push-unregister:${payload}`).digest('base64url');
+  }
+
+  async revokeReceipt(receipt: string) {
+    const secret = this.config?.get<string>('jwtSecret');
+    if (!secret || typeof receipt !== 'string' || receipt.length > 12000) throw new UnauthorizedException();
+    const [payload, signature, extra] = receipt.split('.');
+    if (!payload || !signature || extra || !timingSafeTextEquals(signature, this.signReceipt(payload, secret))) throw new UnauthorizedException();
+    let data: { userId: string; token: string; registeredAt: string };
+    try { data = JSON.parse(Buffer.from(payload, 'base64url').toString()); } catch { throw new UnauthorizedException(); }
+    const timestamp = new Date(data.registeredAt).getTime();
+    if (typeof data.userId !== 'string' || typeof data.token !== 'string' || !Number.isFinite(timestamp)) throw new UnauthorizedException();
+    // Um recibo anterior não remove um novo registro/uma conta diferente.
+    await this.prisma.pushDevice.deleteMany({ where: { userId: data.userId, token: data.token, lastSeenAt: new Date(timestamp) } });
     return { ok: true };
   }
 
@@ -136,7 +162,7 @@ export class PushDevicesService {
   private async tokensForUsers(userIds: string[]): Promise<string[]> {
     if (!userIds.length) return [];
     const devices = await this.prisma.pushDevice.findMany({
-      where: { userId: { in: userIds } },
+      where: { userId: { in: userIds }, lastSeenAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } },
       select: { token: true },
     });
     return devices.map((d) => d.token);

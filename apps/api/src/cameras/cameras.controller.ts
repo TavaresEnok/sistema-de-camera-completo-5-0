@@ -311,8 +311,19 @@ export class CamerasController {
 
   @Roles(UserRole.VIEWER)
   @Get()
-  async findAll(@CurrentUser() user: AuthUser) {
+  async findAll(@CurrentUser() user: AuthUser, @Query('view') view?: string, @Query('offset') offsetRaw?: string, @Query('limit') limitRaw?: string) {
     const isAdmin = user.role === UserRole.ADMIN || user.role === UserRole.SUPER_ADMIN;
+    if (view === 'mobile') {
+      const offset = Number(offsetRaw ?? 0);
+      const limit = Number(limitRaw ?? 100);
+      if (!Number.isInteger(offset) || offset < 0 || !Number.isInteger(limit) || limit < 1 || limit > 100) throw new BadRequestException('Página inválida.');
+      const page = await this.camerasService.findMobilePage(isAdmin ? undefined : await this.accessControlService.getAccessibleCameraIds(user), offset, limit);
+      const items: any[] = [];
+      for (let i = 0; i < page.items.length; i += 8) {
+        items.push(...await Promise.all(page.items.slice(i, i + 8).map(camera => this.withCapabilities(user, camera))));
+      }
+      return { ...page, items };
+    }
     let cameras = isAdmin
       ? await this.camerasService.findAll()
       : await this.camerasService.findAll(await this.accessControlService.getAccessibleCameraIds(user));
@@ -465,6 +476,7 @@ export class CamerasController {
     @Query('zone') zone?: string,
     @Query('limit') limit?: string,
     @Query('offset') offset?: string,
+    @Query('customerEvents') customerEvents?: string,
   ) {
     if (cameraId) {
       await this.accessControlService.assertCanViewCamera(user, cameraId);
@@ -487,6 +499,7 @@ export class CamerasController {
     }
 
     return this.alarmsService.list({
+      customerEvents: customerEvents === 'true',
       accessibleCameraIds,
       cameraId,
       from,

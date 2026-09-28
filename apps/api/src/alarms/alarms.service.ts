@@ -322,6 +322,7 @@ export class AlarmsService {
   }
 
   async list(params: {
+    customerEvents?: boolean;
     accessibleCameraIds: string[];
     cameraId?: string;
     from?: string;
@@ -341,7 +342,8 @@ export class AlarmsService {
     const cameraIds = params.cameraId ? [params.cameraId] : params.accessibleCameraIds;
 
     const where = {
-      ...(cameraIds.length ? { cameraId: { in: cameraIds } } : {}),
+      cameraId: { in: cameraIds },
+      ...(params.customerEvents ? { NOT: ['offline', 'online', 'system', 'disk', 'storage', 'recording', 'health'].map(term => ({ type: { contains: term, mode: 'insensitive' as const } })) } : {}),
       ...(params.status ? { status: params.status } : {}),
       ...(params.severity ? { severity: params.severity } : {}),
       ...(params.priority ? { priority: params.priority } : {}),
@@ -357,7 +359,7 @@ export class AlarmsService {
         : {}),
     };
 
-    const [items, total] = await Promise.all([
+    const [items, total, openTotal] = await Promise.all([
       this.prisma.alarmInstance.findMany({
         where,
         include: { camera: { select: { name: true } } },
@@ -366,6 +368,7 @@ export class AlarmsService {
         skip: offset,
       }),
       this.prisma.alarmInstance.count({ where }),
+      this.prisma.alarmInstance.count({ where: { ...where, status: AlarmStatus.OPEN } }),
     ]);
 
     return {
@@ -418,6 +421,7 @@ export class AlarmsService {
         resolvedByUserName: alarm.resolvedByUserName,
       })),
       total,
+      openTotal,
       limit,
       offset,
     };

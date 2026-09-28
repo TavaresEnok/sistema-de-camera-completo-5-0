@@ -59,11 +59,9 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
     let cancelled = false;
     setFavorites([]);
     setGroups([]);
-    AsyncStorage.multiGet([favKey, groupKey, LEGACY_FAV_KEY, LEGACY_GROUP_KEY])
-      .then(async ([[, scopedFav], [, scopedGroup], [, legacyFav], [, legacyGroup]]) => {
-        const canMigrateLegacy = scope !== 'anonymous';
-        const favRaw = scopedFav ?? (canMigrateLegacy ? legacyFav : null);
-        const grpRaw = scopedGroup ?? (canMigrateLegacy ? legacyGroup : null);
+    // Dados legados sem proprietário ficam preservados, mas não são exibidos.
+    AsyncStorage.multiGet([favKey, groupKey])
+      .then(([[, favRaw], [, grpRaw]]) => {
         if (cancelled) return;
         if (favRaw) {
           const parsed = JSON.parse(favRaw);
@@ -73,9 +71,6 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
           const parsed = JSON.parse(grpRaw);
           if (Array.isArray(parsed)) setGroups(parsed);
         }
-        if (canMigrateLegacy && !scopedFav && legacyFav) await AsyncStorage.setItem(favKey, legacyFav);
-        if (canMigrateLegacy && !scopedGroup && legacyGroup) await AsyncStorage.setItem(groupKey, legacyGroup);
-        if (canMigrateLegacy && (legacyFav || legacyGroup)) await AsyncStorage.multiRemove([LEGACY_FAV_KEY, LEGACY_GROUP_KEY]);
       })
       .catch(() => undefined);
     return () => { cancelled = true; };

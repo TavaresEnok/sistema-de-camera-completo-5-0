@@ -1,7 +1,7 @@
 /** AlarmsScreen — eventos de detecção de movimento: reconhecer/resolver. */
 import { LinearGradient } from 'expo-linear-gradient';
 import React, { useMemo, useState } from 'react';
-import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { Icon } from '../components/Icon';
 import { useTheme } from '../theme/ThemeProvider';
 import { withAlpha } from '../services/branding';
@@ -22,6 +22,7 @@ interface AlarmsScreenProps {
   onAck: (alarm: Alarm) => void;
   onResolve: (alarm: Alarm) => void;
   onOpenCamera: (cameraId: string) => void;
+  onOpenOccurrence?: (alarm: Alarm) => void;
 }
 
 function timeAgo(iso: string): string {
@@ -37,7 +38,7 @@ function timeAgo(iso: string): string {
 }
 
 
-export function AlarmsScreen({ alarms, highlightedAlarmId, canManage, refreshing, onRefresh, onAck, onResolve, onOpenCamera, erro}: AlarmsScreenProps) {
+export function AlarmsScreen({ alarms, highlightedAlarmId, canManage, refreshing, onRefresh, onAck, onResolve, onOpenCamera, onOpenOccurrence, erro}: AlarmsScreenProps) {
   const { theme } = useTheme();
   const [segment, setSegment] = useState<Segment>('Abertos');
 
@@ -59,12 +60,16 @@ export function AlarmsScreen({ alarms, highlightedAlarmId, canManage, refreshing
   }, [alarms, segment, highlightedAlarmId]);
 
   return (
-    <ScrollView
+    <FlatList
+      data={filtered}
+      keyExtractor={alarm => alarm.id}
+      initialNumToRender={12}
+      windowSize={7}
       style={{ flex: 1 }}
       contentContainerStyle={styles.content}
       showsVerticalScrollIndicator={false}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.textSub} />}
-    >
+      ListHeaderComponent={<>
       <View style={styles.header}>
         <View style={styles.headerRow}>
           <View style={[styles.headerIcon, { backgroundColor: 'rgba(239,68,68,0.12)' }]}>
@@ -73,7 +78,7 @@ export function AlarmsScreen({ alarms, highlightedAlarmId, canManage, refreshing
           <View>
             <Text style={[styles.title, { color: theme.bgText }]}>Alarmes</Text>
             <Text style={[styles.subtitle, { color: withAlpha(theme.bgText, 0.72) ?? theme.bgText }]}>
-              Eventos de segurança · {openCount} em aberto
+              Nesta lista · {openCount} em aberto
             </Text>
           </View>
         </View>
@@ -117,6 +122,8 @@ export function AlarmsScreen({ alarms, highlightedAlarmId, canManage, refreshing
         })}
       </View>
 
+      </>}
+      ListEmptyComponent={<>
       {/* ERRO ≠ "TUDO TRANQUILO". Com a lista vazia POR FALHA, a tela afirmava
           que não havia alarme — numa central de monitoramento, é a mentira mais
           cara possível. Agora o erro tem cara de erro e oferece saída. */}
@@ -146,9 +153,9 @@ export function AlarmsScreen({ alarms, highlightedAlarmId, canManage, refreshing
           <Text style={[styles.emptyTitle, { color: theme.text }]}>Tudo tranquilo</Text>
           <Text style={[styles.emptyText, { color: theme.textSub }]}>Nenhum alarme nesta categoria.</Text>
         </View>
-      ) : (
-        <View style={{ gap: 11 }}>
-          {filtered.map((alarm) => (
+      ) : null}
+      </>}
+      renderItem={({ item: alarm }) => <View style={{ marginBottom: 11 }}>
             <AlarmCard
               key={alarm.id}
               alarm={alarm}
@@ -158,10 +165,11 @@ export function AlarmsScreen({ alarms, highlightedAlarmId, canManage, refreshing
               onResolve={() => onResolve(alarm)}
               onOpen={() => alarm.cameraId && onOpenCamera(alarm.cameraId)}
             />
-          ))}
-        </View>
-      )}
-    </ScrollView>
+              {onOpenOccurrence && <Pressable accessibilityRole="button" onPress={() => onOpenOccurrence(alarm)} style={{ padding: 12 }}>
+                <Text style={{ color: theme.accent }}>Ver gravação da ocorrência</Text>
+              </Pressable>}
+        </View>}
+    />
   );
 }
 

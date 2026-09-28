@@ -5,6 +5,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   Image,
+  FlatList,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -103,11 +104,19 @@ export function CamerasRedesign({ cameras, streamPosters, streamUrls, streamWhep
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
-      <ScrollView
+      <FlatList
+        key={view}
+        data={visibleCameras}
+        keyExtractor={cam => cam.id}
+        numColumns={view === 'mosaic' ? 2 : 1}
+        columnWrapperStyle={view === 'mosaic' ? { gap: 11 } : undefined}
+        initialNumToRender={10}
+        windowSize={7}
+        removeClippedSubviews={false}
         contentContainerStyle={s.root}
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.accent} />}
-      >
+        ListHeaderComponent={<>
         {/* Header */}
         <View style={s.header}>
           <View style={{ flex: 1 }}>
@@ -159,14 +168,11 @@ export function CamerasRedesign({ cameras, streamPosters, streamUrls, streamWhep
           })}
         </ScrollView>
 
-        {/* Lista */}
-        {view === 'list' ? (
-          <View style={{ gap: 10, marginTop: 14 }}>
-            {visibleCameras.map((cam) => <ListRow key={cam.id} cam={cam} poster={streamPosters[cam.id]} theme={theme} s={s} fav={favs.includes(cam.id)} onToggleFav={() => toggleFav(cam.id)} onOpen={() => onOpenCamera(cam)} onManage={() => setManagedCamera(cam)} />)}
-          </View>
-        ) : (
-          <View style={s.grid}>
-            {visibleCameras.map((cam) => (
+        </>}
+        renderItem={({ item: cam }) => <View style={{ marginTop: 11 }}>
+          {view === 'list' ? (
+            <ListRow cam={cam} poster={streamPosters[cam.id]} theme={theme} s={s} fav={favs.includes(cam.id)} onToggleFav={() => toggleFav(cam.id)} onOpen={() => onOpenCamera(cam)} onManage={() => setManagedCamera(cam)} />
+          ) : (
               <MosaicTile
                 key={cam.id}
                 cam={cam}
@@ -178,9 +184,9 @@ export function CamerasRedesign({ cameras, streamPosters, streamUrls, streamWhep
                 theme={theme} s={s}
                 fav={favs.includes(cam.id)} onToggleFav={() => toggleFav(cam.id)} onOpen={() => onOpenCamera(cam)} onManage={() => setManagedCamera(cam)}
               />
-            ))}
-          </View>
-        )}
+          )}
+        </View>}
+        ListFooterComponent={<>
         {visibleCameras.length < filtered.length ? (
           <TouchableOpacity
             accessibilityRole="button"
@@ -192,7 +198,8 @@ export function CamerasRedesign({ cameras, streamPosters, streamUrls, streamWhep
           </TouchableOpacity>
         ) : null}
         {filtered.length === 0 ? <Text style={s.empty}>Nenhuma câmera encontrada.</Text> : null}
-      </ScrollView>
+        </>}
+      />
       <CameraManagementSheet
         visible={Boolean(managedCamera)}
         camera={managedCamera}

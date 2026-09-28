@@ -10,12 +10,17 @@ import { HttpExceptionFilter } from '../src/common/filters/http-exception.filter
 import { generateIngestKey } from '../src/cameras/helpers/rtmp-ingest.helper';
 import type { AuthUser } from '../src/common/types/auth-user.type';
 import { UserRole } from '@prisma/client';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
-test('botão Gravar usa a publicação interna da RTMP e nunca tenta 0.0.0.0', async () => {
+test('botão Gravar usa a publicação interna da RTMP e nunca tenta 0.0.0.0', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'rtmp-clip-test-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
   let decryptCalls = 0;
   const resolveCalls: any[] = [];
   const service = new ClipCaptureService(
-    { get: () => undefined } as any,
+    { get: (key: string) => key === 'recordingsRoot' ? root : undefined } as any,
     {} as any,
     { decrypt: () => { decryptCalls += 1; throw new Error('não deveria descriptografar RTMP'); } } as any,
     {

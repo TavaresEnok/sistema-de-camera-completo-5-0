@@ -9,7 +9,7 @@
  * testada). Esta tela só desenha e conta o tempo.
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { AppState, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Icon } from '../components/Icon';
 import { LiveVideo } from '../components/VideoPlayers';
 import { useTheme } from '../theme/ThemeProvider';
@@ -99,6 +99,8 @@ export function RondaScreen({
   useEffect(() => {
     if (!emExecucao || pausada || !paradas.length) return;
     const timer = setInterval(() => {
+      // Ao voltar, retoma a mesma parada/contagem; não avança às cegas no fundo.
+      if (AppState.currentState !== 'active') return;
       setRestante((atual) => {
         if (atual > 1) return atual - 1;
         setIndice((i) => proximaParada(i, paradas.length));

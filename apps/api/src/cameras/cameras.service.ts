@@ -497,6 +497,26 @@ export class CamerasService implements OnApplicationBootstrap {
     return { used, limit: Math.max(0, group?.maxPrivateCameras ?? 0) };
   }
 
+  /** Projeção paginada do app: não calcula armazenamento nem entrega configuração interna. */
+  async findMobilePage(accessibleIds: string[] | undefined, offset: number, limit: number) {
+    const where = { enabled: true, ...(accessibleIds ? { id: { in: accessibleIds } } : {}) };
+    const [items, total] = await Promise.all([
+      this.prisma.camera.findMany({
+        where, orderBy: { id: 'asc' }, skip: offset, take: limit,
+        select: {
+          id: true, name: true, ip: true, status: true, enabled: true,
+          group: { select: { id: true, name: true } }, ownerUserId: true, isPrivate: true,
+          sourceMode: true, rtspPort: true, httpPort: true, onvifPort: true,
+          onvifPath: true, onvifProfileToken: true, username: true, rtspPath: true,
+          ptzCapable: true, recordingEnabled: true, recordingMode: true,
+          preferredLiveProtocol: true, detectedWidth: true, detectedHeight: true, detectedFps: true,
+        },
+      }),
+      this.prisma.camera.count({ where }),
+    ]);
+    return { items, total, offset, limit };
+  }
+
   async findAll(accessibleIds?: string[]) {
     const where = accessibleIds ? { id: { in: accessibleIds } } : {};
     const [cameras, storageByCamera] = await Promise.all([

@@ -507,6 +507,8 @@ export function PlaybackVideo({ uri, posterUri, recordingStartedAt, style, onRet
   // Watchdog de buffering: diferente do live, a reprodução não tinha timeout —
   // conexão que morria no meio virava spinner infinito, sem saída.
   const bufferingDesdeRef = useRef<number | null>(null);
+  const diagnosisRef = useRef<AbortController | null>(null);
+  useEffect(() => () => { diagnosisRef.current?.abort(); }, [uri]);
 
   // ── POR QUE O VÍDEO NÃO ABRIU ───────────────────────────────────────────
   //
@@ -518,14 +520,28 @@ export function PlaybackVideo({ uri, posterUri, recordingStartedAt, style, onRet
   //   qualquer outro (ou decodificação) → degrau para a versão compatível.
   const diagnosticarFalha = useCallback(async () => {
     if (uri.startsWith('file:')) { setPlaybackError(true); return; }
+    diagnosisRef.current?.abort();
+    const controller = new AbortController();
+    diagnosisRef.current = controller;
+    let timedOut = false;
+    const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, 8000);
     let status: number | null = null;
     let retryAfter: string | null = null;
     try {
-      const resposta = await fetch(uri, { method: 'GET', headers: { Range: 'bytes=0-0' } });
+      const resposta = await fetch(uri, { method: 'GET', signal: controller.signal, headers: { Range: 'bytes=0-0' } });
       status = resposta.status;
       retryAfter = resposta.headers.get('Retry-After');
+      void resposta.body?.cancel().catch(() => undefined);
     } catch {
       status = null; // rede: trata como erro comum
+    } finally {
+      clearTimeout(timeout);
+    }
+    if (diagnosisRef.current !== controller || (controller.signal.aborted && !timedOut)) return;
+    if (status === 401 || status === 403 || status === null) {
+      setPreparando(false);
+      setPlaybackError(true);
+      return; // renovar pelo botão de retry; falha de acesso/rede não é codec
     }
 
     if (ehPreparoEmAndamento(status)) {

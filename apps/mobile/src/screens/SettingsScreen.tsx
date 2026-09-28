@@ -4,7 +4,7 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import Constants from 'expo-constants';
 import React, { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { AddCameraSheet } from '../components/AddCameraSheet';
 import { Icon, type IconName } from '../components/Icon';
 import { useTheme } from '../theme/ThemeProvider';
@@ -145,7 +145,7 @@ export function SettingsScreen({
           title="Alertas neste aparelho"
           subtitle={pushSupported
             ? (pushEnabled ? 'Você recebe alarmes de movimento' : 'Desligado: nenhum alarme chega aqui')
-            : 'Indisponível neste aparelho'}
+            : Platform.OS === 'ios' ? 'Alertas fora do app ainda indisponíveis no iPhone' : 'Indisponível neste aparelho'}
           subtitleColor={pushSupported && !pushEnabled ? theme.warning : undefined}
           theme={theme}
           right={(

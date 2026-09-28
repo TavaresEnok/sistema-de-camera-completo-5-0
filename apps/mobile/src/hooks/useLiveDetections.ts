@@ -32,10 +32,15 @@ export function useLiveDetections(
     }
     const sessionId = `mobile-${cameraId}-${Date.now().toString(36)}`;
     let cancelled = false;
+    const controller = new AbortController();
+    let pollTimer: ReturnType<typeof setTimeout> | undefined;
+    let heartbeatTimer: ReturnType<typeof setTimeout> | undefined;
+    let failures = 0;
 
     const postLease = (action: 'start' | 'heartbeat' | 'stop') =>
       request(session.apiUrl, `/ai/live-view/${action}/${cameraId}`, session.token, {
         method: 'POST',
+        signal: action === 'stop' ? undefined : controller.signal,
         body: JSON.stringify({ sessionId, ttlSeconds: LEASE_TTL_SECONDS, viewMode: 'selected' }),
       }).catch(() => undefined);
 
@@ -45,22 +50,32 @@ export function useLiveDetections(
           session.apiUrl,
           `/ai/detections/latest-batch?cameraIds=${encodeURIComponent(cameraId)}&maxAgeMs=900&limit=10`,
           session.token,
+          { signal: controller.signal },
         );
+        failures = 0;
         if (!cancelled) setDetections(data.cameras?.[cameraId]?.detections ?? []);
       } catch {
+        failures++;
         if (!cancelled) setDetections([]);
+      } finally {
+        if (!cancelled) pollTimer = setTimeout(() => { void poll(); }, Math.min(10_000, POLL_INTERVAL_MS * 2 ** Math.min(failures, 4)));
       }
     };
 
-    void postLease('start');
     void poll();
-    const pollTimer = setInterval(() => { void poll(); }, POLL_INTERVAL_MS);
-    const heartbeatTimer = setInterval(() => { void postLease('heartbeat'); }, HEARTBEAT_INTERVAL_MS);
+    const heartbeat = async () => {
+      await postLease('heartbeat');
+      if (!cancelled) heartbeatTimer = setTimeout(() => { void heartbeat(); }, HEARTBEAT_INTERVAL_MS);
+    };
+    void postLease('start').then(() => {
+      if (!cancelled) heartbeatTimer = setTimeout(() => { void heartbeat(); }, HEARTBEAT_INTERVAL_MS);
+    });
 
     return () => {
       cancelled = true;
-      clearInterval(pollTimer);
-      clearInterval(heartbeatTimer);
+      controller.abort();
+      clearTimeout(pollTimer);
+      clearTimeout(heartbeatTimer);
       void postLease('stop');
       setDetections([]);
     };

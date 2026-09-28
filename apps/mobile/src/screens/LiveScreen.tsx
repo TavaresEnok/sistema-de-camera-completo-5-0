@@ -415,7 +415,7 @@ export function LiveScreen({
                 <ControlButton label="Alertas" icon="bell" c={c} active={!notificationsMuted} onPress={() => onToggleNotifications(camera)} />
                 {onToggleGravacaoSistema ? (
                   <ControlButton
-                    label={gravacaoSistemaAtiva ? 'Gravando' : 'Gravar 24h'}
+                    label={gravacaoSistemaAtiva ? 'Parar manual' : 'Gravar até 10 min'}
                     icon="radio"
                     c={c}
                     active={gravacaoSistemaAtiva}
@@ -468,7 +468,7 @@ export function LiveScreen({
         <ControlButton label="Alertas" icon="bell" c={c} active={!notificationsMuted} onPress={() => onToggleNotifications(camera)} />
                 {onToggleGravacaoSistema ? (
                   <ControlButton
-                    label={gravacaoSistemaAtiva ? 'Gravando' : 'Gravar 24h'}
+                    label={gravacaoSistemaAtiva ? 'Parar manual' : 'Gravar até 10 min'}
                     icon="radio"
                     c={c}
                     active={gravacaoSistemaAtiva}

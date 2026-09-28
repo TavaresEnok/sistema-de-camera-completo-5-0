@@ -2,6 +2,7 @@ import { Platform } from 'react-native';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import { request } from './api';
+import { flushPushRemovals, queuePushRemoval, rememberPushRegistration } from './push-revocation';
 
 // Como o app se comporta ao receber um push com o app EM PRIMEIRO PLANO.
 // (SDK 54: banner + som + badge; a lista mantém no centro de notificações.)
@@ -68,6 +69,7 @@ async function ensureAndroidChannel() {
  */
 export async function registerForPush(apiUrl: string, authToken: string, signal?: AbortSignal): Promise<string | null> {
   try {
+    await flushPushRemovals();
     if (signal?.aborted) return null;
     await ensureAndroidChannel();
 
@@ -100,11 +102,13 @@ export async function registerForPush(apiUrl: string, authToken: string, signal?
     if (signal?.aborted) return null;
     cachedDeviceToken = token;
 
-    await request(apiUrl, '/notifications/devices', authToken, {
+    const registration = await request<{ revocationReceipt?: string }>(apiUrl, '/notifications/devices', authToken, {
       method: 'POST',
       body: JSON.stringify({ token, platform: Platform.OS }),
       signal,
     });
+    if (registration.revocationReceipt) await rememberPushRegistration(apiUrl, token, registration.revocationReceipt);
+    if (signal?.aborted) { await unregisterFromPush(apiUrl, authToken, token); return null; }
     return token;
   } catch (error) {
     console.warn('[push] registro falhou:', error instanceof Error ? error.message : String(error));
@@ -115,6 +119,8 @@ export async function registerForPush(apiUrl: string, authToken: string, signal?
 /** Remove o token do backend (logout). Best-effort, nunca lança. */
 export async function unregisterFromPush(apiUrl: string, authToken: string, deviceToken?: string | null) {
   const token = deviceToken ?? cachedDeviceToken;
+  await queuePushRemoval(apiUrl, token).catch(() => undefined);
+  void flushPushRemovals();
   if (!token) return;
   try {
     await request(apiUrl, '/notifications/devices', authToken, {

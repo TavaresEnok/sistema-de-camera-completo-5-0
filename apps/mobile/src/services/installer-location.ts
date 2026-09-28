@@ -9,9 +9,12 @@ export async function captureInstallerLocation(): Promise<InstallerLocationPaylo
   try {
     const permission = await Location.requestForegroundPermissionsAsync();
     if (permission.status !== Location.PermissionStatus.GRANTED) return null;
-    const current = await Location.getCurrentPositionAsync({
-      accuracy: Location.Accuracy.High,
-    });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const current = await Promise.race([
+      Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+      new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), 8_000); }),
+    ]).finally(() => clearTimeout(timer));
+    if (!current) return null;
     return buildInstallerLocationPayload(
       current.coords.latitude,
       current.coords.longitude,

@@ -5,7 +5,7 @@
  */
 import Constants from 'expo-constants';
 import { useState } from 'react';
-import { ActivityIndicator, Modal, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Modal, Platform, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useTheme } from '../../theme/ThemeProvider';
 import { Icon, type IconName } from '../../components/Icon';
 import { AddCameraSheet } from '../../components/AddCameraSheet';
@@ -135,7 +135,7 @@ export function SettingsRedesign(props: Props) {
                 theme={theme}
                 s={s}
                 icon="bell"
-                label={pushSupported ? 'Alertas neste aparelho' : 'Alertas indisponíveis aqui'}
+                label={pushSupported ? 'Alertas neste aparelho' : Platform.OS === 'ios' ? 'Alertas fora do app ainda indisponíveis no iPhone' : 'Alertas indisponíveis aqui'}
                 value={pushEnabled && pushSupported}
                 onChange={(v) => { if (pushSupported) onPushChange(v); }}
               />

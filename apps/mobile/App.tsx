@@ -7,7 +7,7 @@ import * as ScreenOrientation from 'expo-screen-orientation';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, AppState, BackHandler, SafeAreaView, StyleSheet, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator, Alert, AppState, BackHandler, Pressable, SafeAreaView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { isRedesign } from './src/theme/redesign';
 import { ALLOW_CLEARTEXT_TRAFFIC, DEFAULT_API_URL, TOP_SAFE } from './src/config';
@@ -25,7 +25,7 @@ import { LoginScreen } from './src/screens/LoginScreen';
 import { MosaicScreen } from './src/screens/MosaicScreen';
 import { PlaybackScreen } from './src/screens/PlaybackScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
-import { request, normalizeServerUrl, setTokenRefreshHandler, setUnauthorizedHandler } from './src/services/api';
+import { request, normalizeServerUrl, setTokenRefreshHandler, setUnauthorizedHandler, invalidateAuthRequests } from './src/services/api';
 import { authenticatedMediaUrl, isSecureMediaUrl } from './src/services/media-urls';
 import { fetchBranding, isLightColor, loadCachedBranding, saveCachedBranding } from './src/services/branding';
 import { clearStreamUrlsCache, requestCachedStreamUrls, type ModoDeEntrega } from './src/services/stream-urls-cache';
@@ -52,12 +52,16 @@ import { loadCachedPosters, savePoster } from './src/services/poster-cache';
 import { iniciarRelatorioDeTravamento, marcarInstalacao } from './src/services/crash-reporting';
 import { useAlarms } from './src/hooks/useAlarms';
 import { useLiveDetections } from './src/hooks/useLiveDetections';
+import { downloadAuthenticated } from './src/services/authenticated-download';
+import { flushPushRemovals } from './src/services/push-revocation';
+import { findAlarmRecording } from './src/services/alarm-recording';
+import { loadCameraList } from './src/services/camera-list';
 import { ThemeProvider, useTheme } from './src/theme/ThemeProvider';
 import { LibraryProvider, useLibrary } from './src/state/LibraryProvider';
 import { localDateKey, localDayIsoRange, shiftDateKey } from './src/utils/format';
 import { buildOperationalMessages } from './src/utils/operational';
 import { cameraPosterUrl, clipDownloadUrl, recordingThumbnailUrl } from './src/utils/media-endpoints';
-import type { ActivePlayback, Camera, Direction, MobileCapabilities, Recording, Session, StreamUrls, Tab, User } from './src/types';
+import type { ActivePlayback, Alarm, Camera, Direction, MobileCapabilities, Recording, Session, StreamUrls, Tab, User } from './src/types';
 import { montarUrlDeReproducao } from './src/utils/playback-source';
 
 // O play-token vale 5 min no servidor; renovar aos 4 dá folga para a
@@ -123,7 +127,9 @@ function AppInner() {
   useEffect(() => { audioAoVivoRef.current = audioAoVivo; }, [audioAoVivo]);
   // GRAVAÇÃO NO SISTEMA (acervo) — diferente do clipe local do botão "Gravar".
   const [gravacaoSistemaAtiva, setGravacaoSistemaAtiva] = useState(false);
+  const [gravacaoSistemaConhecida, setGravacaoSistemaConhecida] = useState(false);
   const [gravacaoSistemaOcupada, setGravacaoSistemaOcupada] = useState(false);
+  const gravacaoSistemaLock = useRef(false);
   // Alertas neste aparelho: o push já funcionava, mas não havia como desligar.
   const [pushHabilitado, setPushHabilitado] = useState(true);
   const [pushSuportado, setPushSuportado] = useState(true);
@@ -131,16 +137,20 @@ function AppInner() {
   useEffect(() => { pushHabilitadoRef.current = pushHabilitado; }, [pushHabilitado]);
   useEffect(() => { void lerPreferenciaDePush().then(setPushHabilitado); }, []);
   useEffect(() => {
+    setGravacaoSistemaConhecida(false);
     if (!liveCamera) {
       setGravacaoSistemaAtiva(false);
       setAudioAoVivo(false);
       audioAoVivoRef.current = false;
       return;
     }
-    // O app redesenhado grava clipes locais. Não consulta nem exibe a gravação
-    // administrativa do servidor, evitando uma requisição sem utilidade.
-    if (!isRedesign) void carregarEstadoGravacao(liveCamera.id);
-  }, [liveCamera?.id]);
+    if (session?.user.role === 'VIEWER' || liveCamera.canRecord !== true || liveCamera.recordingMode === 'continuous') return;
+    void carregarEstadoGravacao(liveCamera.id);
+    const timer = setInterval(() => {
+      if (AppState.currentState === 'active') void carregarEstadoGravacao(liveCamera.id);
+    }, 15_000);
+    return () => clearInterval(timer);
+  }, [liveCamera?.id, session?.token]);
   // RONDA: o servidor já marcava quais aparecem no celular e o app ignorava.
   const [rondas, setRondas] = useState<RondaDoApp[]>([]);
   const [mosaicos, setMosaicos] = useState<MosaicoDoApp[]>([]);
@@ -183,6 +193,7 @@ function AppInner() {
   const selectedCamera = cameras.find((camera) => camera.id === selectedCameraId) ?? cameras[0] ?? null;
   const sessionScope = session ? `${session.apiUrl}|${session.user.id}` : 'anonymous';
   const sessionTokenRef = useRef<string | null>(null);
+  const sessionGenerationRef = useRef(0);
   const recordingDateRef = useRef(recordingDate);
   const recordingDateCameraRef = useRef<string | null>(null);
   const recordingsRef = useRef<Recording[]>([]);
@@ -214,8 +225,8 @@ function AppInner() {
   recordingDateRef.current = recordingDate;
   recordingsRef.current = recordings;
 
-  const { alarms, openAlarmCount, reload: reloadAlarms, ack: ackAlarm, resolve: resolveAlarm, erro: alarmesErro, carregando: alarmesCarregando } = useAlarms(session);
-  const liveDetections = useLiveDetections(session, liveCamera != null, liveCamera?.id ?? null);
+  const { alarms, total: alarmsTotal, loadMore: loadMoreAlarms, openAlarmCount, reload: reloadAlarms, ack: ackAlarm, resolve: resolveAlarm, erro: alarmesErro, carregando: alarmesCarregando } = useAlarms(session);
+  const liveDetections = useLiveDetections(session, liveCamera != null && !activePlayback, liveCamera?.id ?? null);
 
   const operationalMessages = buildOperationalMessages(cameras, lastSyncError);
   const statusBarStyle = isLightColor(theme.bg) ? 'dark' : 'light';
@@ -244,6 +255,8 @@ function AppInner() {
   };
 
   const activateSession = (next: Session) => {
+    invalidateAuthRequests();
+    sessionGenerationRef.current++;
     sessionTokenRef.current = next.token;
     setSession(next);
     setApiUrl(next.apiUrl);
@@ -356,16 +369,14 @@ function AppInner() {
   }, [sessionScope, session?.token, setLibraryScope]);
 
   useEffect(() => {
-    if (session) void loadAll();
-  }, [session?.token]);
-
-  useEffect(() => {
     if (!session?.refreshToken) {
       setTokenRefreshHandler(null);
       return;
     }
-    setTokenRefreshHandler(async (expiredToken) => {
+    const generation = sessionGenerationRef.current;
+    setTokenRefreshHandler(async (expiredToken, origin) => {
       // Outra requisição pode já ter renovado a sessão enquanto esta aguardava.
+      if (generation !== sessionGenerationRef.current || origin !== session.apiUrl || expiredToken !== session.token) throw new Error('Operação cancelada.');
       if (expiredToken !== sessionTokenRef.current) return sessionTokenRef.current;
       try {
         const data = await request<{
@@ -384,16 +395,23 @@ function AppInner() {
           refreshExpiresAt: data.refreshExpiresAt,
           user: data.user,
         };
+        if (generation !== sessionGenerationRef.current) throw new Error('Operação cancelada.');
         await saveStoredSession(renewed);
+        if (generation !== sessionGenerationRef.current) throw new Error('Operação cancelada.');
         sessionTokenRef.current = renewed.token;
         setSession(renewed);
         return renewed.token;
-      } catch {
-        return null;
+      } catch (error) {
+        if ((error as { status?: number })?.status === 401) return null;
+        throw error;
       }
     });
     return () => setTokenRefreshHandler(null);
   }, [session?.token, session?.refreshToken, session?.apiUrl]);
+
+  useEffect(() => {
+    if (session) void loadAll();
+  }, [session?.token]);
 
   useEffect(() => {
     if (!session) { setCanManageAlarms(false); return; }
@@ -458,10 +476,7 @@ function AppInner() {
       setHighlightedAlarmId(data.alarmId ?? null);
       setTab('alarmes');
       void reloadAlarms();
-      // Deep link: push de uma câmera específica abre a câmera AO VIVO direto
-      // (a lista pode ainda não ter carregado no cold start — fica pendente e
-      // o efeito abaixo dispara quando as câmeras chegarem).
-      if (data.cameraId) setPendingPushCameraId(data.cameraId);
+      // O toque leva ao evento; vídeo atual não representa a ocorrência passada.
     });
     return () => {
       disposed = true;
@@ -636,6 +651,8 @@ function AppInner() {
   };
 
   const logout = async (revokeServer = true) => {
+    sessionGenerationRef.current++;
+    invalidateAuthRequests();
     const previous = session;
     void stopActiveClip(true);
     sessionTokenRef.current = null;
@@ -683,6 +700,12 @@ function AppInner() {
     }
   };
 
+  const confirmLogout = () => Alert.alert(
+    'Sair da conta?',
+    'Esta ação também encerra suas sessões nos outros aparelhos quando o servidor recebe o pedido. Sem conexão, a saída será apenas neste aplicativo.',
+    [{ text: 'Cancelar', style: 'cancel' }, { text: 'Sair', style: 'destructive', onPress: () => { void logout(); } }],
+  );
+
   const changeBiometricPreference = async (enabled: boolean) => {
     if (!enabled) {
       await setBiometricLoginEnabled(false);
@@ -707,7 +730,7 @@ function AppInner() {
     const generation = ++camerasRequestRef.current;
     if (!quiet) setRefreshing(true);
     try {
-      const raw = await request<Camera[]>(session.apiUrl, '/cameras', session.token);
+      const raw = await loadCameraList(session);
       if (sessionTokenRef.current !== token || camerasRequestRef.current !== generation) return;
       // Câmeras DESATIVADAS no sistema não aparecem no app (o servidor também
       // recusa o stream delas; some da lista para não virar "câmera quebrada").
@@ -750,13 +773,21 @@ function AppInner() {
     if (!session) return;
     const token = session.token;
     const vazio = { items: [] as never[] };
-    const [listaRondas, listaMosaicos] = await Promise.all([
-      request<{ items: RondaDoApp[] }>(session.apiUrl, '/rondas', session.token).catch(() => vazio),
-      request<{ items: MosaicoDoApp[] }>(session.apiUrl, '/live-layouts', session.token).catch(() => vazio),
-    ]);
-    if (sessionTokenRef.current !== token) return;
-    setRondas(listaRondas?.items ?? []);
-    setMosaicos(listaMosaicos?.items ?? []);
+    const compatible = (error: unknown) => {
+      if ((error as { status?: number })?.status === 404) return vazio;
+      throw error;
+    };
+    try {
+      const [listaRondas, listaMosaicos] = await Promise.all([
+        request<{ items: RondaDoApp[] }>(session.apiUrl, '/rondas', session.token).catch(compatible),
+        request<{ items: MosaicoDoApp[] }>(session.apiUrl, '/live-layouts', session.token).catch(compatible),
+      ]);
+      if (sessionTokenRef.current !== token) return;
+      setRondas(listaRondas?.items ?? []);
+      setMosaicos(listaMosaicos?.items ?? []);
+    } catch {
+      if (sessionTokenRef.current === token) showAppNotice('Rondas não atualizadas', 'Não foi possível consultar as rondas e os mosaicos. Tente atualizar novamente.', 'warning');
+    }
   };
 
   const loadStream = async (cameraId: string, viewMode: ModoDeEntrega = 'original', force = false) => {
@@ -807,7 +838,9 @@ function AppInner() {
   const loadAllPosters = async (cams: Camera[]) => {
     if (!session || cams.length === 0) return;
     const scope = `${session.apiUrl}|${session.user.id}`;
+    const posterSessionGeneration = sessionGenerationRef.current;
     const cached = await loadCachedPosters(scope, cams.map((camera) => camera.id));
+    if (posterSessionGeneration !== sessionGenerationRef.current) return;
     setStreamPosters((current) => ({ ...current, ...cached.posters }));
     const stale = new Set(cached.staleIds);
     const candidates = cams
@@ -852,7 +885,7 @@ function AppInner() {
     }
   };
 
-  const refreshPoster = async (cameraId: string): Promise<string | null> => {
+  const refreshPoster = async (cameraId: string, captureNow = false): Promise<string | null> => {
     if (!session) return null;
     const token = session.token;
     try {
@@ -865,7 +898,7 @@ function AppInner() {
       if (sessionTokenRef.current !== token) return null;
       const item = items[0];
       if (!item) return null;
-      const url = `${cameraPosterUrl(session.apiUrl, cameraId, item.streamToken)}&fresh=1`;
+      const url = `${cameraPosterUrl(session.apiUrl, cameraId, item.streamToken)}&fresh=1${captureNow ? '&capture=1' : ''}`;
       const scope = `${session.apiUrl}|${session.user.id}`;
       const localUri = await savePoster(scope, cameraId, url);
       if (sessionTokenRef.current === token) {
@@ -1101,9 +1134,7 @@ function AppInner() {
     try {
       await FileSystem.deleteAsync(target, { idempotent: true }).catch(() => undefined);
       const url = clipDownloadUrl(currentSession.apiUrl, pending.id);
-      const result = await FileSystem.downloadAsync(url, target, {
-        headers: { Authorization: `Bearer ${currentSession.token}` },
-      });
+      const result = await downloadAuthenticated(currentSession.apiUrl, currentSession.token, url, target);
       if (result.status && result.status >= 400) throw new Error(`Falha ao baixar o clipe (HTTP ${result.status}).`);
       const thumbnailUri = await createClipThumbnail(result.uri, safeId);
       let savedToGallery = false;
@@ -1126,6 +1157,11 @@ function AppInner() {
       return true;
     } catch (error) {
       await FileSystem.deleteAsync(target, { idempotent: true }).catch(() => undefined);
+      if ([403, 404, 410].includes(Number((error as { status?: number })?.status))) {
+        await removePendingClip(scope, pending.id);
+        if (sessionTokenRef.current === currentSession.token) showAppNotice('Clipe indisponível', 'O prazo para baixar este clipe terminou ou seu acesso foi removido.', 'warning');
+        return false;
+      }
       if (!silent && sessionTokenRef.current === currentSession.token) {
         showAppNotice('Gravação pendente', `${userFacingError(error, 'Não foi possível salvar a gravação.')} Tentaremos novamente em breve.`, 'warning', 6500);
       }
@@ -1296,14 +1332,15 @@ function AppInner() {
     if (!session) return;
     const token = session.token;
     try {
-      const r = await request<{ isRecording?: boolean; intendedRecording?: boolean }>(
-        session.apiUrl, `/recordings/cameras/${encodeURIComponent(cameraId)}/recording/status`, session.token,
+      const r = await request<{ manualRecordingActive?: boolean }>(
+        session.apiUrl, `/cameras/${encodeURIComponent(cameraId)}/recording/status`, session.token,
       );
       if (sessionTokenRef.current !== token || liveCameraIdRef.current !== cameraId) return;
-      setGravacaoSistemaAtiva(Boolean(r?.isRecording || r?.intendedRecording));
+      setGravacaoSistemaAtiva(r.manualRecordingActive === true);
+      setGravacaoSistemaConhecida(true);
     } catch {
       if (sessionTokenRef.current !== token || liveCameraIdRef.current !== cameraId) return;
-      setGravacaoSistemaAtiva(false);
+      setGravacaoSistemaConhecida(false);
     }
   };
 
@@ -1313,21 +1350,25 @@ function AppInner() {
    * conseguia mandar gravar no acervo.
    */
   const toggleGravacaoSistema = async (camera: Camera) => {
-    if (!session || gravacaoSistemaOcupada) return;
+    if (!session || session.user.role === 'VIEWER' || gravacaoSistemaLock.current || !gravacaoSistemaConhecida || camera.canRecord !== true || camera.recordingMode === 'continuous') return;
+    const generation = sessionGenerationRef.current;
+    gravacaoSistemaLock.current = true;
     const alvo = !gravacaoSistemaAtiva;
     setGravacaoSistemaOcupada(true);
     try {
       await request(
         session.apiUrl,
-        `/recordings/cameras/${encodeURIComponent(camera.id)}/recording/${alvo ? 'start' : 'stop'}`,
+        `/cameras/${encodeURIComponent(camera.id)}/recording/${alvo ? 'start' : 'stop'}`,
         session.token,
         { method: 'POST', body: JSON.stringify({}) },
       );
-      setGravacaoSistemaAtiva(alvo);
+      await carregarEstadoGravacao(camera.id);
     } catch (error) {
+      if (generation !== sessionGenerationRef.current) return;
       const motivo = userFacingError(error, 'Não foi possível alterar a gravação. Tente novamente.');
       showAppNotice(alvo ? 'Não foi possível gravar' : 'Não foi possível parar', motivo, 'error');
     } finally {
+      gravacaoSistemaLock.current = false;
       setGravacaoSistemaOcupada(false);
     }
   };
@@ -1422,6 +1463,25 @@ function AppInner() {
     }
   };
 
+  const openAlarmRecording = async (alarm: Alarm) => {
+    if (!session || !capabilities.playback) return;
+    const generation = sessionGenerationRef.current;
+    try {
+      const target = await findAlarmRecording(session, alarm);
+      if (generation !== sessionGenerationRef.current) return;
+      if (!target) {
+        showAppNotice('Sem gravação deste instante', 'Não há vídeo disponível para esta ocorrência. O vídeo ao vivo mostra apenas o momento atual.', 'warning');
+        return;
+      }
+      selectedCameraIdRef.current = target.recording.cameraId;
+      setSelectedCameraId(target.recording.cameraId);
+      setTab('reproducao');
+      await openPlayback(target.recording, { retomarEm: target.offset });
+    } catch (error) {
+      if (generation === sessionGenerationRef.current) showAppNotice('Não foi possível abrir a ocorrência', userFacingError(error, 'Tente novamente.'), 'error');
+    }
+  };
+
   // ── RENOVAÇÃO DO PLAY-TOKEN DURANTE A REPRODUÇÃO ──────────────────────────
   //
   // O token de reprodução vale 5 minutos e era emitido UMA vez, congelado na
@@ -1485,9 +1545,7 @@ function AppInner() {
     try {
       const url = normalizeServerUrl(`${currentSession.apiUrl}/recordings/${encodeURIComponent(recording.id)}/download`, currentSession.apiUrl);
       if (!url) throw new Error('URL de download indisponível.');
-      const result = await FileSystem.downloadAsync(url, target, {
-        headers: { Authorization: `Bearer ${currentSession.token}` },
-      });
+      const result = await downloadAuthenticated(currentSession.apiUrl, currentSession.token, url, target);
       if (result.status && result.status >= 400) throw new Error(`Falha no download (HTTP ${result.status}).`);
       const ok = await saveToGallery(result.uri);
       if (sessionTokenRef.current === currentSession.token) {
@@ -1511,7 +1569,7 @@ function AppInner() {
     showAppNotice('Capturando foto…', 'Buscando a imagem mais recente da câmera.', 'info', 3500);
     // Emite token novo e pede ao endpoint um frame fresco; não reutiliza o
     // snapshot que pode estar há minutos visível no tile.
-    const poster = await refreshPoster(camera.id) ?? streamPosters[camera.id];
+    const poster = await refreshPoster(camera.id, true);
     if (!poster) {
       showAppNotice('Imagem indisponível', 'Aguarde a câmera carregar e tente novamente.', 'warning');
       setSnapshotBusy(false);
@@ -1583,6 +1641,8 @@ function AppInner() {
     const sub = AppState.addEventListener('change', (state) => {
       appStateRef.current = state;
       if (state === 'active') {
+        void flushPushRemovals();
+        if (session && pushHabilitadoRef.current) void registerForPush(session.apiUrl, session.token);
         // Revalida permissões concedidas/revogadas pela Central sem exigir logout.
         if (session) setPermissionsRefreshNonce((current) => current + 1);
         if (session && !refreshing) void loadAll(true);
@@ -1704,6 +1764,9 @@ function AppInner() {
             onBack={() => leaveLive()}
             onSendPtz={sendPtz}
             onToggleRecording={toggleRecording}
+            systemRecordingActive={gravacaoSistemaAtiva}
+            systemRecordingBusy={gravacaoSistemaOcupada || !gravacaoSistemaConhecida}
+            onToggleSystemRecording={session.user.role !== 'VIEWER' && live.canRecord === true && live.recordingMode !== 'continuous' ? c => { void toggleGravacaoSistema(c); } : undefined}
             audioLigado={audioAoVivo}
             onAudioLigadoChange={definirAudioAoVivo}
             onSnapshot={takeSnapshot}
@@ -1757,8 +1820,8 @@ function AppInner() {
           audioLigado={audioAoVivo}
           onAudioLigadoChange={definirAudioAoVivo}
           gravacaoSistemaAtiva={gravacaoSistemaAtiva}
-          gravacaoSistemaOcupada={gravacaoSistemaOcupada}
-          onToggleGravacaoSistema={(c) => { void toggleGravacaoSistema(c); }}
+          gravacaoSistemaOcupada={gravacaoSistemaOcupada || !gravacaoSistemaConhecida}
+          onToggleGravacaoSistema={session.user.role !== 'VIEWER' && live.canRecord === true && live.recordingMode !== 'continuous' ? (c) => { void toggleGravacaoSistema(c); } : undefined}
           onSnapshot={takeSnapshot}
           onOpenPlayback={openPlayback}
           onClosePlayback={closePlayback}
@@ -1940,6 +2003,7 @@ function AppInner() {
               canManage={canManageAlarms}
               onAck={(alarm) => { void ackAlarm(alarm); }}
               onResolve={(alarm) => { void resolveAlarm(alarm); }}
+              onOpenOccurrence={capabilities.playback ? alarm => { void openAlarmRecording(alarm); } : undefined}
               erro={alarmesErro}
             />
           ) : (
@@ -1952,12 +2016,22 @@ function AppInner() {
             erro={alarmesErro}
             onAck={ackAlarm}
             onResolve={resolveAlarm}
+            onOpenOccurrence={capabilities.playback ? alarm => { void openAlarmRecording(alarm); } : undefined}
             onOpenCamera={(cameraId) => {
               const camera = cameras.find((c) => c.id === cameraId);
               if (camera) openLive(camera);
             }}
           />
           )
+        )}
+
+        {tab === 'alarmes' && alarmsTotal > 0 && (
+          <View style={{ padding: 10, alignItems: 'center' }}>
+            <Text style={{ color: theme.text }}>Carregados {alarms.length} de {alarmsTotal} eventos</Text>
+            {alarms.length < alarmsTotal && <Pressable disabled={alarmesCarregando} accessibilityRole="button" onPress={() => { void loadMoreAlarms(); }} style={{ padding: 10 }}>
+              <Text style={{ color: theme.accent }}>{alarmesCarregando ? 'Carregando…' : 'Carregar mais eventos'}</Text>
+            </Pressable>}
+          </View>
         )}
 
         {tab === 'ajustes' && (
@@ -1971,7 +2045,7 @@ function AppInner() {
               biometricEnabled={biometricEnabled}
               biometricLabel={biometricLabel}
               onBiometricChange={(enabled) => { void changeBiometricPreference(enabled); }}
-              onLogout={() => { void logout(); }}
+              onLogout={confirmLogout}
               onCamerasChanged={() => { void loadAll(true); }}
               facilityName={branding.facilityName}
               pushEnabled={pushHabilitado}
@@ -1988,7 +2062,7 @@ function AppInner() {
             biometricEnabled={biometricEnabled}
             biometricLabel={biometricLabel}
             onBiometricChange={(enabled) => { void changeBiometricPreference(enabled); }}
-            onLogout={() => { void logout(); }}
+            onLogout={confirmLogout}
             onCamerasChanged={() => { void loadAll(true); }}
             pushEnabled={pushHabilitado}
             pushSupported={pushSuportado}

@@ -157,7 +157,7 @@ test('barra ao vivo deixa PTZ fechado, acessível e mantém as ações na ordem 
   const redesign = readFileSync('src/screens/redesign/LiveScreenRedesign.tsx', 'utf8');
   assert(redesign.includes("const [ptzOpen, setPtzOpen] = useState(false)"), 'PTZ não pode iniciar pressionado');
   const row = redesign.slice(redesign.indexOf('/* Barra de ações */'), redesign.indexOf('/* Feedback do PTZ */'));
-  const labels = ['Ouvir', 'Capturar', 'Gravar', 'Notificar', 'HD'];
+  const labels = ['Ouvir', 'Capturar', 'Clipe no celular', 'Sistema: até 10 min', 'Notificar', 'HD'];
   let previous = -1;
   for (const label of labels) {
     const current = row.indexOf(label);

@@ -5,6 +5,12 @@ import type { Session } from '../types';
 import { normalizeApiUrl } from '../utils/server-url';
 
 const BIOMETRIC_LOGIN_KEY = `${SESSION_KEY}.biometric`;
+let sessionWrites: Promise<unknown> = Promise.resolve();
+function serializeSessionWrite(action: () => Promise<void>) {
+  const next = sessionWrites.catch(() => undefined).then(action);
+  sessionWrites = next;
+  return next;
+}
 const SECURE_OPTIONS: SecureStore.SecureStoreOptions = {
   // Tokens não devem migrar para outro aparelho via backup/restauração do
   // sistema. Também ficam indisponíveis enquanto o dispositivo está bloqueado.
@@ -43,13 +49,17 @@ async function migrateStoredSession(raw: string): Promise<string> {
 }
 
 export async function saveStoredSession(session: Session) {
+  return serializeSessionWrite(async () => {
   await SecureStore.setItemAsync(SESSION_KEY, JSON.stringify(session), SECURE_OPTIONS);
   await AsyncStorage.removeItem(SESSION_KEY);
+  });
 }
 
 export async function clearStoredSession() {
+  return serializeSessionWrite(async () => {
   await SecureStore.deleteItemAsync(SESSION_KEY);
   await AsyncStorage.removeItem(SESSION_KEY);
+  });
 }
 
 export async function isBiometricLoginEnabled() {

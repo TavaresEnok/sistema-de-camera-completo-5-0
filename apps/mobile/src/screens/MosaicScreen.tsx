@@ -1,6 +1,6 @@
 /** MosaicScreen — grade de câmeras organizada por GRUPOS (criáveis pelo usuário). */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { CameraTile } from '../components/CameraTile';
 import { GroupEditorSheet } from '../components/GroupEditorSheet';
 import { Icon } from '../components/Icon';
@@ -57,12 +57,19 @@ export function MosaicScreen({
   const openEdit = () => { if (activeGroup) { setEditingGroup(activeGroup); setEditorOpen(true); } };
 
   return (
-    <ScrollView
+    <View style={{ flex: 1 }}>
+    <FlatList
+      data={list}
+      keyExtractor={camera => camera.id}
+      numColumns={2}
+      initialNumToRender={8}
+      windowSize={7}
+      removeClippedSubviews={false}
       style={{ flex: 1 }}
       contentContainerStyle={styles.content}
       showsVerticalScrollIndicator={false}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.textSub} />}
-    >
+      ListHeaderComponent={<>
       <View style={styles.header}>
         <Text style={[styles.title, { color: theme.bgText }]}>Mosaico</Text>
         <View style={styles.headerActions}>
@@ -118,15 +125,15 @@ export function MosaicScreen({
         </View>
       ) : null}
 
-      {refreshing && cameras.length === 0 ? (
+      </>}
+      ListEmptyComponent={refreshing && cameras.length === 0 ? (
         <CameraGridSkeleton />
       ) : list.length === 0 ? (
         <Text style={[styles.emptyHint, { color: theme.textMuted }]}>
           {selected === 'all' ? 'Nenhuma câmera disponível.' : 'Este grupo está vazio. Toque em "Editar grupo" para adicionar câmeras.'}
         </Text>
-      ) : (
-        <View style={styles.grid}>
-          {list.map((cam) => (
+      ) : null}
+      renderItem={({ item: cam }) => (
             <View key={cam.id} style={styles.gridItem}>
               {canLiveView && liveMode && liveCameras.some((camera) => camera.id === cam.id) ? (
                 <MosaicLiveTile
@@ -149,16 +156,16 @@ export function MosaicScreen({
                 />
               )}
             </View>
-          ))}
-        </View>
       )}
-
+      ListFooterComponent={<>
       {liveMode && list.length > 4 ? (
         <Text style={[styles.liveLimit, { color: theme.textMuted }]}>Até 4 câmeras online são reproduzidas ao mesmo tempo para preservar bateria e dados.</Text>
       ) : null}
 
-      <GroupEditorSheet visible={editorOpen} cameras={cameras} group={editingGroup} onClose={() => setEditorOpen(false)} />
-    </ScrollView>
+      </>}
+    />
+    <GroupEditorSheet visible={editorOpen} cameras={cameras} group={editingGroup} onClose={() => setEditorOpen(false)} />
+    </View>
   );
 }
 

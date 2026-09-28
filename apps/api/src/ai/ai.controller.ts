@@ -142,6 +142,7 @@ export class AiController {
   @Roles(UserRole.VIEWER)
   @Throttle({ default: { limit: 600, ttl: 60000 } })
   @Get('detections/latest-batch')
+  @RequirePermission('liveView')
   async latestDetectionsBatch(
     @CurrentUser() user: AuthUser,
     @Query('cameraIds') cameraIds?: string,
@@ -166,6 +167,7 @@ export class AiController {
   @Roles(UserRole.VIEWER)
   @Throttle({ default: { limit: 1200, ttl: 60000 } })
   @Get('detections/latest/:cameraId')
+  @RequirePermission('liveView')
   async latestDetections(
     @CurrentUser() user: AuthUser,
     @Param('cameraId') cameraId: string,
@@ -190,6 +192,7 @@ export class AiController {
   @Roles(UserRole.VIEWER)
   @Throttle({ default: { limit: 2400, ttl: 60000 } })
   @Post('live-view/start/:cameraId')
+  @RequirePermission('liveView')
   async startLiveView(
     @CurrentUser() user: AuthUser,
     @Param('cameraId') cameraId: string,
@@ -210,6 +213,7 @@ export class AiController {
   @Roles(UserRole.VIEWER)
   @Throttle({ default: { limit: 3600, ttl: 60000 } })
   @Post('live-view/heartbeat/:cameraId')
+  @RequirePermission('liveView')
   async heartbeatLiveView(
     @CurrentUser() user: AuthUser,
     @Param('cameraId') cameraId: string,

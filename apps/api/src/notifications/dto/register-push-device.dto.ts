@@ -19,6 +19,6 @@ export class RegisterPushDeviceDto {
 
 export class UnregisterPushDeviceDto {
   @IsString()
-  @MaxLength(255)
+  @MaxLength(4096)
   token!: string;
 }

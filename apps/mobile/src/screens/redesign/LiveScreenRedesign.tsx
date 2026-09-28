@@ -45,6 +45,9 @@ interface Props {
   activePlayback: ActivePlayback | null;
   recordingActive: boolean;
   recordingBusy: boolean;
+  systemRecordingActive?: boolean;
+  systemRecordingBusy?: boolean;
+  onToggleSystemRecording?: (camera: Camera) => void;
   snapshotBusy: boolean;
   ptzActive: Direction | null;
   ptzFeedback: string | null;
@@ -351,7 +354,8 @@ export function LiveScreenRedesign(props: Props) {
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.actionsRow} contentContainerStyle={s.actions}>
             <ActionBtn s={s} theme={theme} icon="volume" label={audioAvailable === false ? 'Sem áudio' : muted ? 'Ouvir' : 'Som ligado'} active={!muted && audioAvailable !== false} disabled={audioAvailable === false} onPress={() => { const querSom = muted; setMuted(!querSom); onAudioLigadoChange?.(querSom); }} />
             <ActionBtn s={s} theme={theme} icon="camera" label={props.snapshotBusy ? 'Capturando…' : 'Capturar'} disabled={props.snapshotBusy} onPress={() => onSnapshot(camera)} />
-            <ActionBtn s={s} theme={theme} icon={recordingActive ? 'pause' : 'aperture'} label={props.recordingBusy ? (recordingActive ? 'Salvando…' : 'Preparando…') : recordingActive ? 'Parar' : 'Gravar'} active={recordingActive} danger={recordingActive} disabled={props.recordingBusy} onPress={() => onToggleRecording(camera)} />
+            <ActionBtn s={s} theme={theme} icon={recordingActive ? 'pause' : 'aperture'} label={props.recordingBusy ? (recordingActive ? 'Salvando…' : 'Preparando…') : recordingActive ? 'Parar clipe' : 'Clipe no celular'} active={recordingActive} danger={recordingActive} disabled={props.recordingBusy} onPress={() => onToggleRecording(camera)} />
+            {props.onToggleSystemRecording && <ActionBtn s={s} theme={theme} icon="server" label={props.systemRecordingActive ? 'Parar manual' : 'Sistema: até 10 min'} active={props.systemRecordingActive} disabled={props.systemRecordingBusy} onPress={() => props.onToggleSystemRecording?.(camera)} />}
             <ActionBtn s={s} theme={theme} icon="bell" label={notificationsMuted ? 'Silenciada' : 'Notificar'} active={!notificationsMuted} onPress={() => onToggleNotifications(camera)} />
             <ActionBtn s={s} theme={theme} icon="maximize" label={hdMode ? 'Economia' : 'HD+'} active={hdMode} onPress={toggleHd} />
             {canPtz ? (

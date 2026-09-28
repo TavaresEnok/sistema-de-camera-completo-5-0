@@ -1,3 +1,4 @@
+import { request } from './api';
 // Cache for stream URLs to prevent duplicate requests during grid view load
 const streamUrlsCache = new Map<string, { cameraId: string; data: unknown; expiresAt: number }>();
 const inFlightRequests = new Map<string, { promise: Promise<unknown>; controller: AbortController; id: symbol }>();
@@ -63,24 +64,10 @@ export async function requestCachedStreamUrls<T>(
 
   const run = (async () => {
     try {
-      const response = await fetch(`${apiUrl}/camera-stream/${encodeURIComponent(cameraId)}/urls${query}`, {
+      const data = await request<T>(apiUrl, `/camera-stream/${encodeURIComponent(cameraId)}/urls${query}`, token, {
         ...init,
         signal: controller.signal,
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          ...(init?.headers ?? {}),
-        },
       });
-      const text = await response.text();
-      let data: any = null;
-      if (text) {
-        try { data = JSON.parse(text); }
-        catch { data = { message: text.slice(0, 300) }; }
-      }
-      if (!response.ok) {
-        throw new Error(data?.message ?? `HTTP ${response.status}`);
-      }
 
       // Se clearStreamUrlsCache abortou esta sessão, não repopula o cache.
       if (!controller.signal.aborted) {

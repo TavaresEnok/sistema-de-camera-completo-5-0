@@ -54,6 +54,9 @@ function playerHtml(whepUrl: string, muted: boolean, contentFit: 'contain' | 'co
   let sessionUrl = null;
   let token = null;
   let closed = false;
+  const controller = new AbortController();
+  let statsTimer = null;
+  let connectionTimer = null;
   let liveSent = false;
   let lastFrames = 0;
   let lastProgressAt = Date.now();
@@ -104,10 +107,16 @@ function playerHtml(whepUrl: string, muted: boolean, contentFit: 'contain' | 'co
   async function closeSession() {
     if (closed) return;
     closed = true;
-    try {
-      if (sessionUrl) await fetch(sessionUrl, { method: 'DELETE', keepalive: true, headers: token ? { Authorization: 'Bearer ' + token } : {} });
-    } catch (_) {}
+    controller.abort();
+    clearInterval(statsTimer);
+    clearTimeout(connectionTimer);
     try { pc?.close(); } catch (_) {}
+    video.srcObject = null;
+    const cleanupController = new AbortController();
+    const timeout = setTimeout(() => cleanupController.abort(), 3000);
+    try {
+      if (sessionUrl) await fetch(sessionUrl, { method: 'DELETE', signal: cleanupController.signal, keepalive: true, headers: token ? { Authorization: 'Bearer ' + token } : {} });
+    } catch (_) {} finally { clearTimeout(timeout); }
   }
   async function start() {
     try {
@@ -120,9 +129,10 @@ function playerHtml(whepUrl: string, muted: boolean, contentFit: 'contain' | 'co
       const headers = token ? { Authorization: 'Bearer ' + token } : {};
       let iceServers = [];
       try {
-        const options = await fetch(whepUrl, { method: 'OPTIONS', headers });
+        const options = await fetch(whepUrl, { method: 'OPTIONS', headers, signal: controller.signal });
         if (options.ok) iceServers = parseIceServers(options.headers.get('link'));
       } catch (_) {}
+      if (closed) return;
 
       pc = new RTCPeerConnection({ iceServers, bundlePolicy: 'max-bundle' });
       pc.addTransceiver('video', { direction: 'recvonly' });
@@ -140,10 +150,14 @@ function playerHtml(whepUrl: string, muted: boolean, contentFit: 'contain' | 'co
       };
 
       const offer = await pc.createOffer();
+      if (closed) return;
       await pc.setLocalDescription(offer);
+      if (closed) return;
       await waitIce();
+      if (closed) return;
       const response = await fetch(whepUrl, {
         method: 'POST',
+        signal: controller.signal,
         headers: { 'Content-Type': 'application/sdp', ...headers },
         body: pc.localDescription?.sdp || offer.sdp,
       });
@@ -156,12 +170,17 @@ function playerHtml(whepUrl: string, muted: boolean, contentFit: 'contain' | 'co
         if (token && !resolved.searchParams.has('token')) resolved.searchParams.set('token', token);
         sessionUrl = resolved.toString();
       }
-      await pc.setRemoteDescription({ type: 'answer', sdp: await response.text() });
+      const answer = await response.text();
+      if (closed) return;
+      await pc.setRemoteDescription({ type: 'answer', sdp: answer });
+      if (closed) return;
+      clearTimeout(connectionTimer);
 
-      setInterval(async () => {
+      statsTimer = setInterval(async () => {
         if (closed || !pc) return;
         try {
           const stats = await pc.getStats();
+          if (closed) return;
           let frames = 0;
           stats.forEach((report) => {
             if (report.type === 'inbound-rtp' && report.kind === 'video' && !report.isRemote) frames += Number(report.framesDecoded || 0);
@@ -177,10 +196,12 @@ function playerHtml(whepUrl: string, muted: boolean, contentFit: 'contain' | 'co
       }, 2000);
     } catch (error) {
       fail('Não foi possível abrir o vídeo nesta qualidade. Tente novamente ou use a opção de economia de dados.');
+      void closeSession();
     }
   }
   window.addEventListener('pagehide', closeSession);
   window.addEventListener('beforeunload', closeSession);
+  connectionTimer = setTimeout(() => { fail('A conexão demorou demais. Tente novamente.'); void closeSession(); }, 15000);
   start();
 })();
 </script></body></html>`;

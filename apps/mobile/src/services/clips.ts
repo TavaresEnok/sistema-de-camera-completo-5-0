@@ -89,19 +89,17 @@ export async function createClipThumbnail(uri: string, clipId: string): Promise<
 
 async function readClips(scope: string): Promise<SavedClip[]> {
   const key = keyFor(scope);
-  let raw = await AsyncStorage.getItem(key);
-  if (!raw) {
-    raw = await AsyncStorage.getItem(LEGACY_KEY);
-    if (raw) {
-      await AsyncStorage.setItem(key, raw);
-      await AsyncStorage.removeItem(LEGACY_KEY);
-    }
-  }
+  // Legado sem proprietário permanece intacto; nunca atribuí-lo à conta atual.
+  const raw = await AsyncStorage.getItem(key);
   const arr = raw ? (JSON.parse(raw) as SavedClip[]) : [];
   return Array.isArray(arr) ? arr : [];
 }
 
 export async function listClips(scope: string): Promise<SavedClip[]> {
+  return serialized(keyFor(scope), () => repairClipIndex(scope));
+}
+
+async function repairClipIndex(scope: string): Promise<SavedClip[]> {
   try {
     const arr = await readClips(scope);
     const checks = await Promise.all(arr.map(async (clip) => ({

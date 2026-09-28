@@ -489,8 +489,15 @@ export class FfmpegMjpegService {
     return refresh;
   }
 
-  async getLivePosterFrame(cameraId: string, preferLive = false): Promise<PosterCacheEntry> {
+  async getLivePosterFrame(cameraId: string, preferLive = false, captureNow = false): Promise<PosterCacheEntry> {
     const now = Date.now();
+    if (captureNow) {
+      const captured = await this.refreshLivePoster(cameraId);
+      if (captured.source !== 'live' || captured.generatedAt < now) {
+        throw new ServiceUnavailableException('Não foi possível capturar uma imagem atual. Tente novamente.');
+      }
+      return captured;
+    }
     let cached = this.posterCache.get(cameraId);
     if (cached?.source === 'live' && now - cached.generatedAt < this.posterCacheTtlMs) {
       return cached;
