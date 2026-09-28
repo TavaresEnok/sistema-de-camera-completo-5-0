@@ -11,9 +11,11 @@ export function isManagedLivePublisher(path: any): boolean {
  */
 export function withTranscodeAdmission(command: string, maximum: number): string {
   const limit = Math.max(1, Math.min(2000, Math.floor(maximum) || 1));
+  // MediaMTX expands $variables BEFORE invoking sh, including local shell
+  // variables. Emit literal slot names; no shell-local expansion can be lost.
+  const slots = Array.from({ length: limit }, (_, slot) =>
+    `{ exec 9>"/tmp/s2cam-live-slot-${slot}.lock"; flock -n 9; }`).join(' || ');
   return `command -v flock >/dev/null 2>&1 || exit 75; `
-    + `slot=0; while [ "$slot" -lt ${limit} ]; do `
-    + `exec 9>"/tmp/s2cam-live-slot-$slot.lock"; `
-    + `if flock -n 9; then exec ${command}; fi; slot=$((slot + 1)); done; `
+    + `if ${slots}; then exec ${command}; fi; `
     + `echo 'Live conversion capacity reached' >&2; exit 75`;
 }

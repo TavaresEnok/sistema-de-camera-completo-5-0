@@ -24,6 +24,8 @@ test('runtime counts delivery RTSP publishers but not ingest or passthrough', ()
 });
 
 test('kernel admission rejects concurrent startup and releases on process exit', async () => {
+  assert.doesNotMatch(withTranscodeAdmission('true', 10), /\$/,
+    'MediaMTX substitutes dollar variables before shell evaluation');
   const first = spawn('sh', ['-c', withTranscodeAdmission("sh -c 'echo ready; sleep 1'", 1)]);
   await new Promise<void>((resolve, reject) => {
     first.stdout.once('data', () => resolve());

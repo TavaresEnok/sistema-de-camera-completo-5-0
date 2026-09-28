@@ -82,3 +82,11 @@ API/web da Vibe foram então substituídos com `compose up -d --no-deps api web`
 A sessão da sala permaneceu no comando antigo (`libx264`, sem admissão por flock), pois já possuía leitor. Não foi expulsa. Solicitado fechar a visualização por cerca de 30 segundos para reconciliar a configuração e medir a nova sessão. Isso significa que **serviço atualizado ainda não comprova correção ativa naquele processo antigo**.
 
 Management: diretório encontrado `/opt/ajustcam-management`, não é raiz Git; não possui `sudo`. Acesso administrativo por `su` funcionou. Central em execução identificada como `ajustcam-central:cc32efa`. Nenhuma troca da Central ou geração de APK realizada nesta etapa.
+
+### Incidente na validação e recuperação (substitui o estado anterior da Gateway)
+
+O estado imediatamente após SIGHUP não foi suficiente para validar a Gateway: posteriormente o SRS estava **exited**, e as entradas da Vibe fecharam por timeout aproximadamente às 15:44 UTC. A configuração anterior foi restaurada do backup e o SRS iniciado novamente. As publicações voltaram (primeira amostra: 11 RTMP; sala com vídeo H.264 e um leitor). A causa exata da saída do SRS ainda não foi estabelecida; não atribuir somente à regra PLAY sem reprodução. O bloqueio PLAY **não está mais aplicado na Gateway**, embora o template protegido continue no Git, pendente de validação completa de forward/reload antes de reaplicar.
+
+Um segundo defeito foi encontrado na admissão: variáveis locais de shell são expandidas pelo MediaMTX antes da execução, causando `sh: out of range`. O limitador foi refeito com slots literais, sem `$slot`, e o caminho afetado foi corrigido pela API. Teste de regressão exige ausência de expansão de variáveis e testa exclusão concorrente/liberação. Sete testes do pipeline passaram; nova imagem da API compilada para implantação.
+
+Management: checkout real `/opt/ajustcam-management/repo` avançado por fast-forward até `5e7c629`, usando root para referências Git que pertenciam a root. Arquivos locais de cliente Vibe e ambiente preservados. Agente de build ativo; último APK Vibe consultado é de 21/09, commit `b3aed31`. Atualizar o checkout não atualiza esse APK publicado.
