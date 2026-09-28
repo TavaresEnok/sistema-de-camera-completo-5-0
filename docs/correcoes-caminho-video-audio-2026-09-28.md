@@ -139,3 +139,18 @@ Esta seção atualiza a cobertura de V03/V04, V07, V08/V09/V10, V11 e V17. Não 
 ### Limites que ainda exigem evidência externa
 
 O APK Vibe versão 39 já publicado contém as correções do receptor; esta etapa altera a API, não o aplicativo. O teste no aparelho do usuário e uma matriz real Android/iOS/navegadores/HLS/HEVC/Opus/TURN continuam necessários. Não há resultado desses aparelhos nesta seção. Compartilhar a origem reduz sessões duplicadas, mas não elimina a decodificação legítima na IA nem limita toda a CPU do servidor. Timestamp avançando prova transmissão, não prova que a imagem visual não esteja congelada dentro da câmera. Migração de entrega preserva leitores ativos; hooks e limites novos só valem quando o caminho antigo drenar/reconciliar. A causa histórica da saída anterior do SRS continua sem evidência causal conclusiva.
+
+### Revisão final e ensaios adicionais — código `78a4e8c`
+
+A revisão estendeu a proteção de leitores aos publishers que já usam uma geração bruta: comparação do caminho físico antigo não bastava nesse caso. Ajustar a política mantém a entrega antiga até drenar; mudar efetivamente a origem continua sendo uma alteração distinta. O endpoint de início de clipe também rejeita câmera desativada antes de resolver/criar qualquer fonte e devolve a vaga concorrente na falha.
+
+Bateria final: **1.667 testes, 1.665 aprovações, zero falhas, dois testes de integração pulados por padrão**. Esses dois ensaios foram executados separadamente e ambos passaram:
+
+1. H.264/AAC e HEVC/AAC: três leitores compartilham uma única conexão com a origem; vídeo e áudio preservados.
+2. Hook real `runOnDemand` gerado pela API, executado na imagem MediaMTX examinada: vídeo H.264 copiado, AAC convertido em Opus, **60 pacotes de vídeo em cerca de três segundos**, uma conexão com a origem, sem credencial administrativa no comando. Ao sair o leitor, o publisher foi liberado dentro do prazo configurado. Não foi somente uma simulação da string do comando.
+
+Quatro amostras internas curtas na Vibe também confirmaram `video=progressing` e `audio=progressing`: uma fonte H.264/Opus e três H.264/MPEG-4 Audio. Não houve decodificação nessas sondas nem troca da fonte em produção.
+
+Rastreamento V17: access logs do nginx mostram pedidos `/poster` do cadastro desativado `d09d564a-52c4-4ab1-8af7-6f341ad5acdf`, classificados pelo User-Agent como navegador/WebView, inclusive respostas antigas 200 vindas de cache. Isso confirma um consumidor externo com referência antiga, não um agendamento de gravação dessa câmera. Não identifica um aparelho específico. Tokens e parâmetros secretos foram omitidos da coleta. A API nova rejeita esses pedidos antes do cache/captura; nenhum dado histórico foi apagado.
+
+O usuário informou que ainda não fez o ensaio no APK; o resultado do aparelho permanece pendente. A primeira tentativa do gate de instalação usou por engano SHA abreviado e foi corretamente rejeitada pelo instalador. O gate de `8e62fa6` foi interrompido e seu ambiente removido quando surgiram os dois ajustes finais; não conta como aprovação. O teste de instalação limpa foi reiniciado com o SHA completo `78a4e8c32d6d1fce947c91c1f174d9b2c7af858e`.
