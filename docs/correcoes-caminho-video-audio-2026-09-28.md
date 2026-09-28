@@ -2,7 +2,9 @@
 
 Referência: `auditoria-caminho-video-audio-2026-09-28.md`.
 
-## Implementado no código (não implantado)
+## Implementado no código
+
+O estado de implantação mais recente está na seção final. A tabela abaixo registra a cobertura técnica dos achados, incluindo trabalhos ainda pendentes.
 
 - Áudio preserva vídeo H.264 da fonte selecionada, inclusive RTMP 1080p. HEVC continua convertido na grade de compatibilidade; original com áudio preserva HEVC. Isso pode consumir mais banda que a antiga redução a 360p, mas não mais que o mesmo H.264 repassado sem áudio, exceto pela trilha de som.
 - Grade e variante com áudio seguem a mesma política de fonte e de proporção da imagem.
@@ -90,3 +92,14 @@ O estado imediatamente após SIGHUP não foi suficiente para validar a Gateway: 
 Um segundo defeito foi encontrado na admissão: variáveis locais de shell são expandidas pelo MediaMTX antes da execução, causando `sh: out of range`. O limitador foi refeito com slots literais, sem `$slot`, e o caminho afetado foi corrigido pela API. Teste de regressão exige ausência de expansão de variáveis e testa exclusão concorrente/liberação. Sete testes do pipeline passaram; nova imagem da API compilada para implantação.
 
 Management: checkout real `/opt/ajustcam-management/repo` avançado por fast-forward até `5e7c629`, usando root para referências Git que pertenciam a root. Arquivos locais de cliente Vibe e ambiente preservados. Agente de build ativo; último APK Vibe consultado é de 21/09, commit `b3aed31`. Atualizar o checkout não atualiza esse APK publicado.
+
+### Implantação e APK confirmados
+
+- Vibe: API recompilada com a correção de admissão `36b94824997b4b98671c97eba1802fdb1d36569a`; API e Web saudáveis. `DRAC_VERSION` corrigida para o mesmo commit e API recriada para reportá-lo. Verificador operacional passou, com avisos de credenciais administrativas iniciais inválidas e rotas autenticadas não testadas. A variante de áudio da sala foi sondada com H.264 1920×1080 e Opus; diagnóstico indica cópia de vídeo e conversão somente do áudio. A amostra não comprova estabilidade contínua de FPS no navegador.
+- IBTelecom: checkout, imagens API/Web e versão reportada atualizados ao mesmo commit. Verificação de serviços, exposição, banco, rotas públicas e watchdog passou; login/rotas autenticadas permanecem sem validação por falta das credenciais atuais. Imagens exatas anteriores preservadas como `drac-video-rollback-api:20260928` e `drac-video-rollback-web:20260928`. Serviços de banco e vídeo não foram recriados nesta implantação.
+- Instalação limpa: gate executado no commit publicado `36b9482`, concluído com código 0. Instalador terminou, serviços saudáveis, login administrativo e cinco rotas autenticadas aprovados. Readiness: 53 checks, seis atenções e zero bloqueios. Verificador final deixou aviso de Git não acessível no contexto root do teste; a versão fixada foi confirmada pelo instalador. Ambiente e volumes isolados do gate removidos ao término.
+- Central: commit `36b9482` promovido por sua API administrativa após os gates reais de instalação limpa e matriz. SHA-256 do instalador: `391da0a21846b0a0f0ed882c0f5ff1cd9cc2c6b80f700f2e7c39b716a9361f40`. Management recebeu fast-forward; arquivos locais preservados. Remoto `legacy-origin` removido dos checkouts Vibe, IBTelecom e Management.
+- APK Vibe: job `1790612859295-vibe` concluído em 28/09/2026 às 16:31:29 UTC, pela Central e agente oficial, usando o commit aprovado. Pacote `com.s2cam.vibe`, versão exibida `2.0.1`, versionCode **39** (anterior: 38); assinatura verificada e certificado SHA-256 igual ao APK anterior. APK SHA-256: `e61090354a3ae46069d230b79b4c771626d107f426df0625cb2a9fec9f5c69df`. AAB SHA-256: `255f592793d23647785444d8eb824a0e72c58b546bdf585d9986dcb5619b9029`. Metadados indicam `sourceDirty:false`. APK e AAB anteriores copiados na Management com sufixo `.before-video-audio-20260928`; hash do backup APK conferido. Publicação: https://s2cam.com.br/apk/drac-vibe.apk . Instalação e comportamento no aparelho ainda precisam de ensaio.
+- Gateway: permanece operacional com a configuração restaurada, **sem bloqueio PLAY**. Nova reprodução isolada na versão SRS 5.0.213 aceitou as sete regras e permaneceu ativa após HUP, mas sem publishers/forward ativos. Esse resultado não explica a saída anterior em produção e não autoriza declarar V14 resolvido. Containers temporários e configuração de teste foram removidos.
+
+Continuam pendentes os trabalhos técnicos explicitados na tabela, especialmente orçamento ponderado, compartilhamento RTSP completo, monitoramento por trilha, sondagem compartilhada de áudio RTSP e medições A/B nos clientes. Implantação e build não substituem essas validações.
