@@ -7,6 +7,7 @@
 //
 // Fica só aqui e é exportado; o camera-stream já importa este módulo.
 import { PendingIngestRegistry } from './pending-ingest.registry';
+import { SharedRtspSourceService } from './shared-rtsp-source.service';
 import { forwardRef, Module } from '@nestjs/common';
 import { AccessControlModule } from '../access-control/access-control.module';
 import { AlarmsModule } from '../alarms/alarms.module';
@@ -25,7 +26,7 @@ import { RtmpDiscoveryController } from './rtmp-discovery.controller';
 @Module({
   imports: [AuditModule, AccessControlModule, AlarmsModule, forwardRef(() => RecordingsModule)],
   controllers: [RtmpDiscoveryController, CamerasController],
-  providers: [RtmpDiscoveryService, PendingIngestRegistry, RtmpIngestSourceService, CamerasService, CryptoService, PortCheckerService, OnvifEventsService, IntelbrasEventsService],
-  exports: [RtmpDiscoveryService, PendingIngestRegistry, RtmpIngestSourceService, CamerasService, CryptoService, PortCheckerService, OnvifEventsService, IntelbrasEventsService],
+  providers: [SharedRtspSourceService, RtmpDiscoveryService, PendingIngestRegistry, RtmpIngestSourceService, CamerasService, CryptoService, PortCheckerService, OnvifEventsService, IntelbrasEventsService],
+  exports: [SharedRtspSourceService, RtmpDiscoveryService, PendingIngestRegistry, RtmpIngestSourceService, CamerasService, CryptoService, PortCheckerService, OnvifEventsService, IntelbrasEventsService],
 })
 export class CamerasModule {}

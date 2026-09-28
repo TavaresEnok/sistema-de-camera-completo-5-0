@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Optional, Param, Post, Query, Req, Res, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, NotFoundException, Optional, Param, Post, Query, Req, Res, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { RtmpDiscoveryService } from '../cameras/rtmp-discovery.service';
 import { ConfigService } from '@nestjs/config';
 import { SkipThrottle } from '@nestjs/throttler';
@@ -59,7 +59,7 @@ type SrsPublishHookRequest = {
 export function isLoopbackMediaWorkerAuthorized(body: MediaMtxAuthRequest) {
   const action = String(body?.action ?? '');
   const path = String(body?.path ?? '');
-  const sourcePath = /^cam_[0-9a-f]{32}(?:_grid|_grid_audio|_grid_hevc|_orig|_orig_audio)?_source$/i.test(path);
+  const sourcePath = /^cam_[0-9a-f]{32}(?:_grid|_grid_audio|_grid_hevc|_orig|_orig_audio|_raw_[a-f0-9]{24})?_source$/i.test(path);
   const outputPath = /^cam_[0-9a-f]{32}(?:_grid|_grid_audio|_grid_hevc|_orig|_orig_audio)?$/i.test(path);
   // MediaMTX 1.15 pode enviar somente o IP ou IP:porta no callback HTTP,
   // dependendo do transporte RTSP. O publisher `runOnDemand` disca para o
@@ -713,6 +713,8 @@ export class CameraStreamController {
     for (const cameraId of ids) {
       try {
         await this.accessControlService.assertCanViewCamera(user, cameraId);
+        const camera = await this.camerasService.findOneInternal(cameraId);
+        if (!camera || camera.enabled === false) continue;
         const token = await this.authService.createStreamToken(user.id, cameraId);
         items.push({
           cameraId,
@@ -791,6 +793,8 @@ export class CameraStreamController {
     }
     const tokenUser = await this.authService.me(payload.sub);
     await this.accessControlService.assertCanViewCamera(tokenUser, cameraId);
+    const camera = await this.camerasService.findOneInternal(cameraId);
+    if (!camera || camera.enabled === false) throw new NotFoundException('Câmera indisponível.');
 
     // A primeira chamada pode responder instantaneamente com a última gravação.
     // `fresh=1` aguarda a captura live já iniciada por ela, sem duplicar FFmpeg.

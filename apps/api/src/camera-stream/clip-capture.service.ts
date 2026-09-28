@@ -1,10 +1,11 @@
-import { BadRequestException, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException, Optional, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { execFile, spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { CamerasService } from '../cameras/cameras.service';
+import { SharedRtspSourceService } from '../cameras/shared-rtsp-source.service';
 import { CryptoService } from '../common/crypto/crypto.service';
 import { sanitizeSensitiveText } from '../common/security/sensitive-text.helper';
 import { buildRtspUrl, resolveRecordingRtspProfile } from '../cameras/helpers/rtsp-url.helper';
@@ -53,6 +54,7 @@ export class ClipCaptureService {
     private readonly camerasService: CamerasService,
     private readonly cryptoService: CryptoService,
     private readonly rtmpIngestSource: RtmpIngestSourceService,
+    @Optional() private readonly sharedRtspSource?: SharedRtspSourceService,
   ) {
     this.dir = path.join(this.configService.get<string>('recordingsRoot') ?? './storage/recordings', '.mobile-clips');
     fs.mkdirSync(this.dir, { recursive: true, mode: 0o700 });
@@ -100,8 +102,7 @@ export class ClipCaptureService {
 
     const password = this.cryptoService.decrypt(camera.passwordEncrypted);
     const profile = resolveRecordingRtspProfile(camera);
-    return {
-      url: buildRtspUrl({
+    const directUrl = buildRtspUrl({
         username: camera.username,
         password,
         ip: camera.ip,
@@ -109,11 +110,12 @@ export class ClipCaptureService {
         rtspPath: camera.rtspPath ?? undefined,
         channel: profile.channel,
         subtype: profile.subtype,
-      }),
-      transport: camera.preferredRtspTransport
+      });
+    const transport = camera.preferredRtspTransport
         ?? this.configService.get<string>('ffmpegRtspTransport')
-        ?? 'tcp',
-    };
+        ?? 'tcp';
+    const source = this.sharedRtspSource ? await this.sharedRtspSource.resolve(camera.id, directUrl, transport) : null;
+    return { url: source?.url ?? directUrl, transport: source?.shared ? 'tcp' : transport };
   }
 
   async start(cameraId: string, userId: string): Promise<{ clipId: string }> {

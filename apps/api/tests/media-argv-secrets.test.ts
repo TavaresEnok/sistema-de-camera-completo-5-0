@@ -3,6 +3,13 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { isLoopbackMediaWorkerAuthorized } from '../src/camera-stream/camera-stream.controller';
 
+test('versioned raw paths are readable only by local workers, never external clients', () => {
+  const path = `cam_${'a'.repeat(32)}_raw_${'b'.repeat(24)}_source`;
+  assert.equal(isLoopbackMediaWorkerAuthorized({ ip: '127.0.0.1', action: 'read', path }), true);
+  assert.equal(isLoopbackMediaWorkerAuthorized({ ip: '10.10.0.20', action: 'read', path }), false);
+  assert.equal(isLoopbackMediaWorkerAuthorized({ ip: '127.0.0.1', action: 'publish', path }), false);
+});
+
 const cameraHex = '0123456789abcdef0123456789abcdef';
 
 test('worker interno só lê path oculto e publica no path público via loopback', () => {

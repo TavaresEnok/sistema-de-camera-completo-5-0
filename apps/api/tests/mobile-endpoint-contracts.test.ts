@@ -3,6 +3,26 @@ import test from 'node:test';
 import { FfmpegMjpegService } from '../src/camera-stream/ffmpeg-mjpeg.service';
 import { AlarmsService } from '../src/alarms/alarms.service';
 import { NotificationsController } from '../src/notifications/notifications.controller';
+import { CameraStreamController } from '../src/camera-stream/camera-stream.controller';
+
+test('disabled cameras receive neither poster tokens nor cached/live poster requests', async () => {
+  const controller: any = Object.create(CameraStreamController.prototype);
+  let tokens = 0;
+  let captures = 0;
+  controller.commercialPolicy = { assertFeature: async () => {} };
+  controller.accessControlService = { assertCanViewCamera: async () => {} };
+  controller.camerasService = { findOneInternal: async () => ({ enabled: false }) };
+  controller.resolveApiPublicBase = () => 'https://fixture.invalid';
+  controller.authService = {
+    createStreamToken: async () => { tokens++; return { streamToken: 'token' }; },
+    verifyStreamToken: async () => ({ cameraId: 'disabled', sub: 'user' }), me: async () => ({ id: 'user' }),
+  };
+  controller.ffmpegMjpegService = { getLivePosterFrame: async () => { captures++; } };
+  assert.deepEqual(await controller.getPosterTokens({ id: 'user' }, { cameraIds: ['disabled'] }, {}), { items: [] });
+  await assert.rejects(controller.getPoster('disabled', 'token', { headers: {} }, {}), /indisponível/);
+  assert.equal(tokens, 0);
+  assert.equal(captures, 0);
+});
 
 test('captura atual recusa fallback antigo mesmo quando há refresh compartilhado', async () => {
   const service = Object.create(FfmpegMjpegService.prototype) as any;

@@ -2,6 +2,7 @@ import { CameraStatus } from '@prisma/client';
 import { sameVideoSource } from '../camera-stream/helpers/same-video-source.helper';
 import { BadRequestException, Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
 import { CamerasService } from '../cameras/cameras.service';
+import { SharedRtspSourceService } from '../cameras/shared-rtsp-source.service';
 import { AiService } from './ai.service';
 import { SourceGatewayService } from '../camera-stream/source-gateway.service';
 import { CryptoService } from '../common/crypto/crypto.service';
@@ -239,6 +240,7 @@ export class AiManagerService implements OnModuleInit {
     private readonly commercialPolicy: CommercialPolicyService,
     // Opcional: camada nova, DESLIGADA por default. Sem ela nada muda.
     @Optional() private readonly sourceGateway?: SourceGatewayService,
+    @Optional() private readonly sharedRtspSource?: SharedRtspSourceService,
   ) {}
 
   async onModuleInit() {
@@ -1391,6 +1393,22 @@ export class AiManagerService implements OnModuleInit {
     // Aconteceu em produção: a análise da câmera não voltava, sem erro nenhum no
     // log, e a detecção de movimento (que arma a gravação) ficou fora do ar.
     // O gateway é otimização; ele JAMAIS pode atrasar ou impedir a subida da IA.
+    if (this.sharedRtspSource && (!isHevcCodec(analyticsCodec) || directHevcEnabled)) {
+      const raw = await this.withTimeout(
+        this.sharedRtspSource.resolve(cam.id, rtspUrl, cam.preferredRtspTransport ?? 'tcp'),
+        envNumber('AI_SOURCE_GATEWAY_ENSURE_TIMEOUT_MS', 4000),
+      ).catch(() => null);
+      if (raw?.shared) return {
+        rtspUrl: raw.url,
+        info: {
+          ...infoBase, sourceKind: 'source_gateway_internal', usesMediaMtx: true,
+          audioRequested: false, analyticsRtspUrl: sanitizeRtspUrl(raw.url),
+          analyticsSourceUrlSanitized: sanitizeRtspUrl(raw.url),
+          analyticsOriginalRtspUrl: sourceUrlSanitized, analyticsSourceCodec: analyticsCodec,
+          analyticsTranscodedForAi: false, analyticsGatewayReason: 'shared_raw_source',
+        },
+      };
+    }
     const ensured = await this.withTimeout(
       this.mediamtxProxy.ensurePathForCamera(cam.id, 'grid'),
       envNumber('AI_SOURCE_GATEWAY_ENSURE_TIMEOUT_MS', 4000),

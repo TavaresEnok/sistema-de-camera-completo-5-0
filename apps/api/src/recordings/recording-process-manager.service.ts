@@ -22,6 +22,7 @@ import { type Readable } from 'stream';
 import { promisify } from 'node:util';
 import Redis from 'ioredis';
 import { CamerasService } from '../cameras/cameras.service';
+import { SharedRtspSourceService } from '../cameras/shared-rtsp-source.service';
 import { CommercialPolicyService } from '../commercial-policy/commercial-policy.service';
 import { buildRtspUrl, resolveRecordingRtspProfile } from '../cameras/helpers/rtsp-url.helper';
 import { CryptoService } from '../common/crypto/crypto.service';
@@ -239,6 +240,7 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
     @InjectQueue(THUMBNAIL_GENERATION_QUEUE) private readonly thumbnailQueue: Queue,
     @InjectQueue(CLOUD_OFFLOAD_QUEUE) private readonly cloudOffloadQueue: Queue,
     @Optional() private readonly rtmpIngestSource?: RtmpIngestSourceService,
+    @Optional() private readonly sharedRtspSource?: SharedRtspSourceService,
   ) {
     this.recordingsRoot = this.configService.get<string>('recordingsRoot') ?? './storage/recordings';
     this.recordingFormat = this.configService.get<string>('ffmpegRecordingFormat') ?? 'mp4';
@@ -1437,9 +1439,12 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
         );
       }
     }
+    const directUrl = this.buildRtsp(camera, password);
+    const transport = camera.preferredRtspTransport ?? this.configService.get<string>('ffmpegRtspTransport') ?? 'tcp';
+    const source = this.sharedRtspSource ? await this.sharedRtspSource.resolve(camera.id, directUrl, transport) : null;
     return {
-      rtspUrl: this.buildRtsp(camera, password),
-      transport: camera.preferredRtspTransport ?? this.configService.get<string>('ffmpegRtspTransport') ?? 'tcp',
+      rtspUrl: source?.url ?? directUrl,
+      transport: source?.shared ? 'tcp' : transport,
       sourceCodec: null as string | null,
     };
   }

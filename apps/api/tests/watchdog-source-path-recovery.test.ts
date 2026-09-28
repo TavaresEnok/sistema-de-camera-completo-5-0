@@ -89,3 +89,14 @@ test('nome que não é de câmera segue ignorado (não vira recuperação fantas
     assert.equal(deleted.length, 0, `${name} não deveria apagar path nenhum`);
   }
 });
+
+test('versioned raw recovery preserves the exact source instead of guessing original mode', async () => {
+  const { mgr, ensured, deleted } = makeProxy();
+  const restarted: string[] = [];
+  mgr.sharedRtspSource = { restart: async (name: string) => restarted.push(name) };
+  const path = `cam_${HEX}_raw_${'c'.repeat(24)}_source`;
+  await mgr.recoverStuckPath(path, true, 3);
+  assert.deepEqual(restarted, [path]);
+  assert.equal(ensured.length, 0);
+  assert.equal(deleted.length, 0);
+});

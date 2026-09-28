@@ -917,7 +917,7 @@ test('camera-stream: URLs de FLV e poster preservam o prefixo público /api', as
     {} as any,
     {} as any,
     mediamtx as any,
-    { getCameraOrThrow: async () => camera } as any,
+    { getCameraOrThrow: async () => camera, findOneInternal: async () => camera } as any,
     auth as any,
     access as any,
     {} as any,

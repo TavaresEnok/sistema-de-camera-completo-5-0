@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger, type OnApplicationBootstrap, t
 import { ConfigService } from '@nestjs/config';
 import { type Request } from 'express';
 import { CamerasService } from '../cameras/cameras.service';
+import { SharedRtspSourceService } from '../cameras/shared-rtsp-source.service';
 import {
   buildRtspUrl,
   isHevcCodec,
@@ -10,8 +11,10 @@ import {
   resolveOriginalRtspProfile,
 } from '../cameras/helpers/rtsp-url.helper';
 import * as os from 'node:os';
-import { isManagedLivePublisher, withTranscodeAdmission } from './helpers/transcode-admission.helper';
+import { createHash } from 'node:crypto';
+import { isManagedLivePublisher, withTranscodeAdmission, withWeightedTranscodeAdmission, liveConversionCost } from './helpers/transcode-admission.helper';
 import { audioCodecFromTracks } from './helpers/live-audio.helper';
+import { trackPacketHealth, type TrackPacketHealth } from './helpers/track-packet-health.helper';
 import { envNumber } from '../common/config/env-number.helper';
 import {
   ingestPathNames,
@@ -62,6 +65,14 @@ import {
 
 /** O padrão de instalação, em uma frase, para a tela repetir. */
 const PADRAO_EM_PALAVRAS = 'Principal 1080p em H.265; stream 2 em 480p H.264.';
+
+type StreamMetadata = {
+  codec: string | null;
+  width: number | null;
+  height: number | null;
+  hasDataTrack: boolean;
+  audioCodec?: string | null;
+};
 
 type DeliveryUrls = {
   enabled: boolean;
@@ -142,6 +153,9 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     Math.max(4, (os.cpus()?.length ?? 4) * 5),
     { min: 1, max: 2000, integer: true },
   );
+  private readonly maxTranscodePoints = envNumber('MEDIAMTX_MAX_TRANSCODE_POINTS', this.maxTranscodes, {
+    min: 1, max: 2000, integer: true,
+  });
   // AUTOCURA DA GRADE: DESLIGADA por padrão (restaura o comportamento de 21/07).
   //
   // Ela existe por um motivo real: Cam-03/09 aceitam o RTSP e nunca enviam mídia,
@@ -193,6 +207,8 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     integer: true,
   });
   private activeProbes = 0;
+  private readonly streamMetadataCache = new Map<string, { value: StreamMetadata | null; expires: number }>();
+  private readonly streamMetadataInFlight = new Map<string, Promise<StreamMetadata | null>>();
   private readonly probeQueue: Array<() => void> = [];
   // ── VALIDADE DA DECISÃO DE FONTE ───────────────────────────────────────────
   //
@@ -222,6 +238,8 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
   // saudável nem em cold start normal.
   private watchdogTimer: ReturnType<typeof setInterval> | null = null;
   private readonly watchdogState = new Map<string, { lastBytes: number; badTicks: number }>();
+  private watchdogTickRunning = false;
+  private readonly trackHealthState = new Map<string, { at: number; health: TrackPacketHealth; badVideo: number; badAudio: number }>();
   private static readonly WATCHDOG_INTERVAL_MS = 20_000;
   private static readonly WATCHDOG_BAD_TICKS = 3; // 3 × 20s = ~60s antes de agir
   private readonly recoveringPaths = new Set<string>();
@@ -273,6 +291,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     // @Global e o Nest injeta. Sem ele, o histórico só não é persistido.
     @Optional() private readonly prisma?: PrismaService,
     @Optional() private readonly rtmpIngestSource?: RtmpIngestSourceService,
+    @Optional() private readonly sharedRtspSource?: SharedRtspSourceService,
   ) {}
 
   private hotGridBudget(): number {
@@ -529,6 +548,13 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
   }
 
   private async streamWatchdogTick() {
+    if (this.watchdogTickRunning) return;
+    this.watchdogTickRunning = true;
+    try { await this.runStreamWatchdogTick(); }
+    finally { this.watchdogTickRunning = false; }
+  }
+
+  private async runStreamWatchdogTick() {
     let items: any[] = [];
     try {
       const text = await this.apiRequest('GET', '/v3/paths/list?itemsPerPage=1000');
@@ -585,7 +611,9 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       // PROVA de saúde (bytes novos com fonte pronta): a recuperação anterior
       // funcionou de verdade, então a janela do freio é zerada. Sem isto, uma
       // câmera intermitente porém CURÁVEL acabaria freada por acumular resets.
-      if (prev.lastBytes >= 0 && ready && bytes > prev.lastBytes) {
+      if (prev.lastBytes >= 0 && ready && bytes > prev.lastBytes
+        && !['missing', 'stalled'].includes(this.trackHealthState.get(name)?.health.video ?? '')
+        && !['missing', 'stalled'].includes(this.trackHealthState.get(name)?.health.audio ?? '')) {
         this.clearRecoveryBrake(name);
       }
 
@@ -595,6 +623,27 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       }
     }
 
+    // Four packet-only samples per tick, round-robin, only for existing viewers.
+    // Reading the internal path reuses its source and does not decode video.
+    const candidates = items.filter(item => item.ready && Array.isArray(item.readers) && item.readers.length
+      && this.cameraIdFromPathName(String(item.name)) && Array.isArray(item.tracks) && item.tracks.length)
+      .sort((a, b) => (this.trackHealthState.get(a.name)?.at ?? 0) - (this.trackHealthState.get(b.name)?.at ?? 0))
+      .slice(0, 4);
+    if (String(process.env.MEDIAMTX_TRACK_HEALTH_ENABLED ?? 'true') === 'true') {
+      await Promise.all(candidates.map(async item => {
+        const health = await this.sampleTrackHealth(item.name, item.tracks);
+        const previous = this.trackHealthState.get(item.name);
+        const badVideo = ['missing', 'stalled'].includes(health.video) ? (previous?.badVideo ?? 0) + 1 : 0;
+        const badAudio = ['missing', 'stalled'].includes(health.audio) ? (previous?.badAudio ?? 0) + 1 : 0;
+        this.trackHealthState.set(item.name, { at: Date.now(), health, badVideo, badAudio });
+        if (badAudio === 3) this.logger.warn(`Trilha de áudio sem progresso em ${item.name}; vídeo=${health.video}.`);
+        if ((badVideo >= 3 || badAudio >= 3) && !stuck.some(x => x.name === item.name)) {
+          stuck.push({ name: item.name, ready: true, readers: item.readers.length });
+          this.trackHealthState.set(item.name, { at: Date.now(), health, badVideo: 0, badAudio: 0 });
+        }
+      }));
+    }
+    for (const key of this.trackHealthState.keys()) if (!seen.has(key)) this.trackHealthState.delete(key);
     // Recupera os paths travados em PARALELO (limite interno), não um a um.
     await this.recoverStuckPaths(stuck);
 
@@ -607,6 +656,39 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     for (const key of [...this.recoveryBrake.keys()]) {
       if (!seen.has(key)) this.recoveryBrake.delete(key);
     }
+  }
+
+  private sampleTrackHealth(pathName: string, tracks: string[]): Promise<TrackPacketHealth> {
+    const unknown: TrackPacketHealth = { video: 'unknown', audio: 'unknown' };
+    const url = this.buildInternalRtspUrl(pathName);
+    if (!url) return Promise.resolve(unknown);
+    return new Promise(resolve => {
+      let settled = false;
+      let output = '';
+      const finish = (health: TrackPacketHealth) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(health);
+      };
+      const timer = setTimeout(() => { process?.kill('SIGKILL'); finish(unknown); }, 7000);
+      timer.unref();
+      let process: ReturnType<typeof spawnWithSecretUrl>;
+      try {
+        process = spawnWithSecretUrl('ffprobe', [
+          '-v', 'error', '-rtsp_transport', 'tcp', '-timeout', '3000000',
+          '-analyzeduration', '500000', '-probesize', '262144', '-read_intervals', '%+2',
+          '-show_packets', '-show_entries', 'packet=codec_type,pts_time,dts_time', '-of', 'json', url,
+        ], url);
+        process.stderr?.resume();
+        process.stdout?.on('data', chunk => {
+          output += chunk.toString();
+          if (output.length > 1_000_000) { process.kill('SIGKILL'); finish(unknown); }
+        });
+        process.once('error', () => finish(unknown));
+        process.once('close', code => finish(code === 0 ? trackPacketHealth(output, tracks) : unknown));
+      } catch { finish(unknown); }
+    });
   }
 
   /** Relógio do freio — costura de teste (produção usa o relógio do sistema). */
@@ -797,8 +879,12 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     try {
       this.invalidateMainCodecCache(parsed.cameraId);
       const encoded = encodeURIComponent(pathName);
-      await this.apiRequest('DELETE', `/v3/config/paths/delete/${encoded}`).catch(() => undefined);
-      await this.ensurePathForCamera(parsed.cameraId, parsed.deliveryMode);
+      if (/_raw_[a-f0-9]{24}_source$/.test(pathName) && this.sharedRtspSource) {
+        await this.sharedRtspSource.restart(pathName);
+      } else {
+        await this.apiRequest('DELETE', `/v3/config/paths/delete/${encoded}`).catch(() => undefined);
+        await this.ensurePathForCamera(parsed.cameraId, parsed.deliveryMode);
+      }
       this.logger.log(`Watchdog: path ${pathName} reconfigurado com sucesso.`);
       // Métrica (aditiva): só conta recuperação que DEU CERTO — o caminho de
       // falha cai no catch abaixo e não infla o contador.
@@ -816,7 +902,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
 
   /** Inverte pathNameFromCameraId: `cam_<32hex>[_grid|_grid_audio|_grid_hevc|_orig|_orig_audio]` → câmera/modo. */
   private cameraIdFromPathName(pathName: string): { cameraId: string; deliveryMode: LiveViewMode } | null {
-    const match = pathName.match(/^cam_([0-9a-fA-F]{32})(_grid|_grid_audio|_grid_hevc|_orig|_orig_audio)?$/);
+    const match = pathName.match(/^cam_([0-9a-fA-F]{32})(_grid|_grid_audio|_grid_hevc|_orig|_orig_audio|_raw_[a-f0-9]{24}(?:_source)?)?$/);
     if (!match) return null;
     const h = match[1];
     const cameraId = `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
@@ -1001,40 +1087,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
   // Sonda o codec do stream via ffprobe (assíncrono, não bloqueia o event loop).
   // Retorna null se falhar (câmera offline/instável), para o chamador decidir o fallback.
   probeStreamVideoCodec(sourceUrl: string, transport: string): Promise<string | null> {
-    return new Promise((resolve) => {
-      let settled = false;
-      const finish = (value: string | null) => {
-        if (settled) return;
-        settled = true;
-        resolve(value);
-      };
-      try {
-        const proc = spawnWithSecretUrl('ffprobe', [
-          '-v', 'error',
-          '-rtsp_transport', transport,
-          '-i', sourceUrl,
-          '-select_streams', 'v:0',
-          '-show_entries', 'stream=codec_name',
-          '-of', 'default=noprint_wrappers=1:nokey=1',
-        ], sourceUrl);
-        let stdout = '';
-        proc.stdout!.on('data', (chunk) => { stdout += chunk.toString(); });
-        const killTimer = setTimeout(() => {
-          try { proc.kill('SIGKILL'); } catch { /* ignore */ }
-          finish(null);
-        }, 12000);
-        killTimer.unref();
-        proc.on('error', () => { clearTimeout(killTimer); finish(null); });
-        proc.on('close', (code) => {
-          clearTimeout(killTimer);
-          const codec = stdout.trim().split('\n')[0].trim().toLowerCase();
-          if (code !== 0 || !codec) return finish(null);
-          finish(codec);
-        });
-      } catch {
-        finish(null);
-      }
-    });
+    return this.probeStreamVideoMetadata(sourceUrl, transport).then(value => value?.codec ?? null);
   }
 
   /**
@@ -1054,13 +1107,24 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
   private probeStreamVideoMetadata(
     sourceUrl: string,
     transport: string,
-  ): Promise<{
-    codec: string | null;
-    width: number | null;
-    height: number | null;
-    hasDataTrack: boolean;
-  } | null> {
-    return this.withProbeSlot(() => this.runProbeStreamVideoMetadata(sourceUrl, transport));
+  ): Promise<StreamMetadata | null> {
+    // One bounded probe per physical URL/transport, shared across modalities.
+    // Credential changes invalidate identity without storing credentials in keys.
+    const key = createHash('sha256').update(JSON.stringify([sourceUrl, transport])).digest('hex');
+    const cached = this.streamMetadataCache.get(key);
+    if (cached && cached.expires > Date.now()) return Promise.resolve(cached.value);
+    const pending = this.streamMetadataInFlight.get(key);
+    if (pending) return pending;
+    const task = this.withProbeSlot(() => this.runProbeStreamVideoMetadata(sourceUrl, transport))
+      .then(value => {
+        if (this.streamMetadataCache.size >= 512) {
+          this.streamMetadataCache.delete(this.streamMetadataCache.keys().next().value!);
+        }
+        this.streamMetadataCache.set(key, { value, expires: Date.now() + (value ? 300_000 : 10_000) });
+        return value;
+      }).finally(() => this.streamMetadataInFlight.delete(key));
+    this.streamMetadataInFlight.set(key, task);
+    return task;
   }
 
   /** Enfileira quando o teto de sondas simultâneas já está ocupado. */
@@ -1087,20 +1151,10 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
   private runProbeStreamVideoMetadata(
     sourceUrl: string,
     transport: string,
-  ): Promise<{
-    codec: string | null;
-    width: number | null;
-    height: number | null;
-    hasDataTrack: boolean;
-  } | null> {
+  ): Promise<StreamMetadata | null> {
     return new Promise((resolve) => {
       let settled = false;
-      const finish = (value: {
-        codec: string | null;
-        width: number | null;
-        height: number | null;
-        hasDataTrack: boolean;
-      } | null) => {
+      const finish = (value: StreamMetadata | null) => {
         if (settled) return;
         settled = true;
         resolve(value);
@@ -1128,11 +1182,15 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
           try {
             const streams = JSON.parse(stdout)?.streams ?? [];
             const stream = streams.find((item: any) => item?.codec_type === 'video') ?? {};
+            const audio = streams.find((item: any) => item?.codec_type === 'audio');
             finish({
               codec: String(stream.codec_name ?? '').trim().toLowerCase() || null,
               width: Number.isFinite(Number(stream.width)) ? Number(stream.width) : null,
               height: Number.isFinite(Number(stream.height)) ? Number(stream.height) : null,
               hasDataTrack: streams.some((item: any) => item?.codec_type === 'data'),
+              audioCodec: audio
+                ? String(audio.codec_name ?? '').trim().toLowerCase() || null
+                : stream.codec_name ? 'none' : null,
             });
           } catch {
             finish(null);
@@ -2131,6 +2189,11 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       return {
         pathName,
         pathNames: paths.map((item: any) => String(item.name)),
+        trackHealth: paths.map((item: any) => {
+          const sample = this.trackHealthState.get(String(item.name));
+          return { pathName: String(item.name), sampledAt: sample?.at ?? null,
+            video: sample?.health.video ?? 'unknown', audio: sample?.health.audio ?? 'unknown' };
+        }),
         available: paths.length > 0,
         ready: paths.some((data: any) => Boolean(data.ready ?? data.sourceReady ?? data.source?.ready)),
         readerCount: readers.length,
@@ -2250,6 +2313,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     await this.apiRequest('DELETE', `/v3/config/paths/delete/${encodeURIComponent(legacyPath)}`).catch(() => undefined);
     await this.apiRequest('DELETE', `/v3/config/paths/delete/${encodeURIComponent(this.privateSourcePathName(legacyPath))}`).catch(() => undefined);
     this.invalidateMainCodecCache(cameraId);
+    await this.sharedRtspSource?.removeCamera(cameraId).catch(() => undefined);
   }
 
   ensurePathForCamera(cameraId: string, deliveryMode: LiveViewMode = 'original'): Promise<EnsuredCameraPath> {
@@ -2491,6 +2555,10 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     }
     const liveProfile = selected.profile;
     const sourceUrl = selected.sourceUrl;
+    const sharedInput = !pushSourced && this.sharedRtspSource
+      ? await this.sharedRtspSource.resolve(cameraId, sourceUrl, rtspTransport)
+      : { url: sourceUrl, shared: false };
+    const inputTransport = sharedInput.shared ? 'tcp' : rtspTransport;
     const isHevc = selected.isHevc;
     const sourceVideoCodec = String(('codec' in selected ? selected.codec : null) ?? '').trim().toLowerCase()
       || (isHevc ? 'h265' : 'h264');
@@ -2522,7 +2590,11 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     // servidor é ~0; o celular decodifica o HEVC no hardware. Só HLS (WebRTC não
     // reproduz H.265), com latência maior — é o trade-off assumido pelo usuário.
     const wantsAudio = deliveryMode === 'grid-audio' || deliveryMode === 'original-audio';
-    const sourceAudioCodec = 'audioCodec' in selected ? selected.audioCodec : null;
+    let sourceAudioCodec = 'audioCodec' in selected ? selected.audioCodec : null;
+    if (wantsAudio && !pushSourced && sourceAudioCodec == null) {
+      const metadata = await this.probeStreamVideoMetadata(sharedInput.url, inputTransport).catch(() => null);
+      sourceAudioCodec = metadata?.audioCodec ?? null;
+    }
     const audioAvailable = sourceAudioCodec == null ? null : sourceAudioCodec !== 'none';
     const codecPassthroughMode = deliveryMode === 'original' || deliveryMode === 'grid-hevc';
     const needsPublisher = (wantsAudio && audioAvailable !== false) || (!codecPassthroughMode && (isHevc || sanitizeGridSource));
@@ -2565,7 +2637,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     const audioEncoded = needsPublisher && wantsAudio && audioAvailable !== false && sourceAudioCodec !== 'opus';
 
     const desiredPath: any = {
-      source: sourceUrl,
+      source: sharedInput.url,
       // 'original' (máxima qualidade) puxa o stream PRINCIPAL direto da câmera em
       // passthrough. Sempre sob demanda com janela curta: senão o path seguraria
       // uma sessão RTSP + banda WAN do main 24/7 mesmo sem ninguém assistindo.
@@ -2582,7 +2654,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       sourceOnDemandCloseAfter: deliveryMode === 'original' || deliveryMode === 'original-audio'
         ? originalRunOnDemandCloseAfter
         : sourceOnDemandCloseAfter,
-      rtspTransport,
+      rtspTransport: inputTransport,
     };
 
     if (needsPublisher) {
@@ -2602,7 +2674,8 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       // que também passa a credencial no comando e trata a exposição na saída.
       //
       // Reversível sem tocar em código: MEDIAMTX_PRIVATE_SOURCE_HOP=true.
-      const privateSourceUrl = !pushSourced && this.usePrivateSourceHop
+      const privateSourceUrl = sharedInput.shared
+        ? this.buildInternalPublishRtspUrl(new URL(sharedInput.url).pathname.slice(1)) : !pushSourced && this.usePrivateSourceHop
         ? `rtsp://127.0.0.1:$RTSP_PORT/${await this.ensurePrivateSourcePath(
           pathName,
           sourceUrl,
@@ -2710,7 +2783,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
         // careful: validates bitstream integrity and drops malformed packets
         // instead of passing corrupted NAL units downstream (which causes
         // green frames in the browser until the next IDR keyframe arrives).
-        `-flags low_delay -err_detect careful -rtsp_transport ${rtspTransport} ` +
+        `-flags low_delay -err_detect careful -rtsp_transport ${inputTransport} ` +
         `-i "${privateSourceUrl}" -map 0:v:0 ${videoArgs} ${audioArgs} ` +
         `-f rtsp -rtsp_transport tcp -muxdelay 0.1 -pkt_size 1200 "${publishUrl}"`;
       const ffmpegCommand = buildFfmpegCommand(videoArgs);
@@ -2731,7 +2804,15 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
         `tr "\\0" " " < "$d/cmdline" 2>/dev/null | grep -qF "/${pathName} " ` +
         `&& kill -9 "$(basename "$d")" 2>/dev/null; ` +
         `done`;
-      const runOnDemandScript = `${prekill}; ${withTranscodeAdmission(ffmpegCommand, this.maxTranscodes)}`;
+      // MediaMTX expands dollar variables before shell evaluation. Decode the
+      // local-only cleanup script at execution time so $d/$c are not erased.
+      const prekillHook = `printf %s ${Buffer.from(prekill).toString('base64')} | base64 -d | sh`;
+      const conversionCost = liveConversionCost({
+        videoEncoded, codec: sourceVideoCodec, width: sourceWidth, height: sourceHeight, fps: sourceFps,
+      });
+      const admitted = withWeightedTranscodeAdmission(ffmpegCommand, this.maxTranscodePoints, conversionCost);
+      // The outer helper execs a shell so its process-count lock survives too.
+      const runOnDemandScript = `${prekillHook}; ${withTranscodeAdmission(`sh -c ${this.shellQuote(admitted)}`, this.maxTranscodes)}`;
       desiredPath.runOnDemand = `sh -c ${this.shellQuote(runOnDemandScript)}`;
       // FFMPEG ÓRFÃO: o mesmo prekill, agora também na SAÍDA do último espectador.
       //
@@ -2751,7 +2832,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       // `runOnUnDemand` fecha o ciclo: ao sair o último leitor, o MediaMTX roda
       // este comando e nada daquele path sobrevive. Custa uma varredura em
       // /proc por câmera, apenas quando ela fica ociosa.
-      desiredPath.runOnUnDemand = `sh -c ${this.shellQuote(prekill)}`;
+      desiredPath.runOnUnDemand = `sh -c ${this.shellQuote(prekillHook)}`;
       desiredPath.runOnDemandRestart = false;
       desiredPath.runOnDemandStartTimeout = '15s'; // Tempo para o ffmpeg começar a republicar.
       // Mantém o restream recente aquecido. Assim, voltar para uma câmera não
@@ -2765,6 +2846,19 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
 
     try {
       const current: any = await this.getPath(pathName);
+      // A direct passthrough still serving viewers drains before moving to its
+      // equivalent shared raw generation. Explicit camera edits still apply.
+      if (sharedInput.shared && current.source === sourceUrl && current.source !== desiredPath.source) {
+        let active = true;
+        try {
+          const runtime = JSON.parse(await this.apiRequest('GET', `/v3/paths/get/${encodedPath}`));
+          active = !Array.isArray(runtime.readers) || runtime.readers.length > 0;
+        } catch (error: any) { if (Number(error.status) === 404) active = false; }
+        if (active) return {
+          pathName, sourceUrl, sourceVideoCodec, transcodedForLive: false,
+          videoEncoded: false, audioEncoded: false, liveProfile, deliveryMode, sourceIsOriginal,
+        };
+      }
       const hasSameSource =
         current.source === desiredPath.source &&
         current.rtspTransport === desiredPath.rtspTransport;

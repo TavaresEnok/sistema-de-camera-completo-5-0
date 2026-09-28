@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { MediamtxProxyService } from '../src/camera-stream/mediamtx-proxy.service';
-import { isManagedLivePublisher, withTranscodeAdmission } from '../src/camera-stream/helpers/transcode-admission.helper';
+import { isManagedLivePublisher, withTranscodeAdmission, liveConversionCost, withWeightedTranscodeAdmission } from '../src/camera-stream/helpers/transcode-admission.helper';
 import { audioCodecFromTracks } from '../src/camera-stream/helpers/live-audio.helper';
 
 test('audio capability comes from live tracks, unknown is not absence', () => {
@@ -21,6 +21,57 @@ test('runtime counts delivery RTSP publishers but not ingest or passthrough', ()
     { name: 'secret_ingest', ready: true, source: { type: 'rtspSession' } },
     { name: 'cam_abc_grid', ready: false, source: { type: 'rtspSession' } },
   ]) assert.equal(isManagedLivePublisher(path), false);
+});
+
+test('conversion budget distinguishes audio copy, small encode and heavy decode', () => {
+  assert.equal(liveConversionCost({ videoEncoded: false, width: 3840, height: 2160, fps: 60 }), 1);
+  assert.equal(liveConversionCost({ videoEncoded: true, codec: 'h264', width: 640, height: 360, fps: 20 }), 2);
+  assert.equal(liveConversionCost({ videoEncoded: true, codec: 'hevc', width: 1920, height: 1080, fps: 30 }), 4);
+  assert.equal(liveConversionCost({ videoEncoded: true }), 4);
+});
+
+test('weighted admission holds all points atomically and releases after exit', async () => {
+  const script = withWeightedTranscodeAdmission("sh -c 'echo ready; sleep 1'", 4, 4);
+  assert.doesNotMatch(script, /\$/);
+  const first = spawn('sh', ['-c', script]);
+  const ended = new Promise(resolve => first.once('exit', resolve));
+  await new Promise<void>((resolve, reject) => {
+    first.stdout.once('data', () => resolve());
+    first.once('error', reject);
+    first.once('exit', code => { if (code) reject(new Error(`weighted publisher exited ${code}`)); });
+  });
+  const run = () => new Promise<number | null>((resolve, reject) => {
+    const child = spawn('sh', ['-c', withWeightedTranscodeAdmission('true', 4, 1)]);
+    child.once('error', reject);
+    child.once('exit', resolve);
+  });
+  assert.equal(await run(), 75);
+  await ended;
+  assert.equal(await run(), 0);
+  const oversized = spawn('sh', ['-c', withWeightedTranscodeAdmission('true', 1, 4)]);
+  assert.equal(await new Promise(resolve => oversized.once('exit', resolve)), 75);
+});
+
+test('metadata probe coalesces modalities and isolates credentials and transport', async () => {
+  const service: any = new MediamtxProxyService({ get: () => undefined } as any, {} as any, {} as any);
+  let calls = 0;
+  service.runProbeStreamVideoMetadata = async () => {
+    calls += 1;
+    await new Promise(resolve => setTimeout(resolve, 5));
+    return { codec: 'h264', width: 1920, height: 1080, hasDataTrack: false, audioCodec: 'aac' };
+  };
+  const source = 'rtsp://user:secret@camera:554/live';
+  const [a, b] = await Promise.all([
+    service.probeStreamVideoMetadata(source, 'tcp'), service.probeStreamVideoMetadata(source, 'tcp'),
+  ]);
+  assert.equal(a, b);
+  assert.equal(a.audioCodec, 'aac');
+  await service.probeStreamVideoMetadata(source, 'tcp');
+  assert.equal(calls, 1);
+  await service.probeStreamVideoMetadata(source.replace('secret', 'rotated'), 'tcp');
+  await service.probeStreamVideoMetadata(source, 'udp');
+  assert.equal(calls, 3);
+  for (const key of service.streamMetadataCache.keys()) assert.match(key, /^[a-f0-9]{64}$/);
 });
 
 test('kernel admission rejects concurrent startup and releases on process exit', async () => {
@@ -67,6 +118,11 @@ test('1080p RTMP H264 with audio copies video and only encodes audio', async () 
   assert.match(config.runOnDemand, /-c:v copy/);
   assert.doesNotMatch(config.runOnDemand, /-c:v libx264/);
   assert.match(config.runOnDemand, /flock -n 9/);
+  assert.doesNotMatch(config.runOnUnDemand, /\$/,
+    'MediaMTX must not expand cleanup shell variables before execution');
+  const encoded = config.runOnUnDemand.match(/printf %s ([A-Za-z0-9+/=]+)/)?.[1];
+  assert.ok(encoded);
+  assert.match(Buffer.from(encoded, 'base64').toString(), /\$d\/comm/);
 });
 
 test('HEVC compatibility grid encodes video, original audio preserves codec', async () => {
