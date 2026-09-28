@@ -4,7 +4,7 @@ Referência: `auditoria-caminho-video-audio-2026-09-28.md`.
 
 ## Implementado no código
 
-O estado de implantação mais recente está na seção final. A tabela abaixo registra a cobertura técnica dos achados, incluindo trabalhos ainda pendentes.
+O estado de implantação mais recente está na seção final. A tabela abaixo foi atualizada após a segunda etapa; as seções cronológicas posteriores preservam o histórico das tentativas e correções.
 
 - Áudio preserva vídeo H.264 da fonte selecionada, inclusive RTMP 1080p. HEVC continua convertido na grade de compatibilidade; original com áudio preserva HEVC. Isso pode consumir mais banda que a antiga redução a 360p, mas não mais que o mesmo H.264 repassado sem áudio, exceto pela trilha de som.
 - Grade e variante com áudio seguem a mesma política de fonte e de proporção da imagem.
@@ -26,18 +26,18 @@ O estado de implantação mais recente está na seção final. A tabela abaixo r
 | Achado | Estado |
 |---|---|
 | V01/V02 | Corrigidos no código; primeira negociação de áudio continua possível. Falta ensaio no aparelho do usuário. |
-| V03/V04 | Contagem, exceção por prontidão e admissão no processo corrigidas. Orçamento ponderado por codec/resolução ainda não implementado; limite atual é conservador por processo. |
-| V05/V06 | Contador e diagnóstico corrigidos; precisam chegar à versão servida. |
-| V07 | Receptor já vigia quadros de vídeo; instrumentação ampliada. Watchdog servidor continua por bytes, sem prova por trilha; não foi inventada métrica ausente na API. |
-| V08 | Bitrate estável e proteção de leitores implementados. Migração totalmente versionada de grafo não implementada. |
-| V09/V10 | Consolidação de fontes RTSP/IA/gravação não executada: exige preservar main/sub, fonte original das gravações, autenticação e recuperação. Alterar só o nome do caminho quebraria limpeza/reconciliação. RTMP já compartilha entrada. |
-| V11 | Codec/ausência tratados quando runtime informa. Falta probe de áudio RTSP compartilhado e validação HLS/HEVC/Opus nos aparelhos suportados. |
+| V03/V04 | Admissão por processo e orçamento ponderado 1/2/4 implementados e implantados. Hooks anteriores migram após drenagem; pontos não equivalem a percentual de CPU. |
+| V05/V06 | Contador e diagnóstico corrigidos e entregues nas APIs Vibe/IBTelecom e no APK Vibe 39. |
+| V07 | Receptor vigia quadros; servidor agora verifica progresso por trilha, com limite de sondas, três confirmações e freio de recuperação. Timestamps não provam que a cena visual não congelou dentro da câmera. |
+| V08 | Bitrate estável, origens RTSP versionadas e proteção de leitores em ajustes de política implementados e testados. Não foram criadas URLs públicas versionadas para todas as variantes; a estratégia compatível preserva entregas existentes até drenar. |
+| V09/V10 | Compartilhamento bruto RTSP integrado a live/áudio/gravação/clipe/IA compatível, preservando URL/perfil/transporte, com fallback e limpeza de dependências. Validado em laboratório e em uma fonte real. RTMP continua compartilhando sua entrada. |
+| V11 | Probe de vídeo/áudio RTSP compartilhado e estados desconhecido/ausente implementados. Matriz completa HLS/HEVC/Opus nos aparelhos continua pendente. |
 | V12 | Seleção/mute corrigidos; matriz completa de dispositivos ainda não executada. |
 | V13 | Proteções implementadas; nenhuma exploração foi realizada. |
 | V14 | Bloqueio PLAY aplicado e verificado nos sete vhosts da Gateway SRS 5; publicação e encaminhamento preservados. Evidências na seção final. |
-| V15/V16 | Instrumentação de receptor adicionada; medições A/B, origem/PTS/GOP, TURN e carga ainda pendentes. Nenhuma alteração especulativa de timestamp. |
-| V17 | Captura bloqueada para desativadas; origem exata dos pedidos antigos ainda deve ser rastreada. |
-| V18 | Git não equivale a implantação: API/web/APK/Gateway não foram atualizados nesta etapa. |
+| V15/V16 | Instrumentação e ensaios de pacotes/trilhas/compartilhamento/hook real concluídos. A/B no aparelho, matriz TURN e carga representativa continuam pendentes; nenhuma mudança especulativa de timestamp. |
+| V17 | Pedidos antigos identificados nos access logs como navegador/WebView. Tokens/posters/clipes de desativadas bloqueados antes de capturar ou recriar fonte; histórico preservado. |
+| V18 | APIs Vibe/IBTelecom implantadas em 78a4e8c, checkouts/versões alinhados e release aprovada na Central. APK 39 publicado na etapa anterior. Demo-04 inacessível; demais instalações da frota não atualizadas automaticamente nesta etapa. |
 
 ## Validação
 
@@ -154,3 +154,38 @@ Quatro amostras internas curtas na Vibe também confirmaram `video=progressing` 
 Rastreamento V17: access logs do nginx mostram pedidos `/poster` do cadastro desativado `d09d564a-52c4-4ab1-8af7-6f341ad5acdf`, classificados pelo User-Agent como navegador/WebView, inclusive respostas antigas 200 vindas de cache. Isso confirma um consumidor externo com referência antiga, não um agendamento de gravação dessa câmera. Não identifica um aparelho específico. Tokens e parâmetros secretos foram omitidos da coleta. A API nova rejeita esses pedidos antes do cache/captura; nenhum dado histórico foi apagado.
 
 O usuário informou que ainda não fez o ensaio no APK; o resultado do aparelho permanece pendente. A primeira tentativa do gate de instalação usou por engano SHA abreviado e foi corretamente rejeitada pelo instalador. O gate de `8e62fa6` foi interrompido e seu ambiente removido quando surgiram os dois ajustes finais; não conta como aprovação. O teste de instalação limpa foi reiniciado com o SHA completo `78a4e8c32d6d1fce947c91c1f174d9b2c7af858e`.
+
+## Estado final de implantação — 28/09/2026, aproximadamente 18:11 UTC
+
+Código executado: **`78a4e8c32d6d1fce947c91c1f174d9b2c7af858e`**. Commits posteriores de testes e deste relatório não alteram `apps/api/src`, `apps/web/src` ou `apps/mobile/src`.
+
+### Gates reais e publicação
+
+- Instalação limpa desse SHA completo: **aprovada, saída 0**. Ambiente Ubuntu/systemd/Docker isolado, volumes inicialmente vazios, serviços saudáveis, 32 tabelas verificadas, login de `admin_teste` e cinco rotas autenticadas retornando 200. Readiness: 53 verificações, seis atenções, zero bloqueios. Aviso final do verificador sobre Git decorre do contexto root/propriedade do checkout; o instalador registrou corretamente o SHA imutável. Contêiner e volumes de teste removidos.
+- Vibe: verificador de instalação aprovado, saída 0, depois de fixar o checkout no mesmo SHA da imagem. Dois avisos: senha inicial do administrador já trocada e, por isso, rotas autenticadas da produção não ensaiadas com essa credencial. Nenhuma senha foi redefinida.
+- IBTelecom: verificador aprovado, saída 0, mesmos dois avisos. Checkout e `DRAC_VERSION` alinhados em `78a4e8c`.
+- Central: aprovação pela API administrativa, HTTP 200, em **18:10:38 UTC**. Instalador SHA-256 `391da0a21846b0a0f0ed882c0f5ff1cd9cc2c6b80f700f2e7c39b716a9361f40`. Heartbeats posteriores confirmaram Vibe e IBTelecom nessa versão. Cadastro da frota: sete instalações, duas atualizadas e cinco atrás; não foram enviados comandos indiscriminados às demais.
+
+### O que foi substituído
+
+Somente a API foi recriada nesta segunda etapa. Web, bancos, Redis, IA, MediaMTX e ingestão continuaram com seus contêineres existentes. Nenhuma nova migração adicionada: 65 migrações já aplicadas. Configurações locais e artefatos não rastreados preservados.
+
+| Instalação | Imagem API em execução | Estado |
+|---|---|---|
+| Vibe | `sha256:3c970fa6268a6ce433eac41b1f0f84e9a587b67dc2a05b26268097cc1a168025` | healthy; readiness pronta |
+| IBTelecom | `sha256:7424a36af200f3f564472c7f3fa9ff448a72fbe55363ac763355edb67b53438a` | healthy; verificador aprovado |
+
+Rollback preservado em ambos: imagem `drac-video-stage2-rollback-api:20260928` e arquivo `infra/.env.before-video-stage2-20260928`. São a imagem/configuração anteriores à segunda etapa; não é necessário reverter banco para desfazer estas mudanças de código. Produção fica no commit aprovado; documentação/testes são mantidos em checkout auxiliar e publicados no mesmo repositório para não falsear `DRAC_VERSION` com um commit apenas documental.
+
+### Conferências após a troca
+
+- Vibe: trinta entradas RTMP prontas inicialmente e novamente na amostra final. Houve amostras intermediárias de 28/29; uma câmera foi identificada temporariamente sem entrada e voltou sem intervenção. Não se atribui causalidade dessa variação à implantação nem se promete disponibilidade contínua de toda câmera a partir de uma contagem agregada.
+- Uma origem bruta RTSP real da Vibe foi lida pelo caminho novo: H.264, 640×480, AAC, sem trilha de dados; sonda confirmou vídeo e áudio avançando. O consumidor temporário terminou e a origem voltou a ficar fria após o prazo normal. Não foram salvas imagens desse ensaio.
+- MediaMTX não reiniciado: Vibe mantém início `2026-09-26T02:50:04.597344794Z`, IBTelecom `2026-09-25T20:27:27.841783076Z`, ambos com zero reinícios.
+- Gateway: SRS mantém início `2026-09-28T15:52:32.239306187Z`, zero reinícios, sete blocos de segurança e dez publicações. Nenhuma nova alteração na Gateway nesta segunda etapa. A causa histórica da saída anterior permanece não conclusiva.
+
+### Bloqueios e validações que não podem ser declarados concluídos
+
+**Demo-04:** SSH público `177.104.156.25:22023` retorna `No route to host`. Management e Gateway também não alcançam `10.10.0.23:22`; ping sem resposta e resolução de vizinho incompleta. Último heartbeat: **15:30:47 UTC**, versão antiga `7081265`. Isso antecede estas novas correções. A VM/rede precisa ser conferida no Proxmox (estado da VM, NIC/bridge, endereço e firewall); não há acesso ao Proxmox fornecido nesta etapa. A Demo-04 não foi atualizada nem sua instalação anterior apagada.
+
+**Aparelhos:** usuário confirmou que ainda não testou o APK 39. A/B com áudio ligado/desligado no aparelho, sincronia percebida, hardware de decodificação, HLS/HEVC/Opus e TURN em redes representativas continuam pendentes. Os ensaios feitos provam o código e os caminhos descritos, não ausência de qualquer falha possível em câmera, rede ou navegador. Não foram aplicadas mudanças especulativas em GOP, timestamps ou configuração das câmeras.
