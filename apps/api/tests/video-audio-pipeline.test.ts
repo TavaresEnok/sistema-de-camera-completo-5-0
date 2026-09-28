@@ -94,7 +94,7 @@ test('kernel admission rejects concurrent startup and releases on process exit',
   assert.equal(await run(), 0);
 });
 
-async function configure(codec: string, mode: 'grid-audio' | 'original-audio', current?: any, readers = 0) {
+async function configure(codec: string, mode: 'grid-audio' | 'original-audio', current?: any, readers = 0, shared = false) {
   const service: any = new MediamtxProxyService({ get: () => undefined } as any, {} as any, {} as any);
   const writes: any[] = [];
   Object.assign(service, {
@@ -107,7 +107,15 @@ async function configure(codec: string, mode: 'grid-audio' | 'original-audio', c
       return JSON.stringify({ readers: Array(readers).fill({ type: 'webRTCSession' }) });
     },
   });
-  const result = await service.configureResolvedPathForCamera({ id: 'test', sourceMode: 'rtmp_push' }, mode);
+  if (shared) {
+    service.sharedRtspSource = { resolve: async () => ({ url: `rtsp://media:8554/cam_test_raw_${'a'.repeat(24)}_source`, shared: true }) };
+    service.cryptoService = { decrypt: () => '' };
+    service.chooseLiveSource = async () => ({ sourceUrl: 'rtsp://camera/live', codec, isHevc: false,
+      width: 1920, height: 1080, fps: 20, profile: null, audioCodec: 'aac' });
+    service.chooseGridSource = service.chooseLiveSource;
+    service.buildInternalPublishRtspUrl = (name: string) => `rtsp://127.0.0.1:8554/${name}`;
+  }
+  const result = await service.configureResolvedPathForCamera({ id: 'test', sourceMode: shared ? 'rtsp_pull' : 'rtmp_push' }, mode);
   return { result, writes, config: writes.find(x => x.method === 'POST')?.body };
 }
 
@@ -142,6 +150,16 @@ test('policy refresh drains active readers instead of deleting their path', asyn
   assert.equal(active.result.videoEncoded, true, 'report actual old encoder until drained');
   const idle = await configure('h264', 'grid-audio', previous, 0);
   assert.ok(idle.config);
+  assert.equal(idle.result.videoEncoded, false);
+});
+
+test('shared raw publishers also drain active readers during policy refresh', async () => {
+  const previous = (await configure('h264', 'grid-audio', undefined, 0, true)).config;
+  previous.runOnDemand = previous.runOnDemand.replace('-c:v copy', '-c:v libx264');
+  const active = await configure('h264', 'grid-audio', previous, 1, true);
+  assert.deepEqual(active.writes, []);
+  assert.equal(active.result.videoEncoded, true);
+  const idle = await configure('h264', 'grid-audio', previous, 0, true);
   assert.equal(idle.result.videoEncoded, false);
 });
 

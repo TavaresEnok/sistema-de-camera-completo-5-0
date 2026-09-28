@@ -126,6 +126,7 @@ export class ClipCaptureService {
     this.pendingStarts++;
     try {
     const camera = await this.camerasService.getCameraOrThrow(cameraId);
+    if (camera.enabled === false) throw new ServiceUnavailableException('Câmera indisponível.');
     const input = await this.resolveClipInput(camera);
     const rtsp = input.url;
     const transport = input.transport;

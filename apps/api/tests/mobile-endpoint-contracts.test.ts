@@ -4,6 +4,20 @@ import { FfmpegMjpegService } from '../src/camera-stream/ffmpeg-mjpeg.service';
 import { AlarmsService } from '../src/alarms/alarms.service';
 import { NotificationsController } from '../src/notifications/notifications.controller';
 import { CameraStreamController } from '../src/camera-stream/camera-stream.controller';
+import { ClipCaptureService } from '../src/camera-stream/clip-capture.service';
+
+test('disabled cameras cannot start a clip or recreate a raw source', async () => {
+  const service: any = Object.create(ClipCaptureService.prototype);
+  let resolved = false;
+  Object.assign(service, {
+    checkFfmpeg: () => true, activeCount: () => 0, maxConcurrent: 4, pendingStarts: 0,
+    camerasService: { getCameraOrThrow: async () => ({ enabled: false }) },
+    resolveClipInput: async () => { resolved = true; },
+  });
+  await assert.rejects(service.start('disabled', 'user'), /indisponível/);
+  assert.equal(resolved, false);
+  assert.equal(service.pendingStarts, 0);
+});
 
 test('disabled cameras receive neither poster tokens nor cached/live poster requests', async () => {
   const controller: any = Object.create(CameraStreamController.prototype);

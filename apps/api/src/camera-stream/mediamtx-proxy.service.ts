@@ -2882,7 +2882,8 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       // Explicit source/credential changes still apply; only defer tuning of
       // the existing publisher, and report its ACTUAL operations while draining.
       if (!isSamePath && needsPublisher && hasSameSource
-        && String(current.runOnDemand ?? '').includes(sourceUrl)) {
+        && (String(current.runOnDemand ?? '').includes(sourceUrl)
+          || (sharedInput.shared && String(current.runOnDemand ?? '').includes(new URL(sharedInput.url).pathname)))) {
         let inUse = true; // Control-plane failure must not interrupt viewers.
         try {
           const runtime = JSON.parse(await this.apiRequest('GET', `/v3/paths/get/${encodedPath}`));
