@@ -124,6 +124,7 @@ function AppInner() {
   // mexia no volume de um stream que vinha sem faixa de áudio nenhuma.
   const [audioAoVivo, setAudioAoVivo] = useState(false);
   const audioAoVivoRef = useRef(false);
+  const audioPreparadoCameraRef = useRef<string | null>(null);
   useEffect(() => { audioAoVivoRef.current = audioAoVivo; }, [audioAoVivo]);
   // GRAVAÇÃO NO SISTEMA (acervo) — diferente do clipe local do botão "Gravar".
   const [gravacaoSistemaAtiva, setGravacaoSistemaAtiva] = useState(false);
@@ -142,6 +143,7 @@ function AppInner() {
       setGravacaoSistemaAtiva(false);
       setAudioAoVivo(false);
       audioAoVivoRef.current = false;
+      audioPreparadoCameraRef.current = null;
       return;
     }
     if (session?.user.role === 'VIEWER' || liveCamera.canRecord !== true || liveCamera.recordingMode === 'continuous') return;
@@ -548,14 +550,14 @@ function AppInner() {
       // original (ex.: H.265) não existe na oferta WebRTC deste Android.
       setHdUrl(hls);
       setHdWhepUrl(whep);
-      void loadStream(cameraId, 'grid');
+      void loadStream(cameraId, modoDaGrade());
       return true;
     } catch {
       if (sessionTokenRef.current !== token || hdRequestRef.current !== generation || liveCameraIdRef.current !== cameraId) return false;
       setHdUrl(null);
       setHdWhepUrl(null);
       // O modo HD+ exibe a falha WHEP; Economia só abre por escolha do usuário.
-      void loadStream(cameraId, 'grid', true);
+      void loadStream(cameraId, modoDaGrade(), true);
       return false;
     }
   };
@@ -761,9 +763,9 @@ function AppInner() {
   };
 
   /** Perfil da grade, com ou sem áudio conforme o operador pediu. */
-  const modoDaGrade = (): ModoDeEntrega => (audioAoVivoRef.current ? 'grid-audio' : 'grid');
+  const modoDaGrade = (): ModoDeEntrega => (audioAoVivoRef.current || (audioPreparadoCameraRef.current !== null && audioPreparadoCameraRef.current === liveCameraIdRef.current) ? 'grid-audio' : 'grid');
   /** Perfil de máxima qualidade, idem. */
-  const modoMaxima = (): ModoDeEntrega => (audioAoVivoRef.current ? 'original-audio' : 'original');
+  const modoMaxima = (): ModoDeEntrega => (audioAoVivoRef.current || (audioPreparadoCameraRef.current !== null && audioPreparadoCameraRef.current === liveCameraIdRef.current) ? 'original-audio' : 'original');
 
   /**
    * Rondas e mosaicos do usuário. Best-effort: instalação antiga (sem estas
@@ -819,6 +821,9 @@ function AppInner() {
       }
     } catch (error) {
       if (sessionTokenRef.current !== token || streamRequestRef.current.get(cameraId) !== generation) return;
+      if (viewMode === 'grid-audio' && audioPreparadoCameraRef.current === cameraId) {
+        audioPreparadoCameraRef.current = null;
+      }
       setStreamUrls((current) => ({ ...current, [cameraId]: null }));
       setStreamWhep((current) => ({ ...current, [cameraId]: null }));
       // Falhar ao abrir o vídeo não apaga o último snapshot válido. Assim a
@@ -1322,8 +1327,9 @@ function AppInner() {
     setAudioAoVivo(ligado);
     audioAoVivoRef.current = ligado;
     const cameraId = liveCameraIdRef.current;
-    if (!cameraId) return;
-    void loadStream(cameraId, ligado ? 'grid-audio' : 'grid', true);
+    if (!cameraId || !ligado || audioPreparadoCameraRef.current === cameraId) return;
+    audioPreparadoCameraRef.current = cameraId;
+    void loadStream(cameraId, 'grid-audio', true);
     if (hdWhepUrl) void loadHdStream(cameraId);
   };
 

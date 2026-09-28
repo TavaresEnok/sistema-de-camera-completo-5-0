@@ -10,6 +10,8 @@ import {
   resolveOriginalRtspProfile,
 } from '../cameras/helpers/rtsp-url.helper';
 import * as os from 'node:os';
+import { isManagedLivePublisher, withTranscodeAdmission } from './helpers/transcode-admission.helper';
+import { audioCodecFromTracks } from './helpers/live-audio.helper';
 import { envNumber } from '../common/config/env-number.helper';
 import {
   ingestPathNames,
@@ -76,6 +78,9 @@ type EnsuredCameraPath = {
   sourceUrl: string | null;
   sourceVideoCodec: string | null;
   transcodedForLive: boolean;
+  videoEncoded?: boolean;
+  audioEncoded?: boolean;
+  audioAvailable?: boolean | null;
   liveProfile: { channel: number; subtype: number } | null;
   deliveryMode: LiveViewMode;
   /** A fonte efetiva da grade já é o mesmo perfil físico da máxima resolução. */
@@ -540,9 +545,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     // MediaMTX no caminho quente do tile — exatamente o que tiramos de lá ao mover
     // o ffprobe para fora. O número fica alguns segundos velho, e isso basta: ele
     // serve de FREIO, não de contabilidade exata.
-    this.activeTranscodes = items.filter(
-      (item: any) => Boolean(item?.ready) && String(item?.source?.type ?? '') === 'publisher',
-    ).length;
+    this.activeTranscodes = items.filter(isManagedLivePublisher).length;
 
     const seen = new Set<string>();
     const stuck: Array<{ name: string; ready: boolean; readers: number }> = [];
@@ -2325,6 +2328,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     let height = Number(camera.detectedHeight ?? camera.streamHeight) || null;
     let fps = Number(camera.detectedFps ?? camera.streamFps) || null;
     let bitrateKbps = Number(camera.detectedBitrateKbps ?? camera.streamBitrateKbps) || null;
+    let audioCodec: string | null = null;
 
     if (this.rtmpIngestSource) {
       // Para RTMP não basta conhecer a chave: sem um publisher ativo, criar o
@@ -2341,6 +2345,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       height = resolved.metadata.height ?? height;
       fps = resolved.metadata.fps ?? fps;
       bitrateKbps = resolved.metadata.bitrateKbps ?? bitrateKbps;
+      audioCodec = audioCodecFromTracks(resolved.tracks, resolved.ready);
       if (!codec && resolved.ready) {
         codec = await this.probeStreamVideoCodec(sourceUrl!, rtspTransport);
       }
@@ -2392,6 +2397,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       isHevc: codec ? isHevcCodec(codec) : true,
       requiresSanitization: false,
       ingestPathName: pathName,
+      audioCodec,
     };
   }
 
@@ -2432,7 +2438,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     // Live (tela cheia) respeita o perfil principal configurado. A GRADE usa o
     // sub-stream quando existe (mais leve e rápido); ver chooseGridSource.
     // Com GRID_SOURCE_PROFILE=camera a grade segue a "Fonte da imagem" do
-    // cadastro; o Instantâneo (`grid-audio`) continua no stream 2.
+    // cadastro; ativar áudio mantém essa mesma escolha.
     const gridSegueCadastro = gridFollowsCameraProfile(deliveryMode, this.gridSourcePolicy);
     let selected = pushSourced
       ? await this.resolvePushLiveSource(camera, rtspTransport)
@@ -2450,10 +2456,10 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     // passa sem conversão. Principal H.265 fica de fora: conversão cara e, em
     // câmera barata, H.265 sujo que não monta quadro nenhum (tela preta a 0 fps
     // medida na IBTelecom, 18/09/2026). Ver gradeDeveUsarPrincipalPorFormato.
-    // O Instantâneo segue no stream 2.
+    // A variante com áudio aplica a mesma regra de formato.
     if (
       !pushSourced
-      && (deliveryMode === 'grid' || deliveryMode === 'grid-hevc')
+      && (deliveryMode === 'grid' || deliveryMode === 'grid-hevc' || deliveryMode === 'grid-audio')
       && 'usedSubStream' in selected && selected.usedSubStream
       && streamDiffersInAspect(
         { width: 'width' in selected ? selected.width : null, height: 'height' in selected ? selected.height : null },
@@ -2512,8 +2518,10 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     // servidor é ~0; o celular decodifica o HEVC no hardware. Só HLS (WebRTC não
     // reproduz H.265), com latência maior — é o trade-off assumido pelo usuário.
     const wantsAudio = deliveryMode === 'grid-audio' || deliveryMode === 'original-audio';
+    const sourceAudioCodec = 'audioCodec' in selected ? selected.audioCodec : null;
+    const audioAvailable = sourceAudioCodec == null ? null : sourceAudioCodec !== 'none';
     const codecPassthroughMode = deliveryMode === 'original' || deliveryMode === 'grid-hevc';
-    const needsPublisher = wantsAudio || (!codecPassthroughMode && (isHevc || sanitizeGridSource));
+    const needsPublisher = (wantsAudio && audioAvailable !== false) || (!codecPassthroughMode && (isHevc || sanitizeGridSource));
     const originalProfile = resolveOriginalRtspProfile(camera);
     // Só afirmamos equivalência quando a grade NÃO passou por FFmpeg e o perfil
     // físico escolhido é precisamente o que a máxima resolução pediria. Assim o
@@ -2532,7 +2540,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     // por um recém-chegado. Sem essa assimetria o freio viraria um revezamento
     // onde ninguém assiste nada, que é pior que a recusa honesta.
     if (needsPublisher && this.activeTranscodes >= this.maxTranscodes) {
-      const jaExiste = await this.getPath(pathName).then(() => true).catch(() => false);
+      const jaExiste = await this.isPathPublishing(pathName).catch(() => false);
       if (!jaExiste) {
         this.logger.warn(
           `Teto de transcodes atingido (${this.activeTranscodes}/${this.maxTranscodes}): `
@@ -2547,6 +2555,10 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     // Só é "transcodificado" quando o publisher FFmpeg existe de fato — no modo
     // 'original' (passthrough) a fonte HEVC segue intocada e o rótulo deve refletir isso.
     const transcodedForLive = needsPublisher && (isHevc || wantsAudio);
+    // Audio never changes H.264 resolution. Original preserves its codec too;
+    // only the compatibility grid needs a HEVC -> H.264 video conversion.
+    const videoEncoded = needsPublisher && isHevc && !originalDelivery;
+    const audioEncoded = needsPublisher && wantsAudio && audioAvailable !== false && sourceAudioCodec !== 'opus';
 
     const desiredPath: any = {
       source: sourceUrl,
@@ -2636,10 +2648,10 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       if (copiaNaGrade.copiar) {
         this.logger.log(`Grade de ${cameraId} COPIA o vídeo (${sourceWidth}x${sourceHeight} H.264 já cabe) — sem reencode.`);
       }
-      const videoJaServe = !isHevc
-        && ((deliveryMode !== 'grid' && deliveryMode !== 'grid-audio') || copiaNaGrade.copiar);
+      const videoJaServe = !videoEncoded;
       const instantBitrateKbps = resolveInstantBitrateKbps({
-        sourceBitrateKbps,
+        // Stable policy: scene-dependent arrival bitrate must not rebuild paths.
+        sourceBitrateKbps: null,
         sourceWidth,
         sourceHeight,
         outputWidth: GRID_LIVE_MAX_WIDTH,
@@ -2674,7 +2686,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       // origem aparece no MediaMTX, mas frequentemente não chega tocável ao
       // navegador. Quando o operador não o escuta, o <video> permanece muted.
       const audioArgs = wantsAudio
-        ? '-map 0:a:0? -c:a libopus -b:a 64k -ac 1 -ar 48000'
+        ? (sourceAudioCodec === 'opus' ? '-map 0:a:0? -c:a copy' : '-map 0:a:0? -c:a libopus -b:a 64k -ac 1 -ar 48000')
         : '-an';
       // MediaMTX preenche $MTX_PATH e $RTSP_PORT automaticamente para o script.
       // -threads 4: limita libx264 a 4 threads por câmera (3 câmeras × 4 = 12 threads totais).
@@ -2715,7 +2727,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
         `tr "\\0" " " < "$d/cmdline" 2>/dev/null | grep -qF "/${pathName} " ` +
         `&& kill -9 "$(basename "$d")" 2>/dev/null; ` +
         `done`;
-      const runOnDemandScript = `${prekill}; exec ${ffmpegCommand}`;
+      const runOnDemandScript = `${prekill}; ${withTranscodeAdmission(ffmpegCommand, this.maxTranscodes)}`;
       desiredPath.runOnDemand = `sh -c ${this.shellQuote(runOnDemandScript)}`;
       // FFMPEG ÓRFÃO: o mesmo prekill, agora também na SAÍDA do último espectador.
       //
@@ -2768,12 +2780,37 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
         : true;
       const isSamePath = hasSameSource && hasSameCameraSourceSettings && hasSamePublisherSettings;
 
+      // A policy refresh must not evict viewers of the same physical source.
+      // Explicit source/credential changes still apply; only defer tuning of
+      // the existing publisher, and report its ACTUAL operations while draining.
+      if (!isSamePath && needsPublisher && hasSameSource
+        && String(current.runOnDemand ?? '').includes(sourceUrl)) {
+        let inUse = true; // Control-plane failure must not interrupt viewers.
+        try {
+          const runtime = JSON.parse(await this.apiRequest('GET', `/v3/paths/get/${encodedPath}`));
+          inUse = Array.isArray(runtime.readers) && runtime.readers.length > 0;
+        } catch (error: any) {
+          if (Number(error?.status) === 404) inUse = false;
+        }
+        if (inUse) {
+          return {
+            pathName, sourceUrl, sourceVideoCodec, transcodedForLive, liveProfile,
+            deliveryMode, sourceIsOriginal,
+            videoEncoded: /-c:v (?!copy\b)\S+/.test(current.runOnDemand),
+            audioEncoded: /-c:a (?!copy\b)\S+/.test(current.runOnDemand),
+          };
+        }
+      }
+
       if (isSamePath) {
         return {
           pathName,
           sourceUrl,
           sourceVideoCodec,
           transcodedForLive,
+          videoEncoded,
+          audioEncoded,
+          audioAvailable,
           liveProfile,
           deliveryMode,
           sourceIsOriginal,
@@ -2800,6 +2837,9 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
           sourceUrl,
           sourceVideoCodec,
           transcodedForLive,
+          videoEncoded,
+          audioEncoded,
+          audioAvailable,
           liveProfile,
           deliveryMode,
           sourceIsOriginal,
@@ -2822,6 +2862,9 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       sourceUrl,
       sourceVideoCodec,
       transcodedForLive,
+      videoEncoded,
+      audioEncoded,
+      audioAvailable,
       liveProfile,
       deliveryMode,
       sourceIsOriginal,

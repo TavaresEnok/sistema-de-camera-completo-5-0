@@ -176,8 +176,10 @@ function playerHtml(whepUrl: string, muted: boolean, contentFit: 'contain' | 'co
       if (closed) return;
       clearTimeout(connectionTimer);
 
+      let statsPolling = false;
       statsTimer = setInterval(async () => {
-        if (closed || !pc) return;
+        if (closed || !pc || statsPolling) return;
+        statsPolling = true;
         try {
           const stats = await pc.getStats();
           if (closed) return;
@@ -192,7 +194,7 @@ function playerHtml(whepUrl: string, muted: boolean, contentFit: 'contain' | 'co
           } else if (liveSent && Date.now() - lastProgressAt > 15000) {
             fail('O vídeo H.265 parou de avançar.');
           }
-        } catch (_) {}
+        } catch (_) {} finally { statsPolling = false; }
       }, 2000);
     } catch (error) {
       fail('Não foi possível abrir o vídeo nesta qualidade. Tente novamente ou use a opção de economia de dados.');

@@ -20,7 +20,7 @@ test('política da grade: só "camera" liga; qualquer outro valor mantém o padr
 test('com "camera", a grade segue o cadastro e o Instantâneo continua no stream 2', () => {
   assert.equal(gridFollowsCameraProfile('grid', 'camera'), true);
   assert.equal(gridFollowsCameraProfile('grid-hevc', 'camera'), true);
-  assert.equal(gridFollowsCameraProfile('grid-audio', 'camera'), false, 'Instantâneo é sempre o stream 2');
+  assert.equal(gridFollowsCameraProfile('grid-audio', 'camera'), true, 'ativar áudio preserva a fonte da grade');
   assert.equal(gridFollowsCameraProfile('original', 'camera'), false);
 });
 

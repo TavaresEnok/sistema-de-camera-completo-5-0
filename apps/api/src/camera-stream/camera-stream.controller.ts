@@ -484,6 +484,8 @@ export class CameraStreamController {
     let mediaBridge = this.mediamtxProxyService.buildPublicUrls(req, null, null);
     let measuredLiveCodec: string | null = null;
     let liveTranscodedForBrowser = false;
+    let audioEncoded = false;
+    let audioAvailable: boolean | null = null;
     let gridSourceIsOriginal = false;
     let effectiveDeliveryProfile = resolveDeliveryRtspProfile(camera);
     if (this.mediamtxProxyService.isEnabled()) {
@@ -503,8 +505,10 @@ export class CameraStreamController {
         // vídeo H.264 continua em cópia. O selo do painel é exclusivamente
         // sobre H.265→H.264 (o custo de vídeo que chega a ~5×), portanto não
         // pode usar esse booleano amplo e assustar o operador sem motivo.
-        liveTranscodedForBrowser = ensured.transcodedForLive
-          && isHevcCodec(ensured.sourceVideoCodec);
+        liveTranscodedForBrowser = ensured.videoEncoded
+          ?? (ensured.transcodedForLive && isHevcCodec(ensured.sourceVideoCodec));
+        audioEncoded = ensured.audioEncoded === true;
+        audioAvailable = ensured.audioAvailable ?? null;
         effectiveDeliveryProfile = ensured.liveProfile ?? effectiveDeliveryProfile;
       } catch (error) {
         // Uma câmera RTMP só existe enquanto o equipamento/app está publicando.
@@ -603,9 +607,9 @@ export class CameraStreamController {
       deliveryMode: viewMode,
       deliveryTarget: viewMode === 'grid' || viewMode === 'grid-audio' || viewMode === 'grid-hevc'
         ? {
-            maxWidth: GRID_LIVE_MAX_WIDTH,
-            maxHeight: GRID_LIVE_MAX_HEIGHT,
-            targetFps: GRID_LIVE_TARGET_FPS,
+            maxWidth: liveTranscodedForBrowser ? GRID_LIVE_MAX_WIDTH : null,
+            maxHeight: liveTranscodedForBrowser ? GRID_LIVE_MAX_HEIGHT : null,
+            targetFps: liveTranscodedForBrowser ? GRID_LIVE_TARGET_FPS : null,
             browserCodec: viewMode === 'grid-hevc' ? sourceCodec : 'h264',
             sourceIsOriginal: gridSourceIsOriginal,
           }
@@ -647,6 +651,10 @@ export class CameraStreamController {
         sourceVideoCodec: sourceCodec,
         originalVideoCodec: originalCodec,
         liveTranscodedForBrowser,
+        videoEncoded: liveTranscodedForBrowser,
+        videoCopied: mediaBridge.enabled && !liveTranscodedForBrowser,
+        audioEncoded,
+        audioAvailable,
         // ── CUSTO DA CONVERSÃO, EXPLÍCITO ───────────────────────────────────
         //
         // Medido na simulação de capacidade (2026-08-03): entregar H.265
@@ -659,7 +667,7 @@ export class CameraStreamController {
         // trocar de navegador sai de graça e devolve 5× de capacidade.
         transcodeCost: liveTranscodedForBrowser
           ? {
-            cpuMultiplier: 5,
+            cpuMultiplier: null, // Cost depends on resolution, codec and hardware; not a measurement.
             reason: supportsOriginalOnClient
               ? 'A fonte é H.265 e este modo de entrega exige conversão.'
               : 'Este navegador não decodifica H.265, então o servidor converte para H.264.',

@@ -22,6 +22,8 @@ import {
   type WebrtcInboundSample,
 } from '../lib/live-protocol-policy';
 import { discoverWhepIceServers } from '../lib/whep-ice-servers';
+import { presentedFrameRate, safeWhepSessionUrl } from '../lib/live-session-safety';
+import { summarizeVideoReceiver } from '../lib/live-receiver-diagnostics';
 
 type LiveStreamPlayerProps = {
   cameraId: string;
@@ -517,7 +519,9 @@ export function LiveStreamPlayer({
   const GRID_HEVC_ENABLED = false;
   const reusesGridAtMaximum = liveViewMode === 'selected' && qualityMode === 'max' && gridSourceIsOriginal;
   const deliveryMode: LiveDeliveryMode = liveViewMode === 'selected'
-    ? (qualityMode === 'max' ? (reusesGridAtMaximum ? 'grid' : 'original') : 'grid-audio')
+    ? (qualityMode === 'max'
+      ? (gridAudioRequested ? 'original-audio' : (reusesGridAtMaximum ? 'grid' : 'original'))
+      : (gridAudioRequested ? 'grid-audio' : 'grid'))
     : gridAudioRequested
       ? 'grid-audio'
       : (GRID_HEVC_ENABLED && !gridUsesH264Fallback) ? 'grid-hevc' : 'grid';
@@ -1275,6 +1279,7 @@ export function LiveStreamPlayer({
             try {
               await fetch(sessao, {
                 method: 'DELETE',
+                redirect: 'error',
                 mode: 'cors',
                 headers: { Authorization: `Bearer ${mediaAuthTokenRef.current}` },
                 signal: abortar.signal,
@@ -1614,13 +1619,15 @@ export function LiveStreamPlayer({
                 // tentativa ainda for a corrente; caso contrário ela mesma se
                 // encerra — fecha o `pc` e apaga a sessão no servidor.
                 const location = response.headers.get('location');
-                const sessionUrl = location ? new URL(location, whepUrl).toString() : null;
+                const sessionUrl = safeWhepSessionUrl(location, whepUrl);
                 const superada = cancelled || webrtcPcRef.current !== pc || abortController.signal.aborted;
                 if (superada) {
                   try { pc.close(); } catch { /* já encerrado */ }
                   if (sessionUrl) {
                     void fetch(sessionUrl, {
                       method: 'DELETE',
+                      signal: AbortSignal.timeout(2000),
+                      redirect: 'error',
                       mode: 'cors',
                       headers: { Authorization: `Bearer ${mediaAuthTokenRef.current}` },
                     }).catch(() => undefined);
@@ -1644,6 +1651,8 @@ export function LiveStreamPlayer({
                   if (anterior && anterior !== sessionUrl) {
                     void fetch(anterior, {
                       method: 'DELETE',
+                      signal: AbortSignal.timeout(2000),
+                      redirect: 'error',
                       mode: 'cors',
                       headers: { Authorization: `Bearer ${mediaAuthTokenRef.current}` },
                     }).catch(() => undefined);
@@ -1935,6 +1944,8 @@ export function LiveStreamPlayer({
       if (webrtcSessionUrlRef.current) {
         void fetch(webrtcSessionUrlRef.current, {
           method: 'DELETE',
+          signal: AbortSignal.timeout(2000),
+          redirect: 'error',
           mode: 'cors',
           headers: { Authorization: `Bearer ${mediaAuthTokenRef.current}` },
         }).catch(() => undefined);
@@ -1978,7 +1989,14 @@ export function LiveStreamPlayer({
     let callbackId: number | null = null;
     let cancelled = false;
     let fpsWindowStartedAt = performance.now();
-    let fpsWindowFrames = 0;
+    let fpsWindowFrames: number | null = null;
+    let lastFrameAt = performance.now();
+    const staleTimer = window.setInterval(() => {
+      if (performance.now() - lastFrameAt > 2500) {
+        setDisplayFps(null);
+        fpsWindowFrames = null;
+      }
+    }, 1000);
     const onFrame = (_now: number, metadata: { mediaTime?: number; presentedFrames?: number }) => {
       if (cancelled) return;
       lastRenderedFrameRef.current = {
@@ -1986,12 +2004,21 @@ export function LiveStreamPlayer({
         mediaTime: typeof metadata.mediaTime === 'number' && Number.isFinite(metadata.mediaTime) ? metadata.mediaTime : element.currentTime,
         presentedFrames: metadata.presentedFrames ?? lastRenderedFrameRef.current.presentedFrames + 1,
       };
-      fpsWindowFrames += 1;
+      lastFrameAt = performance.now();
+      const presented = metadata.presentedFrames;
+      if (typeof presented !== 'number') {
+        callbackId = element.requestVideoFrameCallback(onFrame);
+        return;
+      }
+      if (fpsWindowFrames == null || presented < fpsWindowFrames) {
+        fpsWindowFrames = presented;
+        fpsWindowStartedAt = performance.now();
+      }
       const elapsedMs = performance.now() - fpsWindowStartedAt;
       if (elapsedMs >= 1200) {
-        setDisplayFps(Math.max(0, Math.round((fpsWindowFrames * 1000) / elapsedMs)));
+        setDisplayFps(presentedFrameRate(fpsWindowFrames, presented, elapsedMs));
         fpsWindowStartedAt = performance.now();
-        fpsWindowFrames = 0;
+        fpsWindowFrames = presented;
       }
       callbackId = element.requestVideoFrameCallback(onFrame);
     };
@@ -1999,12 +2026,13 @@ export function LiveStreamPlayer({
     callbackId = element.requestVideoFrameCallback(onFrame);
     return () => {
       cancelled = true;
+      window.clearInterval(staleTimer);
       setDisplayFps(null);
       if (callbackId != null && typeof element.cancelVideoFrameCallback === 'function') {
         element.cancelVideoFrameCallback(callbackId);
       }
     };
-  }, []);
+  }, [cameraId, deliveryMode]);
 
   useEffect(() => {
     // Cada perfil abre outro path/PeerConnection. Não carregue para a nova
@@ -2256,6 +2284,11 @@ export function LiveStreamPlayer({
       try {
         const stats = await pc.getStats();
         if (webrtcPcRef.current !== pc || activeProtocolRef.current !== 'WEBRTC') return;
+        // Local opt-in diagnostic capture. No per-frame network requests and no
+        // candidate IPs or credentials in the event payload.
+        window.dispatchEvent(new CustomEvent('s2cam:live-receiver-sample', {
+          detail: { cameraId, sampledAt: Date.now(), ...summarizeVideoReceiver(stats) },
+        }));
         let bytesReceived = 0;
         let framesDecoded = 0;
         let hasDecodedFrameMetric = false;
@@ -2735,12 +2768,12 @@ export function LiveStreamPlayer({
           type="button"
           onClick={() => {
             const nextMuted = !isMuted;
-            if (liveViewMode === 'grid' && nextMuted !== isMuted) {
+            if (!nextMuted && !gridAudioRequested) {
               // Só o clique que liga/desliga áudio reconecta este tile. A
               // grade inteira continua no H.264 em passthrough, sem áudio.
               if (hasFrameRef.current) preserveFrameOnReloadRef.current = true;
-              setAudioSwitchMessage(nextMuted ? 'Desativando áudio…' : 'Ativando áudio…');
-              setGridAudioRequested(!nextMuted);
+              setAudioSwitchMessage('Ativando áudio…');
+              setGridAudioRequested(true);
             }
             setIsMuted(nextMuted);
             const element = videoRef.current;

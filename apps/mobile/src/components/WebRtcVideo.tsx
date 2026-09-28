@@ -156,8 +156,10 @@ export function WebRtcVideo({
         // Só frames decodificados confirmam vídeo e sustentam a sessão.
         let lastMediaProgressAt = Date.now();
         let lastFrames = -1;
+        let statsPolling = false;
         mediaWatchdog = setInterval(() => {
-          if (cancelled || !pc || !connectionReady || !appActive) return;
+          if (cancelled || !pc || !connectionReady || !appActive || statsPolling) return;
+          statsPolling = true;
           void pc.getStats().then((stats: any) => {
             if (cancelled) return;
             let frames = 0;
@@ -180,7 +182,7 @@ export function WebRtcVideo({
               return;
             }
             if (liveRef.current && Date.now() - lastMediaProgressAt >= MEDIA_STALL_TIMEOUT_MS) failover('O vídeo parou de chegar pela conexão WebRTC.');
-          }).catch(() => undefined);
+          }).catch(() => undefined).finally(() => { statsPolling = false; });
         }, MEDIA_WATCHDOG_INTERVAL_MS);
 
         const ev = pc as unknown as PcEvents;

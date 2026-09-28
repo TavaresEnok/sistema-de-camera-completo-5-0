@@ -46,9 +46,9 @@ test('o watchdog conta só os paths que REALMENTE transcodificam', () => {
     reconcileMissingPaths: async () => undefined,
     apiRequest: async () => JSON.stringify({ items: [
       { name: 'cam_a_grid', ready: true,  source: { type: 'publisher' } },   // transcode
-      { name: 'cam_b_grid', ready: true,  source: { type: 'rtspSession' } }, // passthrough
+      { name: 'cam_b_grid', ready: true,  source: { type: 'rtspSource' } }, // passthrough
       { name: 'cam_c_grid', ready: false, source: { type: 'publisher' } },   // não pronto
-      { name: 'cam_d_grid', ready: true,  source: { type: 'publisher' } },   // transcode
+      { name: 'cam_d_grid', ready: true,  source: { type: 'rtspSession' } }, // MediaMTX 1.18
     ]}),
     recoverStuckPaths: async () => undefined,
     reapDuplicateWebrtcSessions: async () => undefined,

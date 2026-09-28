@@ -144,7 +144,7 @@ export function resolveGridLiveProfile(input?: {
 //
 // CUSTO: stream 1 em H.265 obriga converter para o navegador — medido na Vibe,
 // ~1,2 núcleo por câmera 2304×1296. Ligue só onde a conta fecha.
-// O Instantâneo (`grid-audio`) usa o stream 2 nos dois casos.
+// A variante com áudio segue a mesma fonte da grade sem áudio.
 export type GridSourcePolicy = 'sub' | 'camera';
 
 export function parseGridSourcePolicy(raw: string | null | undefined): GridSourcePolicy {
@@ -153,7 +153,7 @@ export function parseGridSourcePolicy(raw: string | null | undefined): GridSourc
 
 /** A grade deve usar o perfil de live do cadastro em vez de procurar o stream 2? */
 export function gridFollowsCameraProfile(mode: LiveViewMode, policy: GridSourcePolicy): boolean {
-  return policy === 'camera' && (mode === 'grid' || mode === 'grid-hevc');
+  return policy === 'camera' && (mode === 'grid' || mode === 'grid-hevc' || mode === 'grid-audio');
 }
 
 /**

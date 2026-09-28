@@ -555,6 +555,7 @@ export class FfmpegMjpegService {
 
   private async generateLivePosterFrame(cameraId: string): Promise<PosterCacheEntry> {
     const camera = await this.camerasService.getCameraOrThrow(cameraId);
+    if (camera.enabled === false) throw new NotFoundException('Câmera desativada.');
     if (!this.checkFfmpegAvailable()) {
       throw new ServiceUnavailableException('FFmpeg não está instalado no servidor.');
     }
