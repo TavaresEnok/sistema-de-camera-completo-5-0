@@ -72,3 +72,13 @@ Não declarar todas as 18 linhas concluídas nem prometer 20 FPS: a economia e a
 - Mais 35 testes de compartilhamento/registro/identidade aprovados e TypeScript da API aprovado.
 - Imagens de produção API/web compiladas, ainda sem substituir os contêineres. Durante preparação do rollback, Docker não encontrou os IDs das imagens dos contêineres atuais; tentativa de snapshot também falhou com `content digest ... not found`. Não reiniciar esses contêineres sem uma recuperação verificável.
 - IBTelecom acessível: checkout `667b4fa`, diferente do código corrigido; nenhuma implantação feita ali nesta continuação. Management acessível, porém projeto não está em `/opt/drac` e Docker exige sudo; localização/inventário ainda em andamento.
+
+### Atualização da Vibe
+
+O problema de conteúdo Docker das imagens atuais foi contornado sem remover dados: imagens anteriores `drac-live-rollback-api:7081265` e `drac-live-rollback-web:7081265` foram verificadas (Node executável; nginx com tmpfs de runtime aprovado) e preservadas sob `drac-video-rollback-api:20260928` e `drac-video-rollback-web:20260928`. São imagens de recuperação anteriores, não snapshots exatos da sessão atual.
+
+API/web da Vibe foram então substituídos com `compose up -d --no-deps api web`; ambos ficaram **healthy**. Banco com 65 migrações aplicadas e código com 65 migrações; nenhuma nova migração adicionada por estas correções. MediaMTX/Redis/Postgres/ingestão não foram reiniciados. Imagens geradas contêm as mudanças de código até `945c1f7` (o commit foi criado depois do início do build).
+
+A sessão da sala permaneceu no comando antigo (`libx264`, sem admissão por flock), pois já possuía leitor. Não foi expulsa. Solicitado fechar a visualização por cerca de 30 segundos para reconciliar a configuração e medir a nova sessão. Isso significa que **serviço atualizado ainda não comprova correção ativa naquele processo antigo**.
+
+Management: diretório encontrado `/opt/ajustcam-management`, não é raiz Git; não possui `sudo`. Acesso administrativo por `su` funcionou. Central em execução identificada como `ajustcam-central:cc32efa`. Nenhuma troca da Central ou geração de APK realizada nesta etapa.
