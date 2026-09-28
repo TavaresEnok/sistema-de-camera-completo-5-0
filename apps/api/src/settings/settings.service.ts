@@ -240,7 +240,7 @@ export class SettingsService {
       throw new BadRequestException('Nenhuma configuração válida informada.');
     }
 
-    for (const [key, value] of entries) {
+    const validated = entries.map(([key, value]) => {
       const spec = SETTING_SPECS[key];
       // A regra de validação mora no ajudante puro (testado sem banco nem HTTP).
       let serialized: string;
@@ -250,12 +250,13 @@ export class SettingsService {
         if (erro instanceof ValorDeConfiguracaoInvalido) throw new BadRequestException(erro.message);
         throw erro;
       }
-      await this.prisma.systemSetting.upsert({
+      return { key, serialized };
+    });
+    await this.prisma.$transaction(validated.map(({ key, serialized }) => this.prisma.systemSetting.upsert({
         where: { key },
         create: { key, value: serialized, updatedByUserId: userId ?? null },
         update: { value: serialized, updatedByUserId: userId ?? null },
-      });
-    }
+      })));
 
     this.cache = null;
     this.logger.log(`Configurações atualizadas (${entries.map(([k]) => k).join(', ')}).`);

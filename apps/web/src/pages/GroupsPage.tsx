@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'wouter';
 import axios from 'axios';
 import { Plus, Users, Camera, Settings, Trash2, Check, ChevronRight, Pencil, HardDrive } from 'lucide-react';
@@ -16,6 +16,9 @@ import { useVmsDataStore } from '../store/vmsDataStore';
 import { useAuthStore } from '../store/authStore';
 import { getApiBaseUrl } from '../lib/api-base';
 import { toast } from '../hooks/use-toast';
+import { clientError } from '../lib/client-error';
+import { confirmAction } from '../components/ActionConfirmation';
+import { hasPermission, usePermissionsStore } from '../store/permissionsStore';
 
 const API_URL = getApiBaseUrl();
 type PermissionLevel = 'VIEW' | 'CONTROL' | 'RECORD' | 'ADMIN';
@@ -26,7 +29,7 @@ type GroupAccessStatus = 'ACTIVE' | 'RESTRICTED' | 'SUSPENDED';
 
 const ACCESS_OPTIONS: Array<{ value: GroupAccessStatus; label: string; hint: string }> = [
   { value: 'ACTIVE', label: 'Liberado', hint: 'Acesso normal a tudo.' },
-  { value: 'RESTRICTED', label: 'Restrito (sem histórico)', hint: 'Continua vendo AO VIVO, mas perde playback, gravações e exportação.' },
+  { value: 'RESTRICTED', label: 'Restrito (sem histórico)', hint: 'Mantém o vídeo ao vivo, mas não acessa gravações nem exportações.' },
   { value: 'SUSPENDED', label: 'Suspenso (sem acesso)', hint: 'Não vê nada. Use quando o cliente está inadimplente.' },
 ];
 
@@ -67,13 +70,13 @@ const LEVEL_LABEL: Record<PermissionLevel, string> = {
 const FUNCTIONAL_PERMISSIONS = [
   { key: 'liveView', label: 'Acesso ao ao vivo' },
   { key: 'playback', label: 'Reprodução' },
-  { key: 'ptzControl', label: 'Controle PTZ' },
+  { key: 'ptzControl', label: 'Movimentar câmera (PTZ)' },
   { key: 'alarmAck', label: 'Reconhecer alarmes' },
   { key: 'exportEvidence', label: 'Exportar evidências' },
   { key: 'cameraConfig', label: 'Configurar câmeras' },
   { key: 'userManage', label: 'Gerenciar usuários' },
   { key: 'auditLogs', label: 'Ver registros do sistema' },
-  { key: 'serverConfig', label: 'Configurações globais do sistema' },
+  { key: 'serverConfig', label: 'Configurações da instalação' },
   { key: 'roleManage', label: 'Gerenciar funções e permissões' },
   { key: 'reportGenerate', label: 'Gerar relatórios' },
 ] as const;
@@ -83,7 +86,7 @@ const ROLE_LABELS: Record<string, string> = {
   VIEWER: 'Visualizador',
   OPERATOR: 'Operador',
   ADMIN: 'Administrador',
-  SUPER_ADMIN: 'Super Admin',
+  SUPER_ADMIN: 'Administrador principal',
 };
 
 function apiClient(token: string | null) {
@@ -99,13 +102,18 @@ export default function GroupsPage() {
   const loadData = useVmsDataStore((s) => s.load);
   const accessToken = useAuthStore((s) => s.accessToken);
   const currentUser = useAuthStore((s) => s.user);
-  const isAdmin = currentUser?.role === 'admin';
+  usePermissionsStore((s) => s.permissions);
+  const isAdmin = currentUser?.role === 'admin' && hasPermission('cameraConfig');
+  const canManageAccess = currentUser?.role === 'admin' && hasPermission('userManage');
 
   const [groups, setGroups] = useState<AccessGroup[]>([]);
   const [permissions, setPermissions] = useState<UserPermission[]>([]);
   const [roleMatrix, setRoleMatrix] = useState<RolePermissionMatrix>({});
   const [roleMatrixUnavailable, setRoleMatrixUnavailable] = useState(false);
   const [loading, setLoading] = useState(false);
+  const loadSequence = useRef(0);
+  const [groupSearch, setGroupSearch] = useState('');
+  const [cameraSearch, setCameraSearch] = useState('');
   const [loadError, setLoadError] = useState<string | null>(null);
   const [selGroupId, setSelGroupId] = useState<string | null>(null);
   const [tab, setTab] = useState<'cameras' | 'users' | 'permissions'>('cameras');
@@ -141,6 +149,9 @@ export default function GroupsPage() {
   // grupo e escolher a quem ela se aplica eram duas telas diferentes.
   const [seguidores, setSeguidores] = useState<Set<string>>(new Set());
   const [retentionSaving, setRetentionSaving] = useState(false);
+  const [cameraBusy, setCameraBusy] = useState(false);
+  const [revoking, setRevoking] = useState<string | null>(null);
+  const [transfer, setTransfer] = useState<{ cameraId: string; fromId: string; toId: string } | null>(null);
 
   const selGroup = groups.find((g) => g.id === selGroupId) ?? groups[0] ?? null;
   const groupCamIds = new Set(selGroup?.cameras.map((c) => c.id) ?? []);
@@ -149,6 +160,7 @@ export default function GroupsPage() {
   const groupAlarmsOn = groupLiveCams.length > 0 && groupLiveCams.every((c) => c.alarmsEnabled);
 
   const load = async () => {
+    const sequence = ++loadSequence.current;
     try {
     if (!accessToken) return;
     setLoading(true);
@@ -163,24 +175,25 @@ export default function GroupsPage() {
         client.get<{ roles?: RolePermissionMatrix }>('/role-permissions').catch(() => null),
       ]);
       const loadedGroups: AccessGroup[] = Array.isArray(gr.data) ? gr.data : [];
+      if (sequence !== loadSequence.current) return;
       setGroups(loadedGroups);
       setPermissions(Array.isArray(pr.data) ? pr.data : []);
       setRoleMatrix(rp?.data?.roles ?? {});
       setRoleMatrixUnavailable(!rp);
-      if (!selGroupId && loadedGroups[0]) setSelGroupId(loadedGroups[0].id);
+      setSelGroupId((id) => loadedGroups.some((g) => g.id === id) ? id : loadedGroups[0]?.id ?? null);
     } finally {
-      setLoading(false);
+      if (sequence === loadSequence.current) setLoading(false);
     }
-      setLoadError(null);
+      if (sequence === loadSequence.current) setLoadError(null);
     } catch {
       // Sem este catch a promessa rejeitava em silêncio e a tela mostrava o
       // estado vazio "Crie ou selecione um grupo" — o admin concluía que tinha
       // PERDIDO os grupos.
-      setLoadError('Não foi possível carregar os grupos.');
+      if (sequence === loadSequence.current) setLoadError('Não foi possível carregar os grupos.');
     }
   };
 
-  useEffect(() => { void load(); }, [accessToken]);
+  useEffect(() => { void load(); return () => { loadSequence.current++; }; }, [accessToken]);
 
   const setGroupAlarms = async (enabled: boolean) => {
     if (!selGroup || !accessToken) return;
@@ -193,7 +206,7 @@ export default function GroupsPage() {
         description: `${data?.affected ?? selGroup.cameras.length} câmera(s) de ${selGroup.name} atualizada(s).`,
       });
     } catch (e) {
-      toast({ title: 'Falha ao atualizar alarmes', description: e instanceof Error ? e.message : 'Não foi possível atualizar os alarmes do grupo.', variant: 'destructive' });
+      toast({ title: 'Falha ao atualizar alarmes', description: clientError(e, 'Não foi possível atualizar os alarmes do grupo.'), variant: 'destructive' });
     } finally {
       setAlarmsSaving(false);
     }
@@ -201,18 +214,19 @@ export default function GroupsPage() {
 
   const setGroupRetention = async () => {
     if (!selGroup || !accessToken) return;
-    const days = Math.max(1, Math.min(3650, Math.floor(Number(retentionValue)) || 7));
+    const days = Number(retentionValue);
+    if (!Number.isInteger(days) || days < 1 || days > 3650) { toast({ title: 'Confira o prazo', description: 'Informe um número inteiro entre 1 e 3650 dias.', variant: 'destructive' }); return; }
     setRetentionSaving(true);
     try {
       const { data } = await apiClient(accessToken).post(`/camera-groups/${selGroup.id}/retention`, { retentionDays: days, seguidores: [...seguidores] });
       await Promise.all([loadData(), load()]);
       setRetentionOpen(false);
       toast({
-        title: 'Retenção aplicada ao grupo',
-        description: `${data?.affected ?? selGroup.cameras.length} câmera(s) de ${selGroup.name} agora com ${days} dia(s) de retenção.`,
+        title: 'Prazo das gravações atualizado',
+        description: `${data?.affected ?? selGroup.cameras.length} câmera(s) de ${selGroup.name} agora com ${days} dia(s) de gravações.`,
       });
     } catch (e) {
-      toast({ title: 'Falha ao aplicar retenção', description: e instanceof Error ? e.message : 'Não foi possível aplicar a retenção do grupo.', variant: 'destructive' });
+      toast({ title: 'Falha ao aplicar retenção', description: clientError(e, 'Não foi possível aplicar a retenção do grupo.'), variant: 'destructive' });
     } finally {
       setRetentionSaving(false);
     }
@@ -232,7 +246,7 @@ export default function GroupsPage() {
       setSelGroupId(data.id);
       toast({ title: 'Grupo criado', description: newName.trim() });
     } catch (e) {
-      toast({ title: 'Erro', description: e instanceof Error ? e.message : 'Falha ao criar grupo.', variant: 'destructive' });
+      toast({ title: 'Erro', description: clientError(e, 'Falha ao criar grupo.'), variant: 'destructive' });
     } finally { setCreating(false); }
   };
 
@@ -252,7 +266,7 @@ export default function GroupsPage() {
       await apiClient(accessToken).patch(`/camera-groups/${selGroup.id}`, {
         name: editName.trim(),
         description: editDesc.trim() || null,
-        maxPrivateCameras: Math.max(0, Math.floor(Number(editMaxPrivate) || 0)),
+        maxPrivateCameras: Math.min(1000, Math.max(0, Math.floor(Number(editMaxPrivate) || 0))),
         accessStatus: editAccessStatus,
         accessMessage: editAccessMessage.trim() || null,
       });
@@ -260,7 +274,7 @@ export default function GroupsPage() {
       setEditOpen(false);
       toast({ title: 'Grupo atualizado', description: editName.trim() });
     } catch (e) {
-      toast({ title: 'Erro', description: e instanceof Error ? e.message : 'Falha ao atualizar grupo.', variant: 'destructive' });
+      toast({ title: 'Erro', description: clientError(e, 'Falha ao atualizar grupo.'), variant: 'destructive' });
     } finally { setEditSaving(false); }
   };
 
@@ -274,22 +288,25 @@ export default function GroupsPage() {
       setDeleteOpen(false);
       toast({ title: 'Grupo removido', description: selGroup.name });
     } catch (e) {
-      toast({ title: 'Erro', description: e instanceof Error ? e.message : 'Falha ao remover grupo.', variant: 'destructive' });
+      toast({ title: 'Erro', description: clientError(e, 'Falha ao remover grupo.'), variant: 'destructive' });
     } finally { setDeleting(false); }
   };
 
-  const toggleCamera = async (cameraId: string, shouldAdd: boolean) => {
-    if (!selGroup) return;
+  const toggleCamera = async (cameraId: string, shouldAdd: boolean, confirmedFrom?: string, targetId = selGroup?.id) => {
+    if (!targetId || cameraBusy) return;
+    const from = groups.find((g) => g.id !== targetId && g.cameras.some((c) => c.id === cameraId));
+    if (shouldAdd && from && !confirmedFrom) { setTransfer({ cameraId, fromId: from.id, toId: targetId }); return; }
+    setCameraBusy(true);
     try {
       if (shouldAdd) {
-        await apiClient(accessToken).post(`/camera-groups/${selGroup.id}/cameras/${cameraId}`);
+        await apiClient(accessToken).post(`/camera-groups/${targetId}/cameras/${cameraId}`, { expectedGroupId: confirmedFrom });
       } else {
-        await apiClient(accessToken).delete(`/camera-groups/${selGroup.id}/cameras/${cameraId}`);
+        await apiClient(accessToken).delete(`/camera-groups/${targetId}/cameras/${cameraId}`);
       }
       await Promise.all([load(), loadData()]);
     } catch (e) {
-      toast({ title: 'Erro', description: e instanceof Error ? e.message : 'Falha ao atualizar grupo.', variant: 'destructive' });
-    }
+      toast({ title: 'Não foi possível atualizar', description: clientError(e, 'Não foi possível atualizar o grupo.'), variant: 'destructive' });
+    } finally { setCameraBusy(false); setTransfer(null); }
   };
 
   const grantAccess = async () => {
@@ -305,17 +322,19 @@ export default function GroupsPage() {
       await load();
       toast({ title: 'Acesso liberado', description: `${users.find((u) => u.id === grantUserId)?.name} → ${selGroup.name}` });
     } catch (e) {
-      toast({ title: 'Erro', description: e instanceof Error ? e.message : 'Falha ao liberar acesso.', variant: 'destructive' });
+      toast({ title: 'Erro', description: clientError(e, 'Falha ao liberar acesso.'), variant: 'destructive' });
     } finally { setGranting(false); }
   };
 
   const revokeAccess = async (permId: string) => {
+    if (revoking) return;
+    setRevoking(permId);
     try {
       await apiClient(accessToken).delete(`/camera-permissions/${permId}`);
       await load();
     } catch (e) {
-      toast({ title: 'Erro', description: e instanceof Error ? e.message : 'Falha ao remover acesso.', variant: 'destructive' });
-    }
+      toast({ title: 'Não foi possível remover o acesso', description: clientError(e, 'Tente novamente em instantes.'), variant: 'destructive' });
+    } finally { setRevoking(null); }
   };
 
   const TABS = [
@@ -325,28 +344,29 @@ export default function GroupsPage() {
   ];
 
   return (
-    <div className="flex h-full min-h-0">
+    <div className="flex h-full min-h-0 flex-col md:flex-row">
       {/* ── Groups list ── */}
-      <aside className="w-72 shrink-0 border-r border-border flex flex-col overflow-hidden bg-card">
+      <aside className="w-full max-h-48 md:max-h-none md:w-64 shrink-0 border-b md:border-r border-border flex flex-col overflow-hidden bg-card">
         <div className="px-4 py-3 border-b border-border shrink-0 flex items-center justify-between">
           <div>
             <h2 className="text-[13px] font-semibold">Grupos</h2>
-            <p className="text-[10px] text-muted-foreground mt-0.5">{groups.length} clientes / locais</p>
+            <p className="text-xs text-muted-foreground mt-0.5">{groups.length} clientes / locais</p>
           </div>
           {isAdmin && (
-            <button className="btn btn-secondary btn-sm btn-icon" onClick={() => setCreateOpen(true)}>
+            <button aria-label="Criar grupo" className="btn btn-secondary btn-sm btn-icon" onClick={() => setCreateOpen(true)}>
               <Plus className="w-4 h-4" />
             </button>
           )}
         </div>
 
         <div className="flex-1 overflow-y-auto divide-y divide-border/60">
+          <div className="p-3"><Input aria-label="Buscar grupos" placeholder="Buscar grupo" value={groupSearch} onChange={(e) => setGroupSearch(e.target.value)} /></div>
           {loading && !groups.length && (
             <div className="flex items-center justify-center h-20 text-[11px] text-muted-foreground">
               Carregando...
             </div>
           )}
-          {groups.map((g) => {
+          {groups.filter((g) => `${g.name} ${g.description ?? ''}`.toLocaleLowerCase('pt-BR').includes(groupSearch.toLocaleLowerCase('pt-BR'))).map((g) => {
             const cCount = g.cameras.length;
             const uCount = permissions.filter((p) => p.groupId === g.id).length;
             const isSel = selGroup?.id === g.id;
@@ -375,23 +395,23 @@ export default function GroupsPage() {
                       {/* Selo do bloqueio comercial: quem está em atraso precisa
                           saltar aos olhos na lista, sem abrir o grupo. */}
                       {g.accessStatus === 'SUSPENDED' && (
-                        <span className="shrink-0 rounded bg-[hsl(var(--destructive)_/_0.15)] px-1.5 py-px text-[9px] font-semibold text-[hsl(var(--destructive))]">
+                        <span className="shrink-0 rounded bg-[hsl(var(--destructive)_/_0.15)] px-1.5 py-px text-xs font-semibold text-[hsl(var(--destructive))]">
                           SUSPENSO
                         </span>
                       )}
                       {g.accessStatus === 'RESTRICTED' && (
-                        <span className="shrink-0 rounded bg-[hsl(var(--status-warning)_/_0.15)] px-1.5 py-px text-[9px] font-semibold text-[hsl(var(--status-warning))]">
+                        <span className="shrink-0 rounded bg-[hsl(var(--status-warning)_/_0.15)] px-1.5 py-px text-xs font-semibold text-[hsl(var(--status-warning))]">
                           RESTRITO
                         </span>
                       )}
                     </div>
                     {g.description && (
-                      <div className="text-[10px] text-muted-foreground truncate">{g.description}</div>
+                      <div className="text-xs text-muted-foreground truncate">{g.description}</div>
                     )}
                   </div>
                   <div className={cn('w-1.5 h-1.5 rounded-full shrink-0', g.isActive ? 'bg-[hsl(var(--status-online,152_46%_44%))]' : 'bg-muted-foreground/30')} />
                 </div>
-                <div className="flex items-center gap-3 pl-9 text-[10px] text-muted-foreground font-mono">
+                <div className="flex items-center gap-3 pl-9 text-xs text-muted-foreground font-mono">
                   <span>{cCount} câmera{cCount !== 1 ? 's' : ''}</span>
                   <span>{uCount} usuário{uCount !== 1 ? 's' : ''}</span>
                 </div>
@@ -421,9 +441,10 @@ export default function GroupsPage() {
           </div>
         </div>
       ) : (
-        <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden">
+          {loadError && <div role="alert" className="p-3 text-sm">Os dados podem estar desatualizados. <button className="underline" onClick={() => void load()}>Tentar novamente</button></div>}
           {/* Group header */}
-          <div className="px-6 py-4 border-b border-border shrink-0 flex items-center gap-4">
+          <div className="px-4 py-4 border-b border-border shrink-0 flex flex-wrap items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-muted border border-border flex items-center justify-center text-sm font-bold text-foreground shrink-0">
               {selGroup.name.slice(0, 2).toUpperCase()}
             </div>
@@ -447,7 +468,7 @@ export default function GroupsPage() {
                   <Switch checked={groupAlarmsOn} disabled={alarmsSaving || !groupLiveCams.length} onCheckedChange={(v) => void setGroupAlarms(v)} />
                 </div>
               )}
-              {tab === 'users' && isAdmin && (
+              {tab === 'users' && canManageAccess && (
                 <button className="btn btn-primary btn-sm" onClick={() => setGrantOpen(true)}>
                   <Plus className="w-3.5 h-3.5" /> Liberar acesso
                 </button>
@@ -456,7 +477,7 @@ export default function GroupsPage() {
                 <>
                   <button
                     className="btn btn-ghost btn-sm"
-                    title="Definir a retenção (dias) de TODAS as câmeras deste grupo"
+                    title="Definir o prazo das gravações das câmeras que seguem o grupo"
                     disabled={!selGroup?.cameras.length}
                     // Abre com o prazo REAL do grupo. Fixar um número aqui fazia o diálogo
                     // mostrar 7 num grupo de 3 dias — e aplicar mudava o grupo sem ninguém
@@ -501,7 +522,7 @@ export default function GroupsPage() {
                 )}>
                 {t.label}
                 {'count' in t && t.count != null && (
-                  <span className="ml-1.5 font-mono text-[9px] text-muted-foreground">{t.count}</span>
+                  <span className="ml-1.5 font-mono text-xs text-muted-foreground">{t.count}</span>
                 )}
               </button>
             ))}
@@ -514,10 +535,11 @@ export default function GroupsPage() {
             {tab === 'cameras' && (
               <div className="space-y-4">
                 <p className="text-[12px] text-muted-foreground">
-                  Marque as câmeras que devem ser visíveis para os usuários deste grupo.
+                  Escolha as câmeras do grupo. Cada câmera pode pertencer a um único grupo.
                 </p>
+                <Input aria-label="Buscar câmeras do grupo" placeholder="Buscar câmera" value={cameraSearch} onChange={(e) => setCameraSearch(e.target.value)} />
                 <div className="grid gap-2.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))' }}>
-                  {cameras.map((cam) => {
+                  {cameras.filter((cam) => !cam.isPrivate && cam.name.toLocaleLowerCase('pt-BR').includes(cameraSearch.toLocaleLowerCase('pt-BR'))).map((cam) => {
                     const inGroup = groupCamIds.has(cam.id);
                     return (
                       <div key={cam.id}
@@ -528,10 +550,10 @@ export default function GroupsPage() {
                         <div className={cn('w-2 h-2 rounded-full shrink-0', cam.isOnline ? 'bg-[hsl(var(--status-online,152_46%_44%))]' : 'bg-muted-foreground/30')} />
                         <div className="flex-1 min-w-0">
                           <div className="text-[12.5px] font-medium truncate">{cam.name}</div>
-                          <div className="text-[10px] text-muted-foreground font-mono truncate">{cam.zone} · {cam.ipAddress}</div>
+                          <div className="text-xs text-muted-foreground truncate">{cam.zone}{groups.find((g) => g.id !== selGroup.id && g.cameras.some((c) => c.id === cam.id)) ? ' · Em outro grupo' : ''}</div>
                         </div>
                         {isAdmin && (
-                          <Switch checked={inGroup} onCheckedChange={(v) => void toggleCamera(cam.id, v)} />
+                          <Switch aria-label={`${inGroup ? 'Remover' : 'Adicionar'} ${cam.name} ${inGroup ? 'do' : 'ao'} grupo`} checked={inGroup} disabled={cameraBusy} onCheckedChange={(v) => void toggleCamera(cam.id, v)} />
                         )}
                         {!isAdmin && inGroup && <Check className="w-3.5 h-3.5 text-[hsl(var(--primary))]" />}
                       </div>
@@ -548,7 +570,7 @@ export default function GroupsPage() {
                   <div className="flex flex-col items-center justify-center h-40 gap-3 text-muted-foreground">
                     <Users className="w-8 h-8 opacity-20" />
                     <p className="text-sm">Nenhum usuário com acesso a este grupo</p>
-                    {isAdmin && (
+                    {canManageAccess && (
                       <Button size="sm" variant="outline" className="text-xs" onClick={() => setGrantOpen(true)}>
                         <Plus className="w-3.5 h-3.5 mr-1.5" /> Liberar acesso
                       </Button>
@@ -564,13 +586,13 @@ export default function GroupsPage() {
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="text-[12.5px] font-semibold">{user?.name ?? perm.userId}</div>
-                        <div className="text-[10px] text-muted-foreground mt-0.5">{LEVEL_LABEL[perm.level]}</div>
+                        <div className="text-xs text-muted-foreground mt-0.5">{LEVEL_LABEL[perm.level]}</div>
                       </div>
-                      <Badge variant="outline" className="text-[9px] border-border text-muted-foreground">
+                      <Badge variant="outline" className="text-xs border-border text-muted-foreground">
                         {perm.level}
                       </Badge>
-                      {isAdmin && (
-                        <Button variant="ghost" size="sm" className="w-8 h-8 p-0 text-muted-foreground hover:text-destructive" onClick={() => void revokeAccess(perm.id)}>
+                      {canManageAccess && (
+                        <Button aria-label={`Remover acesso de ${perm.user?.name ?? 'usuário'}`} disabled={!!revoking} variant="ghost" size="sm" className="w-8 h-8 p-0 text-muted-foreground hover:text-destructive" onClick={async () => { if (await confirmAction({ title: 'Remover acesso?', description: `${perm.user?.name ?? 'Este usuário'} perderá o acesso concedido por este grupo.`, confirmLabel: 'Remover acesso', destructive: true })) await revokeAccess(perm.id); }}>
                           <Trash2 className="w-3.5 h-3.5" />
                         </Button>
                       )}
@@ -603,7 +625,7 @@ export default function GroupsPage() {
                           i < FUNCTIONAL_PERMISSIONS.length - 1 && 'border-b border-border/60',
                         )}>
                         <div className="flex-1 text-[12px] text-foreground">{permission.label}</div>
-                        <div className="max-w-[55%] text-right font-mono text-[10px] text-muted-foreground">
+                        <div className="max-w-[55%] text-right font-mono text-xs text-muted-foreground">
                           {roles.length ? `Permitido para: ${roles.map((role) => ROLE_LABELS[role] ?? role).join(', ')}` : 'Não permitido para nenhuma função'}
                         </div>
                       </div>
@@ -623,6 +645,13 @@ export default function GroupsPage() {
       )}
 
       {/* ── Create group dialog ── */}
+      <Dialog open={!!transfer} onOpenChange={(open) => !open && !cameraBusy && setTransfer(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Transferir câmera?</DialogTitle></DialogHeader>
+          <p className="text-sm">A câmera sairá de <strong>{groups.find((g) => g.id === transfer?.fromId)?.name}</strong> e passará para <strong>{groups.find((g) => g.id === transfer?.toId)?.name}</strong>. Isso muda os usuários com acesso e pode alterar o prazo das gravações.</p>
+          <div className="flex justify-end gap-2"><Button variant="ghost" disabled={cameraBusy} onClick={() => setTransfer(null)}>Cancelar</Button><Button disabled={cameraBusy} onClick={() => transfer && void toggleCamera(transfer.cameraId, true, transfer.fromId, transfer.toId)}>{cameraBusy ? 'Transferindo...' : 'Transferir câmera'}</Button></div>
+        </DialogContent>
+      </Dialog>
       <Dialog open={createOpen} onOpenChange={(o) => !o && setCreateOpen(false)}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
@@ -671,7 +700,7 @@ export default function GroupsPage() {
                 value={editMaxPrivate}
                 onChange={(e) => setEditMaxPrivate(Math.max(0, Math.floor(Number(e.target.value) || 0)))}
               />
-              <p className="text-[10px] text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
                 Quantas câmeras o cliente deste grupo pode cadastrar pelo app dele (o "acordado"). 0 = não permite.
               </p>
             </div>
@@ -695,7 +724,7 @@ export default function GroupsPage() {
                     />
                     <span className="min-w-0">
                       <span className="block text-[12px] font-medium">{opt.label}</span>
-                      <span className="block text-[10px] text-muted-foreground">{opt.hint}</span>
+                      <span className="block text-xs text-muted-foreground">{opt.hint}</span>
                     </span>
                   </label>
                 ))}
@@ -709,10 +738,10 @@ export default function GroupsPage() {
                     placeholder="Ex.: Mensalidade em aberto. Fale com o suporte."
                     maxLength={300}
                   />
-                  <p className="text-[10px] text-[hsl(var(--status-warning))]">
+                  <p className="text-xs text-[hsl(var(--status-warning))]">
                     {editAccessStatus === 'SUSPENDED'
                       ? 'Os usuários deste grupo deixam de ver as câmeras imediatamente.'
-                      : 'Os usuários mantêm o ao vivo, mas perdem playback, gravações e exportação.'}
+                      : 'Os usuários mantêm o ao vivo, mas perdem acesso às gravações e exportações.'}
                   </p>
                 </div>
               )}

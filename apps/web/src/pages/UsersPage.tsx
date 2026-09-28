@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
+import { clientError } from '../lib/client-error';
+import { usePasswordPolicy } from '../hooks/use-password-policy';
 import { Plus, UserX, Unlock, Edit2, Save, Trash2, RefreshCw, Search, MoreHorizontal } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Switch } from '@/components/ui/switch';
@@ -60,22 +62,9 @@ function apiClient() {
   });
 }
 
-// Piso mínimo do backend (DTO). A política de senha forte é OPCIONAL e fica em
-// Configurações → Segurança ("Exigir senha forte").
-const PASSWORD_HINT = 'Mín. 4 caracteres.';
-function passwordPolicyError(pw: string): string | null {
-  if (pw.length < 4) return 'A senha precisa ter ao menos 4 caracteres.';
-  return null;
-}
-
-// Extrai a mensagem real da API (class-validator devolve string OU array).
+// Usa mensagens apropriadas ao usuário, sem repassar detalhes internos da API.
 function apiErrorMessage(error: unknown, fallback: string): string {
-  if (axios.isAxiosError(error)) {
-    const m = error.response?.data?.message;
-    if (Array.isArray(m)) return m.join('; ');
-    if (typeof m === 'string') return m;
-  }
-  return error instanceof Error ? error.message : fallback;
+  return clientError(error, fallback);
 }
 
 export default function UsuariosPage() {
@@ -83,6 +72,7 @@ export default function UsuariosPage() {
   const updateUserActive = useVmsDataStore((state) => state.updateUserActive);
   const loadData = useVmsDataStore((state) => state.load);
   const accessToken = useAuthStore((state) => state.accessToken);
+  const passwordPolicy = usePasswordPolicy(accessToken);
   const currentUser = useAuthStore((state) => state.user);
   const canManageGlobalAccess = currentUser?.role === 'admin';
   const [addOpen, setAddOpen] = useState(false);
@@ -149,7 +139,7 @@ export default function UsuariosPage() {
     } catch (error) {
       toast({
         title: 'Falha ao carregar acessos',
-        description: error instanceof Error ? error.message : 'Não foi possível carregar grupos e permissões.',
+        description: clientError(error, 'Não foi possível carregar grupos e permissões.'),
         variant: 'destructive',
       });
     } finally {
@@ -219,7 +209,7 @@ export default function UsuariosPage() {
     } catch (error) {
       toast({
         title: 'Falha ao liberar acesso',
-        description: error instanceof Error ? error.message : 'Não foi possível salvar a permissão.',
+        description: clientError(error, 'Não foi possível salvar a permissão.'),
         variant: 'destructive',
       });
     } finally {
@@ -235,7 +225,7 @@ export default function UsuariosPage() {
     } catch (error) {
       toast({
         title: 'Falha ao remover acesso',
-        description: error instanceof Error ? error.message : 'Não foi possível remover a permissão.',
+        description: clientError(error, 'Não foi possível remover a permissão.'),
         variant: 'destructive',
       });
     } finally {
@@ -257,7 +247,7 @@ export default function UsuariosPage() {
     }
     // Valida a política antes de enviar (evita 400 sem explicação).
     if (userForm.password) {
-      const pwErr = passwordPolicyError(userForm.password);
+      const pwErr = passwordPolicy.validate(userForm.password);
       if (pwErr) {
         toast({ title: 'Senha fraca', description: pwErr, variant: 'destructive' });
         return;
@@ -356,7 +346,7 @@ export default function UsuariosPage() {
                         <div className="flex items-center justify-center text-[13px] font-bold shrink-0" style={{ width: 32, height: 32, borderRadius: 8, background: 'var(--surf-3)', border: '1px solid var(--bdr)', color: 'var(--tx-2)' }}>{initials}</div>
                         <div className="min-w-0">
                           <div className="font-medium truncate">{u.name}</div>
-                          <div className="text-[10px] font-mono text-[hsl(var(--muted-foreground))] truncate">{u.username || u.email || '—'}</div>
+                          <div className="text-xs font-mono text-[hsl(var(--muted-foreground))] truncate">{u.username || u.email || '—'}</div>
                         </div>
                       </div>
                     </td>
@@ -373,7 +363,7 @@ export default function UsuariosPage() {
                     <td className="px-3 py-2.5">
                       <div className="flex items-center gap-1.5">
                         <span className="w-1.5 h-1.5 rounded-full" style={{ background: u.active ? 'var(--s-online)' : 'var(--s-offline)' }} />
-                        <span className="text-[10px]" style={{ color: 'var(--tx-3)' }}>{u.active ? 'Ativo' : 'Bloqueado'}</span>
+                        <span className="text-xs" style={{ color: 'var(--tx-3)' }}>{u.active ? 'Ativo' : 'Bloqueado'}</span>
                       </div>
                     </td>
                     <td className="px-3 py-2.5">
@@ -464,10 +454,10 @@ export default function UsuariosPage() {
                 type="password"
                 value={userForm.password}
                 onChange={(event) => setUserForm((current) => ({ ...current, password: event.target.value }))}
-                placeholder={editUser ? 'Deixe em branco para manter' : PASSWORD_HINT}
+                placeholder={editUser ? 'Deixe em branco para manter' : 'Senha inicial'}
                 className="h-8 w-full rounded border border-border bg-background px-3 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
               />
-              <p className="mt-1 text-[10px] text-muted-foreground">{editUser ? `Em branco mantém a atual. ${PASSWORD_HINT}` : PASSWORD_HINT}</p>
+              <p className="mt-1 text-xs text-muted-foreground">{editUser ? `Em branco mantém a atual. ${passwordPolicy.hint}` : passwordPolicy.hint}</p>
             </div>
             {editUser ? (
               <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-muted/30 px-3 py-2.5">

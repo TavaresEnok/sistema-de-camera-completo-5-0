@@ -16,7 +16,7 @@ export const PRODUCT_UPDATES: ProductUpdate[] = [
     version: '2026.08.27', date: '2026-08-27', kind: 'Novo',
     title: 'Mapa operacional e câmera no contexto',
     summary: 'As câmeras agora podem ser posicionadas na planta real de cada unidade e andar.',
-    items: ['Abertura da câmera ao vivo sobre o mapa', 'Envio de planta SVG e posicionamento visual', 'Acesso ao mapa respeitando as permissões de câmera'],
+    items: ['Abertura da câmera ao vivo sobre o mapa', 'Envio da planta e posicionamento visual', 'Acesso ao mapa respeitando as permissões de câmera'],
   },
   {
     version: '2026.08.26', date: '2026-08-26', kind: 'Melhoria',
@@ -27,19 +27,19 @@ export const PRODUCT_UPDATES: ProductUpdate[] = [
   {
     version: '2026.08.25', date: '2026-08-25', kind: 'Melhoria',
     title: 'Vídeo ao vivo mais estável',
-    summary: 'A política de WebRTC, H.265 e fallback foi reforçada para evitar conversões desnecessárias.',
-    items: ['Preferência pelo vídeo original quando o navegador é compatível', 'Fallback por câmera sem derrubar toda a grade', 'Recuperação de travamento baseada em progresso real do stream'],
+    summary: 'A reprodução foi aprimorada para manter a imagem estável e aproveitar melhor os recursos disponíveis.',
+    items: ['Preferência pelo vídeo original quando o navegador é compatível', 'Recuperação por câmera sem interromper as demais', 'Reconexão quando a transmissão para de avançar'],
   },
   {
     version: '2026.08.24', date: '2026-08-24', kind: 'Segurança',
     title: 'Licença, backup e recuperação',
     summary: 'O controle comercial e a proteção das configurações passaram a ter regras explícitas.',
-    items: ['Teto contratado de câmeras aplicado no cadastro', 'Arquivo de cancelamento cifrado com validade', 'Exclusão automática de arquivos vencidos'],
+    items: ['Teto contratado de câmeras aplicado no cadastro', 'Arquivo de cancelamento protegido e com validade', 'Exclusão automática de arquivos vencidos'],
   },
   {
     version: '2026.08.23', date: '2026-08-23', kind: 'Novo',
-    title: 'RTMP push integrado',
-    summary: 'Câmeras atrás de CGNAT podem enviar vídeo ao sistema sem acesso de entrada à rede delas.',
-    items: ['Chave curta de publicação', 'Vinculação de caminhos fixos enviados pelo equipamento', 'Mesmas políticas de live, movimento, gravação e retenção do sistema'],
+    title: 'Envio de vídeo pela câmera',
+    summary: 'Câmeras em redes restritas podem enviar vídeo diretamente ao sistema, com configuração da equipe técnica.',
+    items: ['Chave curta de publicação', 'Vinculação de caminhos fixos enviados pelo equipamento', 'Mesmas regras de vídeo ao vivo, movimento e gravação'],
   },
 ];

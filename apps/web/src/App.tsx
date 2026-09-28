@@ -6,12 +6,14 @@ import { Toaster } from '@/components/ui/toaster';
 import { MotionConfig } from 'framer-motion';
 
 import { AppLayout } from './layouts/AppLayout';
+import { ActionConfirmation } from './components/ActionConfirmation';
 
 import { useAuthStore } from './store/authStore';
 import { useThemeStore } from './store/themeStore';
 import { useVmsDataStore } from './store/vmsDataStore';
 import { useBrandingStore } from './store/brandingStore';
 import { productPageTitle } from './lib/product-brand';
+import { ADMIN_PAGE_PERMISSION, usePermissionsStore } from './store/permissionsStore';
 
 const queryClient = new QueryClient();
 
@@ -165,18 +167,24 @@ function ProtectedRoute({
   bare?: boolean;
 }) {
   const { isAuthenticated, isBootstrapped, isLoading, user } = useAuthStore();
-  const [, setLocation] = useLocation();
+  const [location, setLocation] = useLocation();
 
   const userWeight = ROLE_WEIGHT[(user?.role as UiRole) ?? 'viewer'] ?? 1;
-  const hasAccess = userWeight >= ROLE_WEIGHT[minRole];
+  const permission = active ? ADMIN_PAGE_PERMISSION[location] : undefined;
+  const permissionsLoaded = usePermissionsStore((s) => s.loaded);
+  const permissionsUnavailable = usePermissionsStore((s) => s.error && !s.role);
+  const canUsePermission = usePermissionsStore((s) => !permission || s.role === 'SUPER_ADMIN' || s.permissions[permission] === true);
+  const hasAccess = userWeight >= ROLE_WEIGHT[minRole] && (!permission || user?.role !== 'admin' || canUsePermission);
 
   useEffect(() => {
     if (isBootstrapped && !isAuthenticated) setLocation('/login');
-    if (isBootstrapped && isAuthenticated && !hasAccess) setLocation('/live');
-  }, [hasAccess, isAuthenticated, isBootstrapped, setLocation]);
+    if (isBootstrapped && isAuthenticated && (!permission || user?.role !== 'admin' || (permissionsLoaded && !permissionsUnavailable)) && !hasAccess) setLocation('/live');
+  }, [hasAccess, isAuthenticated, isBootstrapped, permission, user?.role, permissionsLoaded, permissionsUnavailable, setLocation]);
 
   if (!isBootstrapped || isLoading) return <AppFallback />;
   if (!isAuthenticated) return null;
+  if (permission && user?.role === 'admin' && !permissionsLoaded) return <ContentFallback />;
+  if (permission && user?.role === 'admin' && permissionsUnavailable) return <div className="p-6 text-sm">Não foi possível verificar seus acessos. <button className="underline" onClick={() => { const token = useAuthStore.getState().accessToken; if (token) void usePermissionsStore.getState().load(token); }}>Tentar novamente</button></div>;
   if (!hasAccess) return null;
 
   const PageWithActivity = Page as React.ComponentType<{ pageActive?: boolean }>;
@@ -391,6 +399,20 @@ function AppRoutes() {
 }
 
 function App() {
+  const accessToken = useAuthStore((state) => state.accessToken);
+  const actorId = useAuthStore((state) => state.user?.id);
+  const permissionActor = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const store = usePermissionsStore.getState();
+    if (permissionActor.current !== actorId || !accessToken) store.reset();
+    permissionActor.current = actorId;
+    if (!accessToken) return;
+    void store.load(accessToken);
+    const refresh = () => { if (document.visibilityState === 'visible') void store.load(accessToken); };
+    const timer = window.setInterval(refresh, 15000);
+    window.addEventListener('focus', refresh);
+    return () => { window.clearInterval(timer); window.removeEventListener('focus', refresh); };
+  }, [accessToken, actorId]);
   const bootstrap = useAuthStore((state) => state.bootstrap);
   const revalidate = useAuthStore((state) => state.revalidate);
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
@@ -444,6 +466,7 @@ function App() {
     <MotionConfig reducedMotion="user">
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
+          <ActionConfirmation />
           <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
             <ThemeSync />
             <BrandingSync />

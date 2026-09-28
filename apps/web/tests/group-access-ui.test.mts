@@ -15,7 +15,7 @@ test('os três estados comerciais existem, com o texto do impacto real', () => {
     assert.ok(PAGE.includes(`'${estado}'`), `estado ${estado} ausente`);
   }
   // O rótulo tem de dizer a CONSEQUÊNCIA, não só o nome do estado.
-  assert.match(PAGE, /perde playback, gravações e exportação/i, 'restrito precisa explicar o que se perde');
+  assert.match(PAGE, /não acessa gravações nem exportações/i, 'restrito precisa explicar o que se perde em linguagem simples');
   assert.match(PAGE, /Não vê nada/i, 'suspenso precisa explicar que corta tudo');
   assert.match(PAGE, /inadimplente/i, 'o uso comercial precisa estar explícito');
 });
@@ -29,7 +29,7 @@ test('bloquear pede MOTIVO, que o cliente final vê', () => {
 
 test('avisa a consequência imediata antes de salvar', () => {
   assert.match(PAGE, /deixam de ver as câmeras imediatamente/i);
-  assert.match(PAGE, /mantêm o ao vivo, mas perdem playback/i);
+  assert.match(PAGE, /mantêm o ao vivo, mas perdem acesso às gravações/i);
 });
 
 test('o PATCH envia os campos novos junto dos existentes', () => {

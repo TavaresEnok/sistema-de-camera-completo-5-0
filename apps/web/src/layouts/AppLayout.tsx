@@ -13,6 +13,8 @@ import { useThemeStore } from '../store/themeStore';
 import { useVmsDataStore } from '../store/vmsDataStore';
 import { useAuthStore } from '../store/authStore';
 import { PRODUCT_TAGLINE } from '../lib/product-brand';
+import { ADMIN_PAGE_PERMISSION, hasPermission, usePermissionsStore } from '../store/permissionsStore';
+import { confirmNavigation } from '../hooks/use-unsaved-changes';
 
 const PAGE_TITLES: Record<string, string> = {
   '/live':          'Ao Vivo',
@@ -82,6 +84,7 @@ export function AppLayout({ children, active = true, contentKey }: AppLayoutProp
   const refreshOperational = useVmsDataStore((state) => state.refreshOperational);
   const resourceErrors = useVmsDataStore((state) => state.resourceErrors);
   const userRole = useAuthStore((state) => state.user?.role ?? 'viewer');
+  const permissions = usePermissionsStore((s) => s.permissions);
   const pagePaths = useMemo(() => [
     '/live',
     '/playback',
@@ -89,10 +92,10 @@ export function AppLayout({ children, active = true, contentKey }: AppLayoutProp
     SHORTCUT_ROLE_WEIGHT[userRole] >= SHORTCUT_ROLE_WEIGHT.operator ? '/storage' : null,
     SHORTCUT_ROLE_WEIGHT[userRole] >= SHORTCUT_ROLE_WEIGHT.operator ? '/users' : null,
     SHORTCUT_ROLE_WEIGHT[userRole] >= SHORTCUT_ROLE_WEIGHT.admin ? '/settings' : null,
-  ], [userRole]);
+  ].map((path) => path && (userRole !== 'admin' || !ADMIN_PAGE_PERMISSION[path] || hasPermission(ADMIN_PAGE_PERMISSION[path])) ? path : null), [userRole, permissions]);
   const visibleShortcuts = useMemo(
-    () => SHORTCUTS.filter((shortcut) => !shortcut.minRole || SHORTCUT_ROLE_WEIGHT[userRole] >= SHORTCUT_ROLE_WEIGHT[shortcut.minRole]),
-    [userRole],
+    () => SHORTCUTS.filter((shortcut) => (!shortcut.minRole || SHORTCUT_ROLE_WEIGHT[userRole] >= SHORTCUT_ROLE_WEIGHT[shortcut.minRole]) && (shortcut.key !== 'Alt + 5' || !!pagePaths[4]) && (shortcut.key !== 'Alt + 6' || !!pagePaths[5])),
+    [userRole, pagePaths],
   );
   const isDark = theme === 'dark' || theme === 'dim';
   const pageTitle = resolvePageTitle(location);
@@ -110,7 +113,7 @@ export function AppLayout({ children, active = true, contentKey }: AppLayoutProp
       if (e.altKey && e.key >= '1' && e.key <= '9') {
         const idx = parseInt(e.key) - 1;
         const path = pagePaths[idx];
-        if (path) { e.preventDefault(); setLocation(path); }
+        if (path) { e.preventDefault(); void confirmNavigation().then((accepted) => { if (accepted) setLocation(path); }); }
         return;
       }
       if (e.key === 'Escape') setCmdOpen(false);

@@ -1,10 +1,13 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { UserRole } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { AuthUser } from '../common/types/auth-user.type';
 import { AccessControlService } from '../access-control/access-control.service';
 import { CreateCameraGroupDto } from './dto/create-camera-group.dto';
 import { UpdateCameraGroupDto } from './dto/update-camera-group.dto';
+
+// Respostas de grupos nunca são uma segunda API de configuração de câmeras.
+const cameraSummary = { id: true, name: true, groupId: true, retentionDays: true, retentionFollowsGroup: true } as const;
 
 @Injectable()
 export class CameraGroupsService {
@@ -14,12 +17,12 @@ export class CameraGroupsService {
   ) {}
 
   async list(user: AuthUser) {
-    const includeCameras = { cameras: true };
+    const cameraIds = await this.accessControlService.getAccessibleCameraIds(user);
+    const includeCameras = { cameras: { where: { id: { in: cameraIds } }, select: cameraSummary } };
     if (user.role === UserRole.ADMIN || user.role === UserRole.SUPER_ADMIN) {
       return this.prisma.cameraGroup.findMany({ where: { isActive: true }, include: includeCameras, orderBy: { name: 'asc' } });
     }
 
-    const cameraIds = await this.accessControlService.getAccessibleCameraIds(user);
     return this.prisma.cameraGroup.findMany({
       where: { cameras: { some: { id: { in: cameraIds } } }, isActive: true },
       include: includeCameras,
@@ -28,7 +31,8 @@ export class CameraGroupsService {
   }
 
   async getById(id: string, user: AuthUser) {
-    const group = await this.prisma.cameraGroup.findUnique({ where: { id }, include: { cameras: true } });
+    const cameraIds = new Set(await this.accessControlService.getAccessibleCameraIds(user));
+    const group = await this.prisma.cameraGroup.findUnique({ where: { id }, include: { cameras: { where: { id: { in: [...cameraIds] } }, select: cameraSummary } } });
     if (!group) {
       throw new NotFoundException('Grupo não encontrado.');
     }
@@ -36,7 +40,6 @@ export class CameraGroupsService {
       return group;
     }
 
-    const cameraIds = new Set(await this.accessControlService.getAccessibleCameraIds(user));
     if (!group.isActive || !group.cameras.some((camera) => cameraIds.has(camera.id))) {
       throw new NotFoundException('Grupo não encontrado.');
     }
@@ -53,24 +56,26 @@ export class CameraGroupsService {
   }
 
   create(dto: CreateCameraGroupDto) {
-    return this.prisma.cameraGroup.create({ data: dto, include: { cameras: true } });
+    return this.prisma.cameraGroup.create({ data: dto, include: { cameras: { select: cameraSummary } } });
   }
 
   async update(id: string, dto: UpdateCameraGroupDto) {
     await this.ensureExists(id);
-    return this.prisma.cameraGroup.update({ where: { id }, data: dto, include: { cameras: true } });
+    return this.prisma.cameraGroup.update({ where: { id }, data: dto, include: { cameras: { select: cameraSummary } } });
   }
 
   async softDelete(id: string) {
     await this.ensureExists(id);
-    await this.prisma.camera.updateMany({ where: { groupId: id }, data: { groupId: null } });
-    return this.prisma.cameraGroup.update({ where: { id }, data: { isActive: false }, include: { cameras: true } });
+    return this.prisma.$transaction(async (tx) => {
+      await tx.camera.updateMany({ where: { groupId: id }, data: { groupId: null } });
+      return tx.cameraGroup.update({ where: { id }, data: { isActive: false }, include: { cameras: { select: cameraSummary } } });
+    });
   }
 
   async setAlarmsForGroup(groupId: string, enabled: boolean) {
     await this.ensureExists(groupId);
     const result = await this.prisma.camera.updateMany({
-      where: { groupId },
+      where: { groupId, isPrivate: false },
       data: { alarmsEnabled: enabled },
     });
     return { groupId, enabled, affected: result.count };
@@ -122,15 +127,21 @@ export class CameraGroupsService {
     return { groupId, retentionDays, affected: seguindo, excecoes };
   }
 
-  async addCamera(groupId: string, cameraId: string) {
+  async addCamera(groupId: string, cameraId: string, expectedGroupId?: string | null) {
     const group = await this.prisma.cameraGroup.findUnique({ where: { id: groupId } });
     if (!group) throw new NotFoundException('Grupo não encontrado.');
 
     const camera = await this.prisma.camera.findUnique({ where: { id: cameraId } });
     if (!camera) throw new NotFoundException('Câmera não encontrada.');
 
-    await this.prisma.camera.update({ where: { id: cameraId }, data: { groupId } });
-    return this.prisma.cameraGroup.findUnique({ where: { id: groupId }, include: { cameras: true } });
+    if (!group.isActive) throw new NotFoundException('Grupo não encontrado.');
+    if (camera.isPrivate) throw new ConflictException('Câmeras particulares não podem ser transferidas para grupos.');
+    if (camera.groupId && camera.groupId !== groupId && expectedGroupId !== camera.groupId) {
+      throw new ConflictException('Esta câmera já pertence a outro grupo. Confirme a transferência.');
+    }
+    const changed = await this.prisma.camera.updateMany({ where: { id: cameraId, groupId: camera.groupId }, data: { groupId } });
+    if (changed.count !== 1) throw new ConflictException('O grupo da câmera mudou. Atualize a página e tente novamente.');
+    return this.prisma.cameraGroup.findUnique({ where: { id: groupId }, include: { cameras: { select: cameraSummary } } });
   }
 
   async removeCamera(groupId: string, cameraId: string) {
@@ -144,7 +155,8 @@ export class CameraGroupsService {
       throw new NotFoundException('Câmera não pertence ao grupo informado.');
     }
 
-    await this.prisma.camera.update({ where: { id: cameraId }, data: { groupId: null } });
-    return this.prisma.cameraGroup.findUnique({ where: { id: groupId }, include: { cameras: true } });
+    const changed = await this.prisma.camera.updateMany({ where: { id: cameraId, groupId }, data: { groupId: null } });
+    if (changed.count !== 1) throw new ConflictException('O grupo da câmera mudou. Atualize a página e tente novamente.');
+    return this.prisma.cameraGroup.findUnique({ where: { id: groupId }, include: { cameras: { select: cameraSummary } } });
   }
 }

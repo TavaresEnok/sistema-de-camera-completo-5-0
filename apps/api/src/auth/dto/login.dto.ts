@@ -13,6 +13,9 @@ export class LoginDto {
   email?: string;
 
   @IsString()
-  @MinLength(8)
+  // O login não impõe uma política nova às senhas já cadastradas. A força
+  // exigida é validada ao criar/alterar a senha, inclusive em instalações
+  // que permitem senhas legadas de quatro caracteres.
+  @MinLength(1)
   password!: string;
 }

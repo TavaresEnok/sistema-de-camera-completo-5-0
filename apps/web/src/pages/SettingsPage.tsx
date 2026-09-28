@@ -1,5 +1,5 @@
 import type { InputHTMLAttributes, ReactNode } from 'react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 import { Bell, Camera as CameraIcon, Check, Cpu, Database, HardDrive, Home, LayoutGrid, LoaderCircle, Lock, Monitor, Moon, Palette, Play, Save, Server, Settings as SettingsIcon, Shield, Sun, Trash2, Upload, Users, VideoOff } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -13,6 +13,8 @@ import { toast } from '../hooks/use-toast';
 import { GpuAccelerationPanel } from '../components/GpuAccelerationPanel';
 import { useBrandingStore } from '../store/brandingStore';
 import { contrastRatio } from '../lib/web-operational';
+import { clientError } from '../lib/client-error';
+import { useUnsavedChanges } from '../hooks/use-unsaved-changes';
 
 const API_URL = getApiBaseUrl();
 
@@ -21,8 +23,8 @@ const SECTIONS = [
   { id: 'branding', label: 'Aparência do app', description: 'Logo e cores do aplicativo móvel', icon: Palette },
   { id: 'system-look', label: 'Aparência do sistema', description: 'Logo e cores deste painel', icon: Monitor },
   { id: 'users', label: 'Usuários', description: 'Contas e acesso', icon: Users },
-  { id: 'storage', label: 'Retenção', description: 'Retenção e disco', icon: Database },
-  { id: 'gpu', label: 'GPU / Aceleração', description: 'Placa de vídeo', icon: Cpu },
+  { id: 'storage', label: 'Retenção', description: 'Prazo das gravações e espaço', icon: Database },
+  { id: 'gpu', label: 'Aceleração de vídeo', description: 'Recursos da placa de vídeo', icon: Cpu },
   { id: 'security', label: 'Segurança', description: 'Sessão e senha', icon: Lock },
 ] as const;
 
@@ -469,12 +471,12 @@ function BrandingPaletteEditor({
         <p className="mb-2 text-[11px] font-semibold text-muted-foreground">PRÉVIA DO APP</p>
         <AppHomePreview color={color} />
         <div className={`mt-3 rounded-lg border p-2.5 ${hasContrastWarning ? 'border-[hsl(var(--status-warning)_/_0.4)] bg-[hsl(var(--status-warning)_/_0.08)]' : 'border-[hsl(var(--status-online)_/_0.35)] bg-[hsl(var(--status-online)_/_0.08)]'}`}>
-          <div className="mb-1.5 text-[10px] font-semibold text-foreground">
+          <div className="mb-1.5 text-xs font-semibold text-foreground">
             {hasContrastWarning ? 'Contraste a revisar' : 'Contraste aprovado'}
           </div>
           <div className="grid grid-cols-2 gap-1">
             {contrastChecks.map((check) => (
-              <div key={check.label} className="flex items-center justify-between gap-2 text-[9px] text-muted-foreground">
+              <div key={check.label} className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
                 <span>{check.label}</span>
                 <span className={`font-mono font-semibold ${check.ratio >= 4.5 ? 'text-[hsl(var(--status-online))]' : 'text-[hsl(var(--status-warning))]'}`}>
                   {check.ratio ? `${check.ratio.toFixed(1)}:1` : 'inválido'}
@@ -482,7 +484,7 @@ function BrandingPaletteEditor({
               </div>
             ))}
           </div>
-          <p className="mt-1.5 text-[9px] leading-snug text-muted-foreground">Meta mínima: 4,5:1 para textos pequenos.</p>
+          <p className="mt-1.5 text-xs leading-snug text-muted-foreground">Meta mínima: 4,5:1 para textos pequenos.</p>
         </div>
       </div>
     </fieldset>
@@ -496,7 +498,7 @@ function Pill({ children, tone = 'neutral' }: { children: ReactNode; tone?: 'neu
     success: 'border-[hsl(var(--status-online)_/_0.25)] bg-[hsl(var(--status-online)_/_0.1)] text-[hsl(var(--status-online))]',
     warning: 'border-[hsl(var(--status-warning)_/_0.25)] bg-[hsl(var(--status-warning)_/_0.1)] text-[hsl(var(--status-warning))]',
   }[tone];
-  return <span className={`rounded-md border px-2 py-1 text-[10px] font-semibold ${toneClass}`}>{children}</span>;
+  return <span className={`rounded-md border px-2 py-1 text-xs font-semibold ${toneClass}`}>{children}</span>;
 }
 
 export default function ConfiguracoesPage() {
@@ -509,6 +511,11 @@ export default function ConfiguracoesPage() {
 
   const [activeSection, setActiveSection] = useState<SectionId>('general');
   const [settings, setSettings] = useState<SystemSettings | null>(null);
+  const [baseline, setBaseline] = useState<SystemSettings | null>(null);
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  const dirty = !!settings && !!baseline && JSON.stringify(settings) !== JSON.stringify(baseline);
+  useUnsavedChanges(dirty);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -522,11 +529,12 @@ export default function ConfiguracoesPage() {
     try {
       const { data } = await axios.get<SystemSettings>(`${API_URL}/settings`, { headers: authHeaders });
       setSettings(data);
+      setBaseline(data);
       await reloadBranding();
     } catch (error) {
       toast({
         title: 'Falha ao carregar configurações',
-        description: error instanceof Error ? error.message : 'Não foi possível carregar.',
+        description: clientError(error, 'Não foi possível carregar.'),
         variant: 'destructive',
       });
     } finally {
@@ -539,6 +547,7 @@ export default function ConfiguracoesPage() {
   }, [loadSettings]);
 
   const update = <K extends keyof SystemSettings>(key: K, value: SystemSettings[K]) => {
+    setSaved(false);
     setSettings((current) => (current ? { ...current, [key]: value } : current));
   };
 
@@ -568,11 +577,15 @@ export default function ConfiguracoesPage() {
       img.onload = () => {
         const larguraOriginal = img.naturalWidth || 256;
         const alturaOriginal = img.naturalHeight || 256;
+        if (larguraOriginal * alturaOriginal > 16000000) {
+          toast({ title: 'Imagem muito grande', description: 'Escolha um logo com resolução menor.', variant: 'destructive' });
+          return;
+        }
         const canvas = document.createElement('canvas');
         canvas.width = larguraOriginal;
         canvas.height = alturaOriginal;
         const ctx = canvas.getContext('2d');
-        if (!ctx) { update(destino, reader.result as string); return; }
+        if (!ctx) { toast({ title: 'Não foi possível preparar o logo', description: 'Tente outra imagem.', variant: 'destructive' }); return; }
         ctx.drawImage(img, 0, 0);
 
         // ── APARA A MOLDURA TRANSPARENTE ───────────────────────────────────
@@ -597,7 +610,9 @@ export default function ConfiguracoesPage() {
                 corte.x, corte.y, corte.largura, corte.altura,
                 0, 0, corte.largura, corte.altura,
               );
-              update(destino, aparado.toDataURL('image/png'));
+              const png = aparado.toDataURL('image/png');
+              if (png.length > 550000) { toast({ title: 'Imagem muito grande', description: 'Reduza a resolução do logo e tente novamente.', variant: 'destructive' }); return; }
+              update(destino, png);
               return;
             }
           }
@@ -607,14 +622,16 @@ export default function ConfiguracoesPage() {
         }
 
         try {
-          update(destino, canvas.toDataURL('image/png'));
+          const png = canvas.toDataURL('image/png');
+          if (png.length > 550000) { toast({ title: 'Imagem muito grande', description: 'Reduza a resolução do logo e tente novamente.', variant: 'destructive' }); return; }
+          update(destino, png);
         } catch {
           // `destino`, não a chave fixa: senão o logo do SISTEMA acabava
           // gravado no campo do APLICATIVO sempre que a conversão falhasse.
-          update(destino, reader.result as string);
+          toast({ title: 'Não foi possível preparar o logo', description: 'Tente uma imagem PNG ou JPG.', variant: 'destructive' });
         }
       };
-      img.onerror = () => update(destino, reader.result as string);
+      img.onerror = () => toast({ title: 'Imagem inválida', description: 'Escolha outra imagem PNG, JPG ou SVG.', variant: 'destructive' });
       img.src = reader.result;
     };
     reader.onerror = () => toast({ title: 'Falha ao ler a imagem', variant: 'destructive' });
@@ -633,19 +650,24 @@ export default function ConfiguracoesPage() {
     };
   }, [cameras, system, users]);
 
-  const saveSettings = async (payload: SystemSettings, successDescription: string) => {
+  const saveSettings = async (snapshot: SystemSettings, successDescription: string) => {
+    if (saving || !baseline) return;
+    const payload = Object.fromEntries(Object.entries(snapshot).filter(([key, value]) => value !== baseline[key as keyof SystemSettings]));
+    if (!Object.keys(payload).length) return;
     setSaving(true);
     try {
       const { data } = await axios.patch<SystemSettings>(`${API_URL}/settings`, payload, { headers: authHeaders });
-      setSettings(data);
+      const edits = Object.fromEntries(Object.entries(settingsRef.current ?? snapshot).filter(([key, value]) => value !== snapshot[key as keyof SystemSettings]));
+      setBaseline(data);
+      setSettings({ ...data, ...edits });
       await reloadBranding();
-      setSaved(true);
+      setSaved(Object.keys(edits).length === 0);
       setTimeout(() => setSaved(false), 1800);
       toast({ title: 'Configurações salvas', description: successDescription });
     } catch (error) {
       toast({
         title: 'Falha ao salvar',
-        description: error instanceof Error ? error.message : 'Não foi possível salvar as configurações.',
+        description: clientError(error, 'Não foi possível salvar as configurações.'),
         variant: 'destructive',
       });
     } finally {
@@ -655,15 +677,16 @@ export default function ConfiguracoesPage() {
 
   const handleSave = async () => {
     if (!settings) return;
-    await saveSettings(settings, 'As alterações foram aplicadas no servidor.');
+    await saveSettings(settings, 'As alterações foram salvas.');
   };
 
   return (
     <div className="flex flex-col h-full min-h-0">
-      <div className="px-6 py-3 border-b border-border shrink-0 flex items-center justify-end">
+      <div className="px-6 py-3 border-b border-border shrink-0 flex items-center justify-end gap-3">
+        {dirty && <span role="status" className="text-xs text-muted-foreground">Alterações não salvas</span>}
         <button
           onClick={() => void handleSave()}
-          disabled={saving || loading || !settings}
+          disabled={saving || loading || !settings || !dirty}
           className={`btn btn-sm ${saved ? 'border-[hsl(var(--status-online))] text-[hsl(var(--status-online))] bg-[hsl(var(--status-online)_/_0.1)]' : 'btn-primary'}`}
           data-testid="button-save-settings"
         >
@@ -678,7 +701,7 @@ export default function ConfiguracoesPage() {
           <MetricCard icon={Server} label="Câmeras online" value={metrics.online} detail="Dispositivos respondendo agora" />
           <MetricCard icon={Users} label="Usuários ativos" value={metrics.activeUsers} detail="Contas liberadas para acesso" />
           <MetricCard icon={HardDrive} label="Uso do disco" value={metrics.disk} detail={`${formatBytes(system?.disk.freeBytes)} livres`} />
-          <MetricCard icon={Database} label="Gravações" value={metrics.recordings} detail={`${formatBytes(system?.recordings.totalBytes)} indexados`} />
+          <MetricCard icon={Database} label="Gravações" value={metrics.recordings} detail={`${formatBytes(system?.recordings.totalBytes)} em vídeos salvos`} />
         </section>
 
         <div className="grid gap-6 lg:grid-cols-[280px_1fr]">
@@ -723,7 +746,7 @@ export default function ConfiguracoesPage() {
                   <>
                     <SectionTitle eyebrow="Geral" title="Identidade e experiência" description="Nome da instalação (persistido) e tema da interface (preferência local do navegador)." />
                     <Card className="overflow-hidden">
-                      <SettingRow label="Nome da instalação" description="Identifica este servidor. Persistido no banco de dados.">
+                      <SettingRow label="Nome da instalação" description="Nome exibido para identificar esta instalação.">
                         <TextInput value={settings.facilityName} onChange={(event) => update('facilityName', event.target.value)} />
                       </SettingRow>
                       <SettingRow label="Tema da interface" description="Preferência visual deste navegador.">
@@ -847,7 +870,7 @@ export default function ConfiguracoesPage() {
 
                 {activeSection === 'branding' && (
                   <>
-                    <SectionTitle eyebrow="Aparência" title="Identidade visual do aplicativo" description="Configure aqui a marca exclusiva do aplicativo móvel. O painel web mantém a identidade visual do S2Cam." />
+                    <SectionTitle eyebrow="Aparência" title="Identidade visual do aplicativo" description="Configure aqui a marca exclusiva do aplicativo móvel. A aparência do painel web é configurada separadamente." />
                     <Card className="overflow-hidden">
                       <SettingRow label="Logo do app" description="PNG, JPG ou SVG até 400 KB. Aparece no login e na identidade do aplicativo; não altera o painel web.">
                         <div className="flex items-center gap-3 md:justify-end">
@@ -946,7 +969,7 @@ export default function ConfiguracoesPage() {
 
                 {activeSection === 'users' && (
                   <>
-                    <SectionTitle eyebrow="Acesso" title="Usuários" description="Visão somente leitura. Gestão completa na página de Usuários; perfis em Perfis e Permissões." />
+                    <SectionTitle eyebrow="Acesso" title="Usuários" description="Visão somente leitura. Gestão completa na página de Usuários; Funções em Funções e Permissões." />
                     <Card className="overflow-hidden">
                       <div className="overflow-x-auto">
                         <table className="w-full min-w-[640px] text-sm">
@@ -973,9 +996,9 @@ export default function ConfiguracoesPage() {
 
                 {activeSection === 'storage' && (
                   <>
-                    <SectionTitle eyebrow="Retenção" title="Retenção e disco" description="A retenção padrão é aplicada pela rotina de limpeza; câmeras podem ter override individual." />
+                    <SectionTitle eyebrow="Retenção" title="Prazo das gravações e espaço" description="A retenção padrão é aplicada pela rotina de limpeza; câmeras podem ter prazo próprio." />
                     <Card className="overflow-hidden">
-                      <SettingRow label="Retenção padrão" description="Dias para manter gravações sem override por câmera.">
+                      <SettingRow label="Retenção padrão" description="Dias para manter gravações sem prazo próprio por câmera.">
                         <div className="flex items-center gap-3">
                           <Slider value={[settings.defaultRetentionDays]} onValueChange={(v) => update('defaultRetentionDays', v[0])} min={1} max={365} />
                           <span className="w-20 text-right font-mono text-xs">{settings.defaultRetentionDays} dias</span>
@@ -984,7 +1007,7 @@ export default function ConfiguracoesPage() {
                       <SettingRow label="Limpeza automática" description="Quando o disco passa de 90%, remove as gravações mais antigas automaticamente.">
                         <Toggle checked={settings.autoCleanupEnabled} onChange={(v) => update('autoCleanupEnabled', v)} />
                       </SettingRow>
-                      <SettingRow label="Volume de gravações" description={system?.recordingsRoot ?? 'Diretório ainda não informado.'}>
+                      <SettingRow label="Espaço para gravações" description="Espaço disponível para guardar os vídeos.">
                         <div className="text-right text-xs text-muted-foreground">
                           <p>{formatBytes(system?.disk.usedBytes)} usados</p>
                           <p>{formatBytes(system?.disk.freeBytes)} livres</p>
@@ -996,7 +1019,7 @@ export default function ConfiguracoesPage() {
 
                 {activeSection === 'gpu' && (
                   <>
-                    <SectionTitle eyebrow="Aceleração" title="GPU / Placa de vídeo" description="Detecta a GPU, ativa o transcode acelerado (NVENC), roda um auto-teste e mostra o uso ao vivo. O transcode em CPU continua sendo o padrão até você ativar." />
+                    <SectionTitle eyebrow="Aceleração" title="Aceleração de vídeo" description="Permite usar uma placa de vídeo compatível para reduzir o trabalho do processador. Se precisar, peça ajuda à equipe técnica." />
                     <GpuAccelerationPanel />
                   </>
                 )}
@@ -1005,7 +1028,7 @@ export default function ConfiguracoesPage() {
                   <>
                     <SectionTitle eyebrow="Segurança" title="Sessão e senha" description="Regras aplicadas no login e na criação/edição de usuários." />
                     <Card className="overflow-hidden">
-                      <SettingRow label="Tempo de sessão" description="Validade do token de acesso (aplicada no próximo login).">
+                      <SettingRow label="Tempo de sessão" description="Validade do acesso em integrações. No navegador, a sessão é renovada automaticamente enquanto estiver válida.">
                         <div className="flex items-center gap-3">
                           <Slider value={[settings.sessionTimeoutMinutes]} onValueChange={(v) => update('sessionTimeoutMinutes', v[0])} min={5} max={1440} />
                           <span className="w-16 text-right font-mono text-xs">{settings.sessionTimeoutMinutes} min</span>

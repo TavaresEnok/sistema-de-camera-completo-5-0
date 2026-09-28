@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { confirmAction } from '../components/ActionConfirmation';
 import { Clock, LoaderCircle, Pause, Play, Plus, Trash2, X } from 'lucide-react';
 import { useAutoHideControls } from '../hooks/use-auto-hide-controls';
 import { getApiBaseUrl } from '../lib/api-base';
@@ -59,6 +60,9 @@ export default function RondaPage() {
   const [rondas, setRondas] = useState<Ronda[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
+  const [salvando, setSalvando] = useState(false);
+  const requestBusy = useRef(false);
+  const [removendo, setRemovendo] = useState(false);
   const [editando, setEditando] = useState<Ronda | null>(null);
   const [rodando, setRodando] = useState<Ronda | null>(null);
   // `null` = fechado; `{...}` = editando aquele mosaico; `false` = criando um novo.
@@ -78,6 +82,7 @@ export default function RondaPage() {
         fetch(`${getApiBaseUrl()}/live-layouts`, { headers: cabecalho }),
       ]);
       const dRondas = await rRondas.json();
+      if (!rRondas.ok || !rLayouts.ok) throw new Error('Falha ao carregar');
       setRondas(Array.isArray(dRondas?.items) ? dRondas.items : []);
 
       const brutos = await rLayouts.json().catch(() => []);
@@ -95,19 +100,33 @@ export default function RondaPage() {
 
   useEffect(() => { void carregar(); }, [carregar]);
 
+  const mutate = async (url: string, init: RequestInit): Promise<boolean> => {
+    if (requestBusy.current) return false;
+    requestBusy.current = true;
+    setSalvando(true);
+    try {
+      const response = await fetch(url, { ...init, signal: AbortSignal.timeout(20000) });
+      if (!response.ok) {
+        setErro(response.status === 403 ? 'Você não tem permissão para realizar esta ação.' : response.status === 401 ? 'Sua sessão expirou. Entre novamente.' : 'Não foi possível concluir. Tente novamente em instantes.');
+        return false;
+      }
+      setErro(null);
+      return true;
+    } catch {
+      setErro('Não foi possível conectar. Verifique sua conexão e tente novamente.');
+      return false;
+    } finally { requestBusy.current = false; setSalvando(false); }
+  };
+
   const salvar = async (ronda: Ronda) => {
     const novo = !ronda.id;
     const url = novo ? `${getApiBaseUrl()}/rondas` : `${getApiBaseUrl()}/rondas/${ronda.id}`;
-    const r = await fetch(url, {
+    const ok = await mutate(url, {
       method: novo ? 'POST' : 'PATCH',
       headers: { ...cabecalho, 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: ronda.name, paradas: ronda.paradas }),
     });
-    if (!r.ok) {
-      const d = await r.json().catch(() => ({}));
-      setErro(d?.message ?? 'Não foi possível salvar.');
-      return;
-    }
+    if (!ok) return;
     setEditando(null);
     setErro(null);
     await carregar();
@@ -121,7 +140,7 @@ export default function RondaPage() {
    */
   const salvarMosaico = async (m: { id?: string; name: string; gridSize: string; cameraIds: string[] }) => {
     const novo = !m.id;
-    const r = await fetch(
+    const ok = await mutate(
       novo ? `${getApiBaseUrl()}/live-layouts` : `${getApiBaseUrl()}/live-layouts/${m.id}`,
       {
         method: novo ? 'POST' : 'PATCH',
@@ -129,19 +148,18 @@ export default function RondaPage() {
         body: JSON.stringify({ name: m.name, gridSize: m.gridSize, cameraIds: m.cameraIds }),
       },
     );
-    if (!r.ok) {
-      const d = await r.json().catch(() => ({}));
-      setErro(d?.message ?? 'Não foi possível salvar o mosaico.');
-      return;
-    }
+    if (!ok) return;
     setMosaicoEmEdicao(null);
     setErro(null);
     await carregar();
   };
 
   const remover = async (id: string) => {
-    await fetch(`${getApiBaseUrl()}/rondas/${id}`, { method: 'DELETE', headers: cabecalho });
-    await carregar();
+    if (removendo || !(await confirmAction({ title: 'Apagar ronda?', description: 'Os mosaicos usados por esta ronda serão mantidos.', confirmLabel: 'Apagar ronda', destructive: true }))) return;
+    setRemovendo(true);
+    try {
+      if (await mutate(`${getApiBaseUrl()}/rondas/${id}`, { method: 'DELETE', headers: cabecalho })) await carregar();
+    } finally { setRemovendo(false); }
   };
 
   // Cobrir a aplicação inteira não é o mesmo que tela cheia: o navegador ainda
@@ -238,7 +256,7 @@ export default function RondaPage() {
                 <div className="flex items-start justify-between gap-2">
                   <h3 className="min-w-0 flex-1 truncate text-[14px] font-semibold">{r.name}</h3>
                   {meuParaMexer(r) ? (
-                    <button type="button" aria-label={`Apagar ${r.name}`} className="text-muted-foreground hover:text-[hsl(var(--destructive))]" onClick={() => void remover(r.id)}>
+                    <button disabled={removendo || salvando} type="button" aria-label={`Apagar ${r.name}`} className="text-muted-foreground hover:text-[hsl(var(--destructive))]" onClick={() => void remover(r.id)}>
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
                   ) : (
@@ -274,6 +292,8 @@ export default function RondaPage() {
           cameras={cameras}
           onCancelar={() => { setMosaicoEmEdicao(null); setErro(null); }}
           onSalvar={salvarMosaico}
+          salvando={salvando}
+          erro={erro}
         />
       )}
 
@@ -283,6 +303,8 @@ export default function RondaPage() {
           layouts={layouts}
           onCancelar={() => { setEditando(null); setErro(null); }}
           onSalvar={salvar}
+          salvando={salvando}
+          erro={erro}
           onNovoMosaico={() => setMosaicoEmEdicao(false)}
           onEditarMosaico={(id) => {
             const m = layouts.find((l) => l.id === id);
@@ -312,9 +334,11 @@ const GRADES = ['1x1', '2x2', '3x3', '4x4', '2x1', '3x2', '4x3'] as const;
  * de montar tudo duas vezes.
  */
 function EditorDeMosaico({
-  mosaico, cameras, onCancelar, onSalvar,
+  mosaico, cameras, onCancelar, onSalvar, salvando, erro,
 }: {
   mosaico: MosaicoSalvo | null;
+  salvando: boolean;
+  erro: string | null;
   cameras: { id: string; name: string }[];
   onCancelar: () => void;
   onSalvar: (m: { id?: string; name: string; gridSize: string; cameraIds: string[] }) => void | Promise<void>;
@@ -342,7 +366,7 @@ function EditorDeMosaico({
       <div className="ops-card flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden">
         <div className="flex items-center justify-between border-b border-border px-5 py-3">
           <h2 className="text-[15px] font-semibold">{mosaico ? 'Editar mosaico' : 'Novo mosaico'}</h2>
-          <button type="button" onClick={onCancelar} aria-label="Fechar"><X className="h-4 w-4" /></button>
+          <button disabled={salvando} type="button" onClick={onCancelar} aria-label="Fechar"><X className="h-4 w-4" /></button>
         </div>
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">
@@ -384,14 +408,15 @@ function EditorDeMosaico({
         </div>
 
         <div className="flex justify-end gap-2 border-t border-border px-5 py-3">
-          <button type="button" className="btn btn-secondary btn-sm" onClick={onCancelar}>Cancelar</button>
+          {erro && <p role="alert" className="text-sm text-destructive">{erro}</p>}
+          <button disabled={salvando} type="button" className="btn btn-secondary btn-sm" onClick={onCancelar}>Cancelar</button>
           <button
             type="button"
             className="btn btn-primary btn-sm"
-            disabled={!nome.trim() || !slots.some(Boolean)}
+            disabled={salvando || !nome.trim() || !slots.some(Boolean)}
             onClick={() => void onSalvar({ id: mosaico?.id, name: nome.trim(), gridSize: grade, cameraIds: slots })}
           >
-            Salvar mosaico
+            {salvando ? 'Salvando...' : 'Salvar mosaico'}
           </button>
         </div>
       </div>
@@ -408,9 +433,11 @@ function formatarDuracao(segundos: number): string {
 
 /** Montagem da ronda: escolher mosaicos, ordenar, dar tempo a cada um. */
 function EditorDaRonda({
-  ronda, layouts, onCancelar, onSalvar, onNovoMosaico, onEditarMosaico,
+  ronda, layouts, onCancelar, onSalvar, onNovoMosaico, onEditarMosaico, salvando, erro,
 }: {
   ronda: Ronda;
+  salvando: boolean;
+  erro: string | null;
   layouts: MosaicoSalvo[];
   onCancelar: () => void;
   onSalvar: (r: Ronda) => void | Promise<void>;
@@ -436,7 +463,7 @@ function EditorDaRonda({
       <div className="ops-card flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden">
         <div className="flex items-center justify-between border-b border-border px-5 py-3">
           <h2 className="text-[15px] font-semibold">{ronda.id ? 'Editar ronda' : 'Nova ronda'}</h2>
-          <button type="button" onClick={onCancelar} aria-label="Fechar"><X className="h-4 w-4" /></button>
+          <button disabled={salvando} type="button" onClick={onCancelar} aria-label="Fechar"><X className="h-4 w-4" /></button>
         </div>
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">
@@ -518,14 +545,15 @@ function EditorDaRonda({
         </div>
 
         <div className="flex justify-end gap-2 border-t border-border px-5 py-3">
-          <button type="button" className="btn btn-secondary btn-sm" onClick={onCancelar}>Cancelar</button>
+          {erro && <p role="alert" className="text-sm text-destructive">{erro}</p>}
+          <button disabled={salvando} type="button" className="btn btn-secondary btn-sm" onClick={onCancelar}>Cancelar</button>
           <button
             type="button"
             className="btn btn-primary btn-sm"
-            disabled={!nome.trim() || paradas.length === 0}
+            disabled={salvando || !nome.trim() || paradas.length === 0}
             onClick={() => void onSalvar({ ...ronda, name: nome.trim(), paradas })}
           >
-            Salvar
+            {salvando ? 'Salvando...' : 'Salvar'}
           </button>
         </div>
       </div>

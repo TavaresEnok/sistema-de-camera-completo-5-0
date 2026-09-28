@@ -146,7 +146,7 @@ test('a placa de vídeo fica nos ajustes do servidor, fora da configuração sim
   const ai = ler('src/pages/AiPage.tsx');
   assert.doesNotMatch(ai, /gpu\/status|Placa de vídeo|NVENC|CUDA|nvidia-smi/i);
   const ajustes = ler('src/pages/SettingsPage.tsx');
-  assert.match(ajustes, /GPU \/ Placa de vídeo/);
+  assert.match(ajustes, /Aceleração de vídeo/);
 });
 
 test('a tela simples não consulta a rota administrativa de GPU', () => {

@@ -4,7 +4,7 @@ import {
   Monitor, PlaySquare,
   Camera, Settings,
   LogOut, Sun, Moon, Shield, Clock, Users, FolderKey, ShieldCheck,
-  Bell, Crosshair, HardDrive, UserCircle, MapPinned, Newspaper,
+  Bell, Crosshair, HardDrive, UserCircle, MapPinned, Newspaper, LayoutGrid,
   type LucideIcon,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -13,6 +13,8 @@ import { useAuthStore } from '../store/authStore';
 import { useThemeStore } from '../store/themeStore';
 import { useVmsDataStore } from '../store/vmsDataStore';
 import { useBrandingStore } from '../store/brandingStore';
+import { ADMIN_PAGE_PERMISSION, hasPermission, usePermissionsStore } from '../store/permissionsStore';
+import { confirmNavigation } from '../hooks/use-unsaved-changes';
 
 type PalettePage = {
   label: string;
@@ -30,6 +32,7 @@ const PAGES: PalettePage[] = [
   { label: 'Novidades',     path: '/updates',    icon: Newspaper,  description: 'Últimas funções e melhorias' },
   { label: 'Controle PTZ',  path: '/ptz',        icon: Crosshair,   description: 'Movimentação e presets PTZ' },
   { label: 'Minha conta',   path: '/profile',    icon: UserCircle,  description: 'Seu perfil e gestão do grupo' },
+  { label: 'Minhas rondas', path: '/ronda', icon: LayoutGrid, description: 'Organizar e alternar mosaicos' },
   // operator+
   { label: 'Alertas',       path: '/alarms',     icon: Bell,        description: 'Tratamento e regras de alarme',       roles: ['admin', 'operator'] },
   { label: 'Câmeras',       path: '/cameras',    icon: Camera,      description: 'Gestão e configuração de câmeras',    roles: ['admin', 'operator'] },
@@ -39,6 +42,7 @@ const PAGES: PalettePage[] = [
   { label: 'Grupos',        path: '/groups',     icon: FolderKey,   description: 'Câmeras e acessos por grupo',         roles: ['admin'] },
   { label: 'Funções',       path: '/roles',      icon: ShieldCheck, description: 'Perfis e permissões',                 roles: ['admin'] },
   { label: 'Configurações', path: '/settings',   icon: Settings,    description: 'Configuração do sistema',             roles: ['admin'] },
+  { label: 'Mosaicos e rondas', path: '/mosaicos', icon: LayoutGrid, description: 'Compartilhar mosaicos com a equipe', roles: ['admin'] },
 ];
 
 interface Props {
@@ -53,8 +57,11 @@ export function CommandPalette({ open, onClose }: Props) {
   const { theme, setTheme } = useThemeStore();
   const cameras = useVmsDataStore((state) => state.cameras);
   const role = user?.role ?? 'operator';
+  usePermissionsStore((s) => s.permissions);
+  const hiddenNavPaths = useBrandingStore((s) => s.hiddenNavPaths);
   const visiblePages = PAGES.filter((page) => {
-    return !page.roles || page.roles.includes(role);
+    return (!page.roles || page.roles.includes(role)) && !hiddenNavPaths.includes(page.path)
+      && (role !== 'admin' || !ADMIN_PAGE_PERMISSION[page.path] || hasPermission(ADMIN_PAGE_PERMISSION[page.path]));
   });
 
   const recent = [
@@ -62,9 +69,10 @@ export function CommandPalette({ open, onClose }: Props) {
     { label: 'Reprodução', path: '/playback', icon: Clock },
   ].filter(Boolean) as Array<{ label: string; path: string; icon: typeof Clock }>;
 
-  const navigate = (path: string) => {
-    setLocation(path);
+  const navigate = async (path: string) => {
     onClose();
+    if (!(await confirmNavigation())) return;
+    setLocation(path);
   };
 
   const handleAction = (action: string) => {

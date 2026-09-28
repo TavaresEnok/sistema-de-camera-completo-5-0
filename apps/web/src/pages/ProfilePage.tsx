@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react';
 import axios from 'axios';
+import { clientError } from '../lib/client-error';
+import { usePasswordPolicy } from '../hooks/use-password-policy';
+import { hasPermission, usePermissionsStore } from '../store/permissionsStore';
 import { Camera, Shield, UserPlus, UserX, Unlock, RefreshCw, Users, KeyRound } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
@@ -58,6 +61,7 @@ function apiClient(token: string | null) {
 export default function ProfilePage() {
   const currentUser  = useAuthStore((s) => s.user);
   const accessToken  = useAuthStore((s) => s.accessToken);
+  const passwordPolicy = usePasswordPolicy(accessToken);
 
   const [groups, setGroups]         = useState<Group[]>([]);
   const [myPerms, setMyPerms]       = useState<MyPermission[]>([]);
@@ -77,7 +81,8 @@ export default function ProfilePage() {
 
   // Grupos onde o usuário corrente é administrador
   const adminPerms    = myPerms.filter((p) => p.groupId && p.level === 'ADMIN');
-  const isGroupAdmin  = adminPerms.length > 0;
+  usePermissionsStore((s) => s.permissions);
+  const isGroupAdmin  = adminPerms.length > 0 && (currentUser?.role !== 'admin' || hasPermission('userManage'));
   const adminGroupIds = adminPerms.map((p) => p.groupId!);
   const adminGroups   = groups.filter((g) => adminGroupIds.includes(g.id));
 
@@ -134,6 +139,8 @@ export default function ProfilePage() {
       toast({ title: 'Preencha nome, usuário e senha.', variant: 'destructive' });
       return;
     }
+    const passwordError = passwordPolicy.validate(form.password);
+    if (passwordError) { toast({ title: 'Confira a senha', description: passwordError, variant: 'destructive' }); return; }
     setSaving(true);
     try {
       await apiClient(accessToken).post('/users', {
@@ -155,7 +162,7 @@ export default function ProfilePage() {
     } catch (error) {
       toast({
         title: 'Erro ao criar usuário',
-        description: error instanceof Error ? error.message : 'Falha ao criar usuário.',
+        description: clientError(error, 'Falha ao criar usuário.'),
         variant: 'destructive',
       });
     } finally {
@@ -171,7 +178,7 @@ export default function ProfilePage() {
     } catch (error) {
       toast({
         title: 'Erro',
-        description: error instanceof Error ? error.message : 'Falha ao atualizar usuário.',
+        description: clientError(error, 'Falha ao atualizar usuário.'),
         variant: 'destructive',
       });
     }
@@ -182,6 +189,8 @@ export default function ProfilePage() {
       toast({ title: 'Preencha a senha atual e a nova senha.', variant: 'destructive' });
       return;
     }
+    const passwordError = passwordPolicy.validate(passwordForm.newPassword);
+    if (passwordError) { toast({ title: 'Confira a nova senha', description: passwordError, variant: 'destructive' }); return; }
     setChangingPassword(true);
     try {
       await apiClient(accessToken).patch('/users/me/password', passwordForm);
@@ -189,12 +198,9 @@ export default function ProfilePage() {
       setPasswordForm({ currentPassword: '', newPassword: '' });
       toast({ title: 'Senha alterada com sucesso.' });
     } catch (error) {
-      const message = axios.isAxiosError(error)
-        ? (error.response?.data as { message?: string | string[] })?.message
-        : undefined;
       toast({
         title: 'Erro ao alterar senha',
-        description: Array.isArray(message) ? message.join(' ') : message ?? 'Falha ao alterar senha.',
+        description: clientError(error, 'Não foi possível alterar sua senha. Confira os dados e tente novamente.'),
         variant: 'destructive',
       });
     } finally {
@@ -244,7 +250,7 @@ export default function ProfilePage() {
             <div className="text-base font-semibold truncate">{currentUser?.name}</div>
             <div className="text-xs text-muted-foreground mt-0.5">{currentUser?.email}</div>
             <div className="mt-2">
-              <span className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-0.5 text-[10px] font-mono text-muted-foreground">
+              <span className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-0.5 text-xs font-mono text-muted-foreground">
                 <Shield className="w-3 h-3" />
                 {ROLE_LABEL[currentUser?.role ?? 'viewer'] ?? 'Visualizador'}
               </span>
@@ -290,11 +296,11 @@ export default function ProfilePage() {
                     <div className="flex-1 min-w-0">
                       <div className="text-[13px] font-medium truncate">{group.name}</div>
                       {group.description && (
-                        <div className="text-[10px] text-muted-foreground truncate">{group.description}</div>
+                        <div className="text-xs text-muted-foreground truncate">{group.description}</div>
                       )}
-                      <div className="text-[10px] text-muted-foreground mt-0.5">{LEVEL_LABEL[perm.level]}</div>
+                      <div className="text-xs text-muted-foreground mt-0.5">{LEVEL_LABEL[perm.level]}</div>
                     </div>
-                    <div className="flex items-center gap-1 text-[10px] text-muted-foreground font-mono shrink-0">
+                    <div className="flex items-center gap-1 text-xs text-muted-foreground font-mono shrink-0">
                       <Camera className="w-3 h-3" />
                       {group.cameras.length} câmera{group.cameras.length !== 1 ? 's' : ''}
                     </div>
@@ -336,21 +342,21 @@ export default function ProfilePage() {
                     )}
                   >
                     <div
-                      className="w-8 h-8 rounded-lg flex items-center justify-center text-[10px] font-bold shrink-0"
+                      className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold shrink-0"
                       style={{ background: 'hsl(var(--muted))', color: 'hsl(var(--muted-foreground))' }}
                     >
                       {initials(user.name)}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="text-[12.5px] font-medium truncate">{user.name}</div>
-                      <div className="text-[10px] font-mono text-muted-foreground truncate">{user.username || user.email || '—'}</div>
+                      <div className="text-xs font-mono text-muted-foreground truncate">{user.username || user.email || '—'}</div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       <span
                         className="w-1.5 h-1.5 rounded-full"
                         style={{ background: user.isActive ? 'hsl(var(--status-online))' : 'hsl(var(--muted-foreground) / 0.4)' }}
                       />
-                      <span className="text-[10px] text-muted-foreground">
+                      <span className="text-xs text-muted-foreground">
                         {user.isActive ? 'Ativo' : 'Bloqueado'}
                       </span>
                       <button
@@ -420,13 +426,14 @@ export default function ProfilePage() {
                 type="password"
                 value={form.password}
                 onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
-                placeholder="Mínimo 12 caracteres"
+                placeholder="Senha inicial"
                 className="h-8 w-full rounded border border-border bg-background px-3 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
               />
+              <p className="text-xs text-muted-foreground">{passwordPolicy.hint}</p>
             </div>
 
             {/* Info sobre o grupo que será atribuído */}
-            <div className="rounded-lg border border-border bg-muted/30 p-2.5 text-[10px] text-muted-foreground">
+            <div className="rounded-lg border border-border bg-muted/30 p-2.5 text-xs text-muted-foreground">
               O usuário será criado como <strong>Visualizador</strong> com acesso a:{' '}
               <strong>{adminGroups.map((g) => g.name).join(', ')}</strong>.
             </div>
@@ -472,9 +479,10 @@ export default function ProfilePage() {
                 type="password"
                 value={passwordForm.newPassword}
                 onChange={(e) => setPasswordForm((f) => ({ ...f, newPassword: e.target.value }))}
-                placeholder="Mínimo 10 caracteres"
+                placeholder="Nova senha"
                 className="h-8 w-full rounded border border-border bg-background px-3 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
               />
+              <p className="text-xs text-muted-foreground">{passwordPolicy.hint}</p>
             </div>
 
             <div className="flex gap-2 pt-1">

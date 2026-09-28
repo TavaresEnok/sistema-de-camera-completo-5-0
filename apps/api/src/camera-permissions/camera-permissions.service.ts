@@ -5,12 +5,14 @@ import { AuthUser } from '../common/types/auth-user.type';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { GrantCameraPermissionDto } from './dto/grant-camera-permission.dto';
 import { UpdateCameraPermissionDto } from './dto/update-camera-permission.dto';
+import { RolePermissionsService } from '../role-permissions/role-permissions.service';
 
 @Injectable()
 export class CameraPermissionsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly accessControlService: AccessControlService,
+    private readonly rolePermissions?: RolePermissionsService,
   ) {}
 
   private isPrivileged(user: AuthUser) {
@@ -46,11 +48,12 @@ export class CameraPermissionsService {
 
   async list(actor: AuthUser, userId?: string) {
     const groupIds = this.isPrivileged(actor) ? null : await this.accessControlService.getAdminGroupIds(actor);
-    if (groupIds && groupIds.length === 0) return [];
+    const own = userId === actor.id;
+    if (!own && groupIds && groupIds.length === 0) return [];
     return this.prisma.cameraPermission.findMany({
       where: {
         ...(userId ? { userId } : {}),
-        ...(groupIds ? { groupId: { in: groupIds } } : {}),
+        ...(!own && groupIds ? { groupId: { in: groupIds } } : {}),
       },
       include: {
         user: { select: { id: true, name: true, email: true, role: true, isActive: true } },
@@ -83,6 +86,7 @@ export class CameraPermissionsService {
   }
 
   async grant(actor: AuthUser, dto: GrantCameraPermissionDto) {
+    await this.assertManagementPermission(actor);
     await this.validateTarget(dto);
     if (!this.isPrivileged(actor)) {
       if (!dto.groupId || dto.cameraId) {
@@ -157,6 +161,7 @@ export class CameraPermissionsService {
   }
 
   async update(actor: AuthUser, id: string, dto: UpdateCameraPermissionDto) {
+    await this.assertManagementPermission(actor);
     await this.assertCanManagePermission(actor, id);
 
     return this.prisma.cameraPermission.update({
@@ -171,8 +176,16 @@ export class CameraPermissionsService {
   }
 
   async remove(actor: AuthUser, id: string) {
+    await this.assertManagementPermission(actor);
     await this.assertCanManagePermission(actor, id);
 
     return this.prisma.cameraPermission.delete({ where: { id } });
+  }
+
+  private async assertManagementPermission(actor: AuthUser) {
+    if (actor.role === UserRole.ADMIN && this.rolePermissions && !(await this.rolePermissions.hasPermission(actor.role, 'userManage'))) {
+      throw new ForbiddenException('Você não tem permissão para gerenciar acessos.');
+    }
+    // Administradores de grupo continuam sujeitos ao escopo validado acima.
   }
 }

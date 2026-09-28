@@ -9,6 +9,7 @@ import { ChangePasswordDto } from './dto/change-password.dto';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { AuthUser } from '../common/types/auth-user.type';
+import { RolePermissionsService } from '../role-permissions/role-permissions.service';
 
 @Injectable()
 export class UsersService {
@@ -17,10 +18,18 @@ export class UsersService {
     private readonly authService: AuthService,
     private readonly settingsService: SettingsService,
     private readonly accessControlService: AccessControlService,
+    private readonly rolePermissions?: RolePermissionsService,
   ) {}
 
   private isPrivileged(actor: AuthUser) {
     return actor.role === UserRole.ADMIN || actor.role === UserRole.SUPER_ADMIN;
+  }
+
+  private async assertManagementPermission(actor: AuthUser) {
+    if (actor.role === UserRole.ADMIN && this.rolePermissions && !(await this.rolePermissions.hasPermission(actor.role, 'userManage'))) {
+      throw new ForbiddenException('Você não tem permissão para gerenciar usuários.');
+    }
+    // A administração delegada por grupo mantém suas verificações de escopo.
   }
 
   private isGroupAssignableRole(role: UserRole) {
@@ -105,6 +114,7 @@ export class UsersService {
   }
 
   async create(actor: AuthUser, dto: CreateUserDto) {
+    await this.assertManagementPermission(actor);
     if (!this.isPrivileged(actor) && !this.isGroupAssignableRole(dto.role)) {
       throw new ForbiddenException('Administrador de grupo só pode criar VIEWER ou OPERATOR.');
     }
@@ -145,6 +155,7 @@ export class UsersService {
   }
 
   async update(actor: AuthUser, id: string, dto: UpdateUserDto) {
+    await this.assertManagementPermission(actor);
     const existing = await this.prisma.user.findUnique({ where: { id } });
     if (!existing) {
       throw new NotFoundException('Usuário não encontrado.');
@@ -223,6 +234,7 @@ export class UsersService {
   }
 
   async softDelete(actor: AuthUser, id: string) {
+    await this.assertManagementPermission(actor);
     const existing = await this.prisma.user.findUnique({ where: { id } });
     if (!existing) {
       throw new NotFoundException('Usuário não encontrado.');
@@ -252,6 +264,7 @@ export class UsersService {
   // anonimizado). Mesmas regras de permissão do softDelete + não pode excluir a
   // própria conta.
   async hardDelete(actor: AuthUser, id: string) {
+    await this.assertManagementPermission(actor);
     const existing = await this.prisma.user.findUnique({ where: { id } });
     if (!existing) {
       throw new NotFoundException('Usuário não encontrado.');

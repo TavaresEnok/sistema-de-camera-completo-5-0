@@ -14,6 +14,7 @@ import { useAuthStore } from '../store/authStore';
 import { useThemeStore } from '../store/themeStore';
 import { useIsMobile } from '../hooks/use-mobile';
 import { useBrandingStore } from '../store/brandingStore';
+import { ADMIN_PAGE_PERMISSION, hasPermission, usePermissionsStore } from '../store/permissionsStore';
 import { useDeteccoesNaoVistas, formatarContador } from '../hooks/use-deteccoes-nao-vistas';
 
 type NavItem = {
@@ -142,6 +143,7 @@ export function Sidebar({
   const [location] = useLocation();
   const isDark = theme === 'dark' || theme === 'dim';
   const role = user?.role ?? 'operator';
+  usePermissionsStore((s) => s.permissions);
   const facilityName = useBrandingStore((state) => state.facilityName);
   const logoDataUrl = useBrandingStore((state) => state.logoDataUrl);
   const aiFeatureEnabled = useBrandingStore((state) => state.aiFeatureEnabled);
@@ -165,7 +167,8 @@ export function Sidebar({
     .map((section) => ({
       ...section,
       items: section.items.filter(
-        (item) => (!item.roles || item.roles.includes(role)) && !escondida(item.path),
+        (item) => (!item.roles || item.roles.includes(role)) && !escondida(item.path)
+          && (role !== 'admin' || !ADMIN_PAGE_PERMISSION[item.path] || hasPermission(ADMIN_PAGE_PERMISSION[item.path])),
       ),
     }))
     // Seção que ficou sem nenhum item some junto (é o que apaga "Investigação").

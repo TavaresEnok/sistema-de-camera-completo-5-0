@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { UserRole } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
 import {
@@ -39,7 +39,7 @@ export class RolePermissionsService implements OnModuleInit {
     const result: Record<string, PermissionMatrix> = {};
     for (const role of Object.values(UserRole)) {
       const stored = byRole.get(role);
-      result[role] = stored ? normalizeMatrix(stored, DEFAULT_PERMISSIONS[role]) : DEFAULT_PERMISSIONS[role];
+      result[role] = role === UserRole.SUPER_ADMIN ? DEFAULT_PERMISSIONS[role] : stored ? normalizeMatrix(stored, DEFAULT_PERMISSIONS[role]) : DEFAULT_PERMISSIONS[role];
     }
     this.cache = result;
     this.cacheAt = Date.now();
@@ -60,6 +60,12 @@ export class RolePermissionsService implements OnModuleInit {
   }
 
   async updateRole(role: UserRole, permissions: unknown): Promise<PermissionMatrix> {
+    if (role === UserRole.SUPER_ADMIN) throw new BadRequestException('As permissões do administrador principal não podem ser alteradas.');
+    if (!permissions || typeof permissions !== 'object' || Array.isArray(permissions)) throw new BadRequestException('Informe as permissões da função.');
+    const values = permissions as Record<string, unknown>;
+    if (PERMISSION_KEYS.some((key) => typeof values[key] !== 'boolean') || Object.keys(values).some((key) => !(PERMISSION_KEYS as readonly string[]).includes(key))) {
+      throw new BadRequestException('Envie todas as permissões com valores válidos.');
+    }
     const normalized = normalizeMatrix(permissions);
     await this.prisma.rolePermission.upsert({
       where: { role },

@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Req } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Req } from '@nestjs/common';
 import { UserRole } from '@prisma/client';
 import { Request } from 'express';
 import { AuditService } from '../audit/audit.service';
@@ -91,8 +91,9 @@ export class CameraGroupsController {
   @Roles(UserRole.ADMIN)
   @RequirePermission('cameraConfig')
   @Post(':id/cameras/:cameraId')
-  async addCamera(@CurrentUser() user: AuthUser, @Param('id') id: string, @Param('cameraId') cameraId: string, @Req() req: Request) {
-    const group = await this.cameraGroupsService.addCamera(id, cameraId);
+  async addCamera(@CurrentUser() user: AuthUser, @Param('id') id: string, @Param('cameraId') cameraId: string, @Req() req: Request, @Body() body?: { expectedGroupId?: string | null }) {
+    if (body?.expectedGroupId != null && typeof body.expectedGroupId !== 'string') throw new BadRequestException('Grupo de origem inválido.');
+    const group = await this.cameraGroupsService.addCamera(id, cameraId, body?.expectedGroupId);
     await this.auditService.log(user.id, 'camera_group.camera_add', 'CameraGroup', id, { cameraId }, req);
     return group;
   }
