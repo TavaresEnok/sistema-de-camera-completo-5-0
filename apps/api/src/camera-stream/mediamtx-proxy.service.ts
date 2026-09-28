@@ -2270,11 +2270,15 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
         // fallback direto — ou seja, ligar a flag não mudaria nada. Best-effort:
         // um erro aqui NUNCA pode derrubar a preparação do path de live.
         try {
-          this.sourceGateway?.registerPublishedSource(
-            cameraId,
-            liveViewModeToSourceProfile(deliveryMode),
-            value.pathName ? this.buildInternalRtspUrl(value.pathName) : null,
-          );
+          // Audio variants are delivery outputs, not canonical camera sources.
+          // Never let the last audio request replace the shared raw source.
+          if (!deliveryMode.endsWith('-audio')) {
+            this.sourceGateway?.registerPublishedSource(
+              cameraId,
+              liveViewModeToSourceProfile(deliveryMode),
+              value.pathName ? this.buildInternalRtspUrl(value.pathName) : null,
+            );
+          }
         } catch {
           /* observabilidade não interfere no live */
         }

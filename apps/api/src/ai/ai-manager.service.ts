@@ -1,4 +1,5 @@
 import { CameraStatus } from '@prisma/client';
+import { sameVideoSource } from '../camera-stream/helpers/same-video-source.helper';
 import { BadRequestException, Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
 import { CamerasService } from '../cameras/cameras.service';
 import { AiService } from './ai.service';
@@ -1401,7 +1402,8 @@ export class AiManagerService implements OnModuleInit {
     // que existe uma entrega interna válida: consumi-la é o próprio acquire, pois
     // o MediaMTX abre a fonte sob demanda e a compartilha com os demais leitores.
     // Mantemos o gate operacional: desligar o Source Gateway restaura o direto.
-    if (ensured?.pathName && this.sourceGateway?.isEnabled() === true) {
+    if (ensured?.pathName && this.sourceGateway?.isEnabled() === true
+      && sameVideoSource(rtspUrl, ensured.sourceUrl)) {
       let shared = ensured;
       // Se a sonda direta falhou por limite de sessões, analyticsCodec é null,
       // mas a descoberta da grade ainda pode ter identificado HEVC. Preserva o
@@ -1414,7 +1416,7 @@ export class AiManagerService implements OnModuleInit {
       }
       const sharedPathName = shared.pathName;
       const sharedUrl = this.mediamtxProxy.buildInternalRtspUrl(sharedPathName);
-      if (sharedUrl) {
+      if (sharedUrl && sameVideoSource(rtspUrl, shared.sourceUrl)) {
         const sharedUrlSanitized = sanitizeRtspUrl(sharedUrl);
         const sharedIsHevc = isHevcCodec(shared.sourceVideoCodec)
           && Boolean(sharedPathName?.endsWith('_grid_hevc'));

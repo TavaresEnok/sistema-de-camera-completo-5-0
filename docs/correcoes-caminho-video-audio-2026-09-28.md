@@ -64,3 +64,11 @@ console.table(samples);
 ```
 
 Não declarar todas as 18 linhas concluídas nem prometer 20 FPS: a economia e a estabilidade precisam ser comprovadas em execução.
+
+## Continuação operacional
+
+- Gateway consultada: SRS 5.0.213, sete vhosts incluindo demo-04. Configuração completa sem bloqueio PLAY confirmada. Acrescentado bloqueio nos sete, mantendo destinos e timeouts; validação `srs -t` aprovada na própria versão 5.0.213. Backup remoto: `/opt/ajustcam-gateway/srs/srs.conf.before-play-block-20260928`. SIGHUP enviado; contêiner continuou em execução com a mesma data de início e zero reinícios. Sessões anteriores não foram expulsas. O mecanismo de recarga é documentado em https://ossrs.io/lts/en-us/docs/v5/doc/http-api .
+- Reaproveitamento normal da grade pela IA agora exige igualdade da URL física pedida, incluindo canal, subtipo e credenciais; não altera os fallbacks explícitos de recuperação. Modalidade de áudio não sobrescreve o registro da fonte compartilhada.
+- Mais 35 testes de compartilhamento/registro/identidade aprovados e TypeScript da API aprovado.
+- Imagens de produção API/web compiladas, ainda sem substituir os contêineres. Durante preparação do rollback, Docker não encontrou os IDs das imagens dos contêineres atuais; tentativa de snapshot também falhou com `content digest ... not found`. Não reiniciar esses contêineres sem uma recuperação verificável.
+- IBTelecom acessível: checkout `667b4fa`, diferente do código corrigido; nenhuma implantação feita ali nesta continuação. Management acessível, porém projeto não está em `/opt/drac` e Docker exige sudo; localização/inventário ainda em andamento.
