@@ -48,7 +48,7 @@ import { useClassesLiberadas } from '../hooks/use-classes-liberadas';
 import { rotuloDoGatilhoDeObjeto, podeUsarGatilhoDeObjeto } from '../lib/gatilho-de-objeto';
 import { cameraSourceProtocol, formatStorageBytes } from '../lib/camera-list-metadata';
 import { capturarLocalizacaoDoInstalador } from '../lib/localizacao-do-instalador';
-const STATUSES = ['all', 'online', 'recording', 'motion', 'alarm', 'offline', 'no_signal', 'maintenance'] as const;
+const STATUSES = ['all', 'online', 'recording', 'motion', 'alarm', 'offline', 'checking', 'no_signal', 'maintenance'] as const;
 const STATUS_LABEL: Record<(typeof STATUSES)[number], string> = {
   all: 'Todos os status',
   online: 'Online',
@@ -58,6 +58,7 @@ const STATUS_LABEL: Record<(typeof STATUSES)[number], string> = {
   offline: 'Offline',
   no_signal: 'Sem sinal',
   maintenance: 'Manutenção',
+  checking: 'Em verificação',
 };
 
 
@@ -1003,7 +1004,8 @@ export default function CamerasPage() {
   const [recordingOverrides, setRecordingOverrides] = useState<Record<string, boolean>>({});
   const [diagnosingPtzCameraId, setDiagnosingPtzCameraId] = useState<string | null>(null);
   const [posterUrls, setPosterUrls] = useState<Record<string, string>>({});
-  const lastPosterRetryAtRef = useRef(0);
+  const [posterLoaded, setPosterLoaded] = useState<Set<string>>(() => new Set());
+  const [posterFailed, setPosterFailed] = useState<Set<string>>(() => new Set());
   const openCamera = useCallback((cameraId: string) => {
     setSelectedCam(cameras.find(camera => camera.id === cameraId) ?? null);
   }, [cameras]);
@@ -1031,14 +1033,15 @@ export default function CamerasPage() {
   }>>({});
   const groups = useMemo(() => ['all', ...Array.from(new Set(cameras.map((c) => c.floor).filter((f) => f && f !== '-')))], [cameras]);
   const posterCameraIdsKey = useMemo(
-    () => cameras.filter((camera) => camera.isOnline).map((camera) => camera.id).sort().join(','),
+    () => cameras.filter((camera) => camera.enabled && camera.canViewContent).map((camera) => camera.id).sort().join(','),
     [cameras],
   );
   const loadPosterTokens = useCallback(async () => {
     if (!accessToken) return;
-    const cameraIds = useVmsDataStore.getState().cameras.filter((camera) => camera.isOnline).map((camera) => camera.id);
+    const cameraIds = useVmsDataStore.getState().cameras.filter((camera) => camera.enabled && camera.canViewContent).map((camera) => camera.id);
     if (!cameraIds.length) {
       setPosterUrls({});
+      setPosterLoaded(new Set());
       return;
     }
     try {
@@ -1053,6 +1056,7 @@ export default function CamerasPage() {
         next[item.cameraId] = `${item.posterUrl}${separator}token=${encodeURIComponent(item.streamToken)}&v=${Date.now()}`;
       }
       setPosterUrls(next);
+      setPosterFailed(new Set());
     } catch {
       // Preserva a última amostra válida durante uma falha transitória.
     }
@@ -1074,17 +1078,17 @@ export default function CamerasPage() {
   }, [loadPosterTokens, posterCameraIdsKey]);
 
   const retryPoster = useCallback((cameraId: string) => {
+    setPosterFailed(current => new Set(current).add(cameraId));
+    setPosterLoaded(current => { const next = new Set(current); next.delete(cameraId); return next; });
     setPosterUrls((current) => {
       if (!current[cameraId]) return current;
       const next = { ...current };
       delete next[cameraId];
       return next;
     });
-    const now = Date.now();
-    if (now - lastPosterRetryAtRef.current < 5_000) return;
-    lastPosterRetryAtRef.current = now;
-    void loadPosterTokens();
-  }, [loadPosterTokens]);
+    // Uma captura falha não pode renovar todos os tokens e disparar novas
+    // capturas em cascata nas demais câmeras da página.
+  }, []);
   const isRecordingAutoRecovering = useCallback((camera: Camera | null | undefined) => (
     camera?.recordingStatusDetail === 'auto_reconnecting'
   ), []);
@@ -1592,7 +1596,7 @@ export default function CamerasPage() {
           ) : (
             <div className="grid gap-4 p-5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))' }}>
               {filtered.map(cam => {
-                const isOffline = ['offline', 'no_signal'].includes(cam.status);
+                const isOffline = ['offline', 'no_signal'].includes(cam.status) && !posterLoaded.has(cam.id);
                 const isDisabled = cam.enabled === false;
                 return (
                 <div
@@ -1611,9 +1615,10 @@ export default function CamerasPage() {
                   aria-label={`Abrir câmera ${cam.name}`}
                 >
                   <div className="relative h-36 overflow-hidden bg-[hsl(220_18%_8%)]">
-                    {posterUrls[cam.id] && !isOffline && (
+                    {posterUrls[cam.id] && !posterFailed.has(cam.id) && (
                       <img
                         src={posterUrls[cam.id]}
+                        onLoad={() => setPosterLoaded(current => new Set(current).add(cam.id))}
                         onError={() => retryPoster(cam.id)}
                         alt={`Amostra de ${cam.name}`}
                         loading="lazy"
@@ -1632,7 +1637,7 @@ export default function CamerasPage() {
                         <span className="w-1.5 h-1.5 rounded-full bg-[hsl(var(--status-rec))] rec-pulse inline-block" />
                       </div>
                     )}
-                    <div className={`absolute inset-0 flex items-center justify-center ${posterUrls[cam.id] && !isOffline ? 'opacity-0' : ''}`}>
+                    <div className={`absolute inset-0 flex items-center justify-center ${posterLoaded.has(cam.id) ? 'opacity-0' : ''}`}>
                       <CameraIcon className="h-8 w-8 text-white/25" />
                     </div>
                     {isDisabled ? (
@@ -1647,6 +1652,8 @@ export default function CamerasPage() {
                           {cam.status === 'no_signal' ? 'Sem sinal' : 'Offline'}
                         </span>
                       </div>
+                    ) : cam.status === 'checking' && !posterLoaded.has(cam.id) ? (
+                      <div className="absolute inset-0 flex items-center justify-center bg-black/45 text-xs text-white/80">{posterFailed.has(cam.id) ? 'Imagem indisponível' : 'Verificando imagem…'}</div>
                     ) : (
                       <div className="absolute inset-0 camera-scanline opacity-45" />
                     )}

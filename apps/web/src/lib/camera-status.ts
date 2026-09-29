@@ -16,7 +16,7 @@
 // Aqui as três ideias são separadas. Cada coluna passa a responder uma pergunta
 // só, e a mesma palavra deixa de aparecer duas vezes com sentidos diferentes.
 
-export type EstadoConexao = 'online' | 'offline' | 'sem_sinal' | 'manutencao';
+export type EstadoConexao = 'online' | 'offline' | 'sem_sinal' | 'manutencao' | 'verificando';
 
 /**
  * A CONEXÃO, e nada mais.
@@ -33,6 +33,8 @@ export function estadoConexao(status: string): EstadoConexao {
       return 'sem_sinal';
     case 'maintenance':
       return 'manutencao';
+    case 'checking':
+      return 'verificando';
     default:
       // online, recording, motion, alarm e qualquer estado novo: há conexão.
       return 'online';
@@ -44,6 +46,7 @@ export const ROTULO_CONEXAO: Record<EstadoConexao, string> = {
   offline: 'Offline',
   sem_sinal: 'Sem sinal',
   manutencao: 'Manutenção',
+  verificando: 'Em verificação',
 };
 
 /**
@@ -82,6 +85,7 @@ export const CLASSE_CONEXAO: Record<EstadoConexao, string> = {
   offline: 'bg-[hsl(var(--destructive)_/_0.1)] text-[hsl(var(--destructive))] border-[hsl(var(--destructive)_/_0.3)]',
   sem_sinal: 'bg-[hsl(var(--muted))] text-[hsl(var(--muted-foreground))] border-border',
   manutencao: 'bg-[hsl(var(--muted))] text-[hsl(var(--muted-foreground))] border-border',
+  verificando: 'bg-[hsl(var(--muted))] text-[hsl(var(--muted-foreground))] border-border',
 };
 
 /** O ponto colorido, mesma regra do selo. */
@@ -90,6 +94,7 @@ export const PONTO_CONEXAO: Record<EstadoConexao, string> = {
   offline: 'bg-[hsl(var(--destructive))]',
   sem_sinal: 'bg-[hsl(var(--muted-foreground))]',
   manutencao: 'bg-[hsl(var(--muted-foreground))]',
+  verificando: 'bg-[hsl(var(--muted-foreground))]',
 };
 
 /**

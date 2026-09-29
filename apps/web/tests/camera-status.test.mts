@@ -28,6 +28,7 @@ test('os estados que realmente falam de conexão são preservados', () => {
   assert.equal(estadoConexao('offline'), 'offline');
   assert.equal(estadoConexao('no_signal'), 'sem_sinal');
   assert.equal(estadoConexao('maintenance'), 'manutencao');
+  assert.equal(estadoConexao('checking'), 'verificando');
 });
 
 test('status desconhecido não vira "offline" por engano', () => {

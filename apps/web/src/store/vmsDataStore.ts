@@ -26,7 +26,7 @@ export interface Camera {
   rtmpIngestPath?: string | null;
   rtspPort: number;
   model: string;
-  status: 'online' | 'offline' | 'recording' | 'motion' | 'alarm' | 'no_signal' | 'maintenance';
+  status: 'online' | 'offline' | 'recording' | 'motion' | 'alarm' | 'no_signal' | 'maintenance' | 'checking';
   fps: number;
   resolution: string;
   storage: string;
@@ -519,6 +519,7 @@ function mapCameraStatus(
   }
   if (status === 'ERROR') return 'alarm';
   if (status === 'OFFLINE') return 'offline';
+  if (status === 'UNKNOWN') return 'checking';
   return 'no_signal';
 }
 
