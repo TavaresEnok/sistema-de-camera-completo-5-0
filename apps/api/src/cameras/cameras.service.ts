@@ -2770,11 +2770,24 @@ export class CamerasService implements OnApplicationBootstrap {
       // após a tolerância é "em verificação".
       const recusaDeCameraAntesSaudavel = veredicto.motivo === 'credencial-recusada'
         && camera.lastSeenAt != null;
-      const status: CameraStatus = provaConfirmouOnline || mantendoDuranteFalhaTransitoria
+      let status: CameraStatus = provaConfirmouOnline || mantendoDuranteFalhaTransitoria
         ? CameraStatus.ONLINE
         : veredicto.status === 'UNKNOWN' || recusaDeCameraAntesSaudavel
           ? CameraStatus.UNKNOWN
           : CameraStatus.OFFLINE;
+      if (status !== CameraStatus.ONLINE) {
+        // Uma captura pode ter confirmado vídeo enquanto a sonda RTSP (lenta)
+        // estava em curso. Nunca sobrescrever essa prova mais nova com o
+        // resultado antigo de uma segunda sessão recusada pelo DVR.
+        const current = await this.prisma.camera.findUnique({
+          where: { id },
+          select: { status: true, lastSeenAt: true },
+        });
+        if (current?.status === CameraStatus.ONLINE
+          && current.lastSeenAt && current.lastSeenAt.getTime() > startedAt) {
+          status = CameraStatus.ONLINE;
+        }
+      }
       if (mantendoDuranteFalhaTransitoria) {
         this.logger.debug(`${camera.name}: recusa RTSP transitória; mantendo ONLINE até o próximo reteste.`);
       } else if (status === CameraStatus.OFFLINE && previousStatus === CameraStatus.ONLINE) {
