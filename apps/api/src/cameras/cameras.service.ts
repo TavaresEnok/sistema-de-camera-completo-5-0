@@ -6,7 +6,8 @@ import { CameraStatus, CameraPermissionLevel } from '@prisma/client';
 import { type AuthUser } from '../common/types/auth-user.type';
 import { createHash, randomBytes } from 'crypto';
 import * as http from 'http';
-import { statfs } from 'node:fs/promises';
+import { stat, statfs } from 'node:fs/promises';
+import { join } from 'node:path';
 import { aiEnabledEfetivo } from './helpers/motion-detector.helper';
 import { escolherGrupoDoCliente, type VinculoDeGrupo } from './helpers/grupo-do-cliente.helper';
 import { PrismaService } from '../common/prisma/prisma.service';
@@ -2144,6 +2145,23 @@ export class CamerasService implements OnApplicationBootstrap {
    * ocupado.
    */
   async cameraTransmitindoAgora(cameraId: string): Promise<boolean | null> {
+    // O poster só é gravado após receber um frame real. Uma imagem modificada
+    // há instantes prova vídeo sem abrir outra sessão no DVR (que pode rejeitá-la).
+    // Imagens persistidas antigas NÃO servem como prova de vida.
+    const configuredPosterRoot = this.configService.get<string>('livePosterStorageRoot')
+      ?? process.env.LIVE_POSTER_STORAGE_ROOT;
+    const posterRoot = configuredPosterRoot?.trim()
+      || join(this.configService.get<string>('recordingsRoot')
+        ?? process.env.RECORDINGS_ROOT
+        ?? './storage/recordings', 'posters');
+    const safeId = String(cameraId).replace(/[^a-zA-Z0-9_-]/g, '');
+    try {
+      const poster = await stat(join(posterRoot, `camera-${safeId}.jpg`));
+      const ageMs = Date.now() - poster.mtimeMs;
+      if (poster.size > 0 && ageMs >= 0 && ageMs <= 120_000) return true;
+    } catch {
+      // Sem poster recente: continuar com MediaMTX e, se necessário, sondas.
+    }
     const base = `cam_${cameraId.replace(/[^a-zA-Z0-9]/g, '')}`;
     // Os três caminhos que uma câmera pode publicar: principal, grade e
     // original. Basta um estar recebendo para a câmera estar viva.

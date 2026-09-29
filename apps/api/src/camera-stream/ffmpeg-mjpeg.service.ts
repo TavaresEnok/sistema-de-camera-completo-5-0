@@ -1,6 +1,6 @@
 import { Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { type Camera } from '@prisma/client';
+import { CameraStatus, type Camera } from '@prisma/client';
 import { type Request, type Response } from 'express';
 import { spawnSync, type ChildProcessByStdio } from 'child_process';
 import { type Readable } from 'stream';
@@ -597,6 +597,14 @@ export class FfmpegMjpegService {
             const entry: PosterCacheEntry = { buffer: stdout, generatedAt: Date.now(), source: 'live' };
             await this.persistLivePoster(cameraId, entry);
             this.posterCache.set(cameraId, entry);
+            // Somente um frame capturado AGORA prova que a câmera está online.
+            // Imagens salvas e gravações antigas nunca renovam esse estado.
+            try {
+              await this.camerasService.updateStatus(cameraId, CameraStatus.ONLINE);
+            } catch (error) {
+              // Uma falha no banco não deve invalidar o frame já capturado.
+              this.logger.warn(`Falha ao atualizar status após captura da câmera ${cameraId}: ${sanitizeSensitiveText(error)}`);
+            }
             return entry;
           }
         } catch (error) {
