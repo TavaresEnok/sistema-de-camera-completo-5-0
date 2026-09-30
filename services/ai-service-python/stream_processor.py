@@ -51,7 +51,7 @@ class StreamProcessor:
         self.thread = None
         self.capture_thread = None
         self.base_process_fps = float(self.profile["detection_fps"])
-        self.perimeter_motion_test_fps = 5.0
+        self.perimeter_motion_test_fps = 7.0
         self.base_advanced_process_fps = float(self.profile["detection_fps"])
         self.base_frame_width = int(self.profile["analysis_width"])
         self.base_frame_height = int(self.profile["analysis_height"])

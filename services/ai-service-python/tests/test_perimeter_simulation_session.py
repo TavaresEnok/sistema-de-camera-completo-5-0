@@ -54,12 +54,12 @@ class PerimeterSimulationSessionTest(unittest.TestCase):
         self.assertIsNone(processor._perimeter_simulation_mode())
         self.assertEqual(processor.process_fps, 2.0)
 
-    def test_motion_simulation_uses_five_fps_only_while_open(self):
+    def test_motion_simulation_uses_seven_fps_only_while_open(self):
         processor = self.processor(simulation_only=False)
         self.assertEqual(processor.process_fps, 2.0)
 
         processor.touch_live_view_session("perimeter-test-motion", 20, "selected", "motion")
-        self.assertEqual(processor.process_fps, 5.0)
+        self.assertEqual(processor.process_fps, 7.0)
 
         processor.stop_live_view_session("perimeter-test-motion")
         self.assertEqual(processor.process_fps, 2.0)
