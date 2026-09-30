@@ -18,31 +18,34 @@ const API_URL = getApiBaseUrl();
 
 /** Cache de módulo: as três telas podem coexistir e a lista muda por heartbeat,
  *  não por clique. Buscar uma vez por sessão de tela basta. */
-let cache: { classes: string[]; em: number } | null = null;
+let cache: { classes: string[]; motionAllowed: boolean; em: number } | null = null;
 const VALIDADE_MS = 60_000;
 
-export function useClassesLiberadas(): { classes: string[]; carregando: boolean } {
+export function useClassesLiberadas(): { classes: string[]; motionAllowed: boolean; carregando: boolean } {
   const accessToken = useAuthStore((state) => state.accessToken);
   const [classes, setClasses] = useState<string[]>(() => cache?.classes ?? []);
+  const [motionAllowed, setMotionAllowed] = useState(() => cache?.motionAllowed ?? true);
   const [carregando, setCarregando] = useState(!cache);
 
   useEffect(() => {
     if (!accessToken) return;
     if (cache && Date.now() - cache.em < VALIDADE_MS) {
       setClasses(cache.classes);
+      setMotionAllowed(cache.motionAllowed);
       setCarregando(false);
       return;
     }
     let cancelado = false;
     void axios
-      .get<{ classes?: string[] }>(`${API_URL}/ai/escopo-objeto`, {
+      .get<{ classes?: string[]; motionAllowed?: boolean }>(`${API_URL}/ai/simulation-capabilities`, {
         headers: { Authorization: `Bearer ${accessToken}` },
         timeout: 15_000,
       })
       .then((r) => {
         const lista = Array.isArray(r.data?.classes) ? r.data.classes : [];
-        cache = { classes: lista, em: Date.now() };
-        if (!cancelado) setClasses(lista);
+        const movimento = r.data?.motionAllowed !== false;
+        cache = { classes: lista, motionAllowed: movimento, em: Date.now() };
+        if (!cancelado) { setClasses(lista); setMotionAllowed(movimento); }
       })
       .catch(() => {
         // Falha de rede NÃO pode virar "nada liberado": isso desabilitaria o
@@ -55,5 +58,5 @@ export function useClassesLiberadas(): { classes: string[]; carregando: boolean 
     return () => { cancelado = true; };
   }, [accessToken]);
 
-  return { classes, carregando };
+  return { classes, motionAllowed, carregando };
 }

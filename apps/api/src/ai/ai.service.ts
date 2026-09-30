@@ -201,14 +201,14 @@ export class AiService {
     }
   }
 
-  async startLiveViewSession(cameraId: string, sessionId: string, ttlSeconds = 20, viewMode: 'selected' | 'grid' = 'grid') {
+  async startLiveViewSession(cameraId: string, sessionId: string, ttlSeconds = 20, viewMode: 'selected' | 'grid' = 'grid', simulationMode?: 'motion' | 'object') {
     if (this.isDisabled()) {
       return { status: 'disabled', camera_id: cameraId, session_id: sessionId };
     }
     try {
       const response: any = await firstValueFrom(this.httpService.post(
         `${this.aiBaseUrl}/live-view/start/${cameraId}`,
-        { session_id: sessionId, ttl_seconds: ttlSeconds, view_mode: viewMode },
+        { session_id: sessionId, ttl_seconds: ttlSeconds, view_mode: viewMode, simulation_mode: simulationMode },
         { headers: this.internalHeaders() },
       ));
       return response.data;
@@ -218,14 +218,14 @@ export class AiService {
     }
   }
 
-  async heartbeatLiveViewSession(cameraId: string, sessionId: string, ttlSeconds = 20, viewMode: 'selected' | 'grid' = 'grid') {
+  async heartbeatLiveViewSession(cameraId: string, sessionId: string, ttlSeconds = 20, viewMode: 'selected' | 'grid' = 'grid', simulationMode?: 'motion' | 'object') {
     if (this.isDisabled()) {
       return { status: 'disabled', camera_id: cameraId, session_id: sessionId };
     }
     try {
       const response: any = await firstValueFrom(this.httpService.post(
         `${this.aiBaseUrl}/live-view/heartbeat/${cameraId}`,
-        { session_id: sessionId, ttl_seconds: ttlSeconds, view_mode: viewMode },
+        { session_id: sessionId, ttl_seconds: ttlSeconds, view_mode: viewMode, simulation_mode: simulationMode },
         { headers: this.internalHeaders() },
       ));
       return response.data;

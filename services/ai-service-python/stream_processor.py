@@ -145,6 +145,9 @@ class StreamProcessor:
             teto_segundos=TETO_DO_INCIDENTE_SEGUNDOS,
         )
         self.emit_events = bool(self.profile.get("emit_events", True))
+        self.simulation_only = bool((source_info or {}).get("simulationOnly", False))
+        if self.simulation_only:
+            self.emit_events = False
         self.live_detection_hold_ms = int(self.profile["overlay_ttl_ms"])
         self.show_after_hits = int(self.profile["show_after_hits"])
         self.hide_after_misses = int(self.profile["hide_after_misses"])
@@ -685,7 +688,10 @@ class StreamProcessor:
         )
 
     def _is_awake(self):
-        return self.motion_trigger != "CAMERA" or time.time() < self.wakeup_until or self._has_active_live_view_session()
+        active_live_view = self._has_active_live_view_session()
+        if self.simulation_only:
+            return active_live_view
+        return self.motion_trigger != "CAMERA" or time.time() < self.wakeup_until or active_live_view
 
     def _cleanup_live_view_sessions_locked(self, now: float):
         expired = [
@@ -809,19 +815,34 @@ class StreamProcessor:
             self._cleanup_live_view_sessions_locked(time.time())
             return any(session_id.startswith("perimeter-test-") for session_id in self._live_view_sessions)
 
-    def touch_live_view_session(self, session_id: str, ttl_seconds: int = 20, view_mode: str = "grid") -> dict:
+    def _perimeter_simulation_mode(self) -> str | None:
+        with self._live_view_lock:
+            self._cleanup_live_view_sessions_locked(time.time())
+            modes = {
+                str(payload.get("simulation_mode") or "")
+                for session_id, payload in self._live_view_sessions.items()
+                if session_id.startswith("perimeter-test-")
+            }
+            if "object" in modes:
+                return "object"
+            if "motion" in modes:
+                return "motion"
+            return None
+
+    def touch_live_view_session(self, session_id: str, ttl_seconds: int = 20, view_mode: str = "grid", simulation_mode: str | None = None) -> dict:
         normalized_session = (session_id or "").strip()
         if not normalized_session:
             raise ValueError("session_id obrigatório")
 
         ttl = max(5, min(120, int(ttl_seconds)))
         normalized_mode = self._normalize_view_mode(view_mode)
+        normalized_simulation = simulation_mode if normalized_session.startswith("perimeter-test-") and simulation_mode in ("motion", "object") else None
         now = time.time()
         until = now + ttl
         with self._live_view_lock:
             self._cleanup_live_view_sessions_locked(now)
             was_active = normalized_session in self._live_view_sessions
-            self._live_view_sessions[normalized_session] = {"until": until, "view_mode": normalized_mode}
+            self._live_view_sessions[normalized_session] = {"until": until, "view_mode": normalized_mode, "simulation_mode": normalized_simulation}
             self._cleanup_live_view_sessions_locked(now)
             self._refresh_qos_mode_locked()
             count = len(self._live_view_sessions)
@@ -830,6 +851,7 @@ class StreamProcessor:
                 "status": "renewed" if was_active else "started",
                 "session_id": normalized_session,
                 "view_mode": normalized_mode,
+                "simulation_mode": normalized_simulation,
                 "active_sessions": count,
                 "forced_awake": count > 0,
                 "force_awake_until": self.force_awake_until,
@@ -1060,6 +1082,12 @@ class StreamProcessor:
 
             try:
                 current_time = time.time()
+                simulation_mode = self._perimeter_simulation_mode()
+                effective_advanced_type = (
+                    "general"
+                    if simulation_mode == "object" and self.object_policy.get("classes")
+                    else self.advanced_analysis_type
+                )
                 frame_age_ms = max(0.0, (current_time - float(capture_timestamp)) * 1000.0)
                 self._frame_age_last_ms = frame_age_ms
                 self._frame_age_sum_ms += frame_age_ms
@@ -1069,15 +1097,15 @@ class StreamProcessor:
                 # Movimento acusado → confirma semanticamente no recorte (só no
                 # modo 'motion'; nos modos general/face o detector já roda no
                 # frame inteiro e a confirmação seria trabalho duplicado).
-                if detections and self.semantic_enabled and not self.advanced_analysis_type:
+                if detections and self.semantic_enabled and not effective_advanced_type:
                     detections = self._confirm_motion_semantically(frame, detections, current_time)
                 advanced_detections = []
                 should_run_advanced = (
-                    self.advanced_analysis_type
+                    effective_advanced_type
                     and current_time - self.last_advanced_infer_at >= (1.0 / max(0.5, float(self.advanced_process_fps)))
                 )
                 if should_run_advanced:
-                    det = registry.ensure_detector(self.advanced_analysis_type)
+                    det = registry.ensure_detector(effective_advanced_type)
                     advanced_frame = self._resize_for_advanced(frame)
                     advanced_height, advanced_width = advanced_frame.shape[:2]
                     # Detecção por REGIÃO (flag do detector, padrão DESLIGADA): as
@@ -1101,7 +1129,7 @@ class StreamProcessor:
                         )
                         # Classes por câmera pertencem ao detector de OBJETOS.
                         # Aplicá-las ao modo face apagaria todos os rostos.
-                        if self.advanced_analysis_type == "general":
+                        if effective_advanced_type == "general":
                             advanced_detections = filtrar_deteccoes_por_classe(
                                 advanced_detections,
                                 self.object_policy["classes"],
@@ -1160,12 +1188,20 @@ class StreamProcessor:
                             logger.warning("[%s] tripwire falhou: %s", self.camera_id, exc)
 
                 # Snapshot "ao vivo" para overlays (sem debounce de evento).
-                if self.advanced_analysis_type:
+                if simulation_mode == "motion":
+                    live_overlay = self._overlay_detections([d for d in detections if (d.event_type or "") == "MOTION_DETECTED"])
+                    self._store_live_detections(live_overlay, current_time)
+                elif effective_advanced_type:
                     live_overlay = [d for d in detections if (d.event_type or "") != "MOTION_DETECTED"]
                     if should_run_advanced or live_overlay:
                         self._store_live_detections(live_overlay, current_time)
                 else:
                     self._store_live_detections(self._overlay_detections(detections), current_time)
+
+                # O objeto promovido apenas pela sessão serve ao overlay do
+                # teste, nunca ao pipeline de eventos/gravação da câmera.
+                if effective_advanced_type and not self.advanced_analysis_type:
+                    detections = [d for d in detections if (d.event_type or "") == "MOTION_DETECTED"]
             except Exception as exc:
                 self.last_error = str(exc)
                 logger.warning("[%s] erro inferência: %s", self.camera_id, exc)

@@ -552,9 +552,9 @@ export class AiManagerService implements OnModuleInit {
     return this.syncAll();
   }
 
-  async startCamera(cameraId: string, options?: { allowCameraTrigger?: boolean; liveAutoStart?: boolean }) {
+  async startCamera(cameraId: string, options?: { allowCameraTrigger?: boolean; liveAutoStart?: boolean; simulationMode?: 'motion' | 'object' }) {
     const settings = await this.getSettings();
-    if (!settings.enabled) {
+    if (!settings.enabled && !options?.simulationMode) {
       return { status: 'disabled', cameraId };
     }
     // ⚠️ O portão é o da capacidade que ESTE start vai usar — a mesma lição de
@@ -572,15 +572,19 @@ export class AiManagerService implements OnModuleInit {
     // (central fora do ar não pode significar "pare de gravar") e objeto/face
     // falham FECHADO (na dúvida, a IA pesada fica desligada).
     const motionAllowed = await this.commercialPolicy.isAllowed('aiMotion').catch(() => true);
-    if (!motionAllowed) {
+    if (!motionAllowed && options?.simulationMode !== 'object') {
       return { status: 'disabled', cameraId, reason: 'commercial_restriction' };
     }
-    if (settings.mode !== 'motion'
+    if (options?.simulationMode === 'object'
+      && !(await this.commercialPolicy.isAllowed('aiObject').catch(() => false))) {
+      return { status: 'disabled', cameraId, reason: 'commercial_restriction' };
+    }
+    if (!options?.simulationMode && settings.mode !== 'motion'
       && !(await this.commercialPolicy.isAllowed('aiAdvanced').catch(() => false))) {
       return { status: 'disabled', cameraId, reason: 'commercial_restriction' };
     }
     const cam = await this.camerasService.getCameraOrThrow(cameraId);
-    if (cam.aiEnabled === false || !isCameraAllowedByAiEnv(cam)) {
+    if (!options?.simulationMode && (cam.aiEnabled === false || !isCameraAllowedByAiEnv(cam))) {
       return { status: 'camera_disabled', cameraId };
     }
     // ABRIR O LIVE não pode criar processador PERSISTENTE em câmera que não
@@ -591,7 +595,7 @@ export class AiManagerService implements OnModuleInit {
     // câmera desarmada não arma gravação nenhuma e não desenha nada (o
     // overlay de movimento foi removido de vez): é só custo. Objeto/face
     // (modo avançado) seguem podendo nascer do live — lá o overlay é real.
-    if (options?.liveAutoStart && settings.mode === 'motion' && !modoArmado(cam.recordingMode)) {
+    if (options?.liveAutoStart && !options.simulationMode && settings.mode === 'motion' && !modoArmado(cam.recordingMode)) {
       return { status: 'disabled', cameraId, reason: 'not_armed' };
     }
     // No modo 'motion', câmeras com detecção própria (motionTrigger='CAMERA')
@@ -599,6 +603,12 @@ export class AiManagerService implements OnModuleInit {
     // allowCameraTrigger=true é o FALLBACK do OnvifEventsService: liga a MOG2
     // como reserva quando a detecção nativa está sem prova de vida.
     const source = await this.buildAiSource(cam);
+    if (options?.simulationMode === 'object') {
+      const classes = (source.info.objectDetection as { classes?: unknown } | undefined)?.classes;
+      if (!Array.isArray(classes) || classes.length === 0) {
+        return { status: 'disabled', cameraId, reason: 'commercial_restriction' };
+      }
+    }
     // O atalho da detecção nativa vale só quando NÃO há objeto a processar.
     // Aplicá-lo cegamente deixaria de fora as 17 câmeras da frota que usam
     // evento ONVIF: a linha desenhada nelas não detectaria nada, com a tela
@@ -607,12 +617,25 @@ export class AiManagerService implements OnModuleInit {
       modoGlobal: settings.mode,
       motionTrigger: (cam as any).motionTrigger,
       rodaObjeto: rodaObjetoDe(source.info),
-      permitirGatilhoDaCamera: options?.allowCameraTrigger,
+      permitirGatilhoDaCamera: options?.allowCameraTrigger || Boolean(options?.simulationMode),
     })) {
       return { status: 'camera_self_detection', cameraId };
     }
-    const modo = modoDaCamera(settings.mode, rodaObjetoDe(source.info));
-    return this.aiService.startAnalysisWithConfig(cameraId, source.rtspUrl, modo, source.info);
+    const modo = options?.simulationMode === 'object'
+      ? 'general'
+      : options?.simulationMode === 'motion'
+        ? 'motion'
+        : modoDaCamera(settings.mode, rodaObjetoDe(source.info));
+    const info = options?.simulationMode
+      ? {
+          ...source.info,
+          simulationOnly: true,
+          ...(options.simulationMode === 'object'
+            ? { objectDetection: { ...(source.info.objectDetection as Record<string, unknown>), ativo: true, motivo: 'simulacao-de-perimetro' } }
+            : {}),
+        }
+      : source.info;
+    return this.aiService.startAnalysisWithConfig(cameraId, source.rtspUrl, modo, info);
   }
 
   async getSettings() {
@@ -627,6 +650,7 @@ export class AiManagerService implements OnModuleInit {
   async escopoDeObjeto() {
     const politica = await this.commercialPolicy.getPolicy().catch(() => null);
     const classes = classesPermitidas({ aiObjectClasses: politica?.aiObjectClasses });
+    const motionAllowed = await this.commercialPolicy.isAllowed('aiMotion').catch(() => true);
     const cameras = await this.prisma.camera.findMany({
       select: {
         id: true,
@@ -645,6 +669,7 @@ export class AiManagerService implements OnModuleInit {
     });
     return {
       classes,
+      motionAllowed,
       cameras: cameras.map((cam) => {
         const decisao = decidirObjetoDaCamera(cam as any, { politicaLiberaObjeto: classes.length > 0 });
         return {

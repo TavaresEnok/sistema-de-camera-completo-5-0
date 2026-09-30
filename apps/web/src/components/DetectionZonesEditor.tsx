@@ -35,6 +35,7 @@ type Props = {
   onDirtyChange?: (dirty: boolean, drawing: boolean) => void;
   readOnly?: boolean;
   testing?: boolean;
+  simulationMode?: 'motion' | 'object';
   ignoredMotion?: { zone: string; at: number } | null;
 };
 
@@ -61,7 +62,7 @@ const ZONE_COLOR = {
  * - Excluir: o movimento ali é ignorado (árvore, rua pública, céu).
  * - Incluir: havendo ao menos uma, só o interior delas é monitorado.
  */
-export function DetectionZonesEditor({ cameraId, cameraName, configurationRevision, initialZones, onSaved, onDirtyChange, readOnly = false, testing = false, ignoredMotion }: Props) {
+export function DetectionZonesEditor({ cameraId, cameraName, configurationRevision, initialZones, onSaved, onDirtyChange, readOnly = false, testing = false, simulationMode = 'motion', ignoredMotion }: Props) {
   // BASE do "Desfazer alterações": o último estado CONFIRMADO pelo servidor.
   // Antes o botão revertia para `initialZones`, que vem do pai e não é
   // recarregado após salvar — desenhar 3 zonas, salvar e clicar em "Desfazer"
@@ -128,6 +129,9 @@ export function DetectionZonesEditor({ cameraId, cameraName, configurationRevisi
     previousTracks.current.clear(); previousSimulation.current = null;
   }, [cameraId, testing]);
   useEffect(() => {
+    if (testing) setTestMessage(simulationMode === 'object' ? 'Simulando detecção de objeto.' : 'Arraste sobre a imagem para simular movimento.');
+  }, [testing, simulationMode]);
+  useEffect(() => {
     if (!testing || !ignoredMotion || Date.now() / 1000 - ignoredMotion.at > 5) return;
     announce(`Movimento ignorado em ${ignoredMotion.zone}`);
   }, [testing, ignoredMotion?.at, ignoredMotion?.zone, announce]);
@@ -158,17 +162,21 @@ export function DetectionZonesEditor({ cameraId, cameraName, configurationRevisi
   useEffect(() => {
     if (!testing || !accessToken) return;
     const sessionId = `perimeter-test-${crypto.randomUUID()}`;
-    const send = (action: 'start' | 'heartbeat' | 'stop') => axios.post(
+    const send = (action: 'start' | 'heartbeat' | 'stop') => axios.post<{ status?: string }>(
       `${API_URL}/ai/live-view/${action}/${cameraId}`,
-      { sessionId, ttlSeconds: 20, viewMode: 'selected' },
+      { sessionId, ttlSeconds: 20, viewMode: 'selected', simulationMode },
       { headers: { Authorization: `Bearer ${accessToken}` }, timeout: 8000 },
-    ).catch(() => {
-      if (action !== 'stop') announce('Não foi possível confirmar a análise ao vivo. A simulação continua disponível.');
+    ).then(({ data }) => {
+      if (action !== 'stop' && data?.status !== 'started' && data?.status !== 'renewed') {
+        announce('Não foi possível iniciar a detecção nesta câmera. Confira se a imagem está disponível.');
+      }
+    }).catch(() => {
+      if (action !== 'stop') announce('Não foi possível iniciar a detecção. Você ainda pode testar o desenho das regras.');
     });
     void send('start');
     const timer = window.setInterval(() => { void send('heartbeat'); }, 7000);
     return () => { window.clearInterval(timer); void send('stop'); };
-  }, [testing, accessToken, cameraId, announce]);
+  }, [testing, accessToken, cameraId, simulationMode, announce]);
   const userId = useAuthStore((state) => state.user?.id);
   const draftKey = `perimeter-draft:${userId}:${cameraId}`;
   const [selectedZone, setSelectedZone] = useState<string | null>(null);
@@ -383,8 +391,8 @@ export function DetectionZonesEditor({ cameraId, cameraName, configurationRevisi
       toast({
         title: 'Regras salvas',
         description: zones.length
-          ? `${zones.length} regra(s) salvas. A página confirmará quando o detector carregar esta revisão.${temArea ? ' As áreas também orientam a detecção de movimento e as linhas.' : ''}`
-          : 'Desenhos removidos. A análise, quando ativa, considera a imagem inteira.',
+          ? `${zones.length} regra(s) salvas.${temArea ? ' As áreas também valem para movimento e linhas.' : ''}`
+          : 'Desenhos removidos. A câmera inteira será considerada quando a detecção estiver ligada.',
       });
     } catch (error) {
       toast({
@@ -420,7 +428,7 @@ export function DetectionZonesEditor({ cameraId, cameraName, configurationRevisi
   return (
     <div ref={editorShellRef} tabIndex={expanded ? -1 : undefined} role={expanded ? 'dialog' : undefined} aria-modal={expanded || undefined} aria-label={expanded ? `Editor ampliado de ${cameraName}` : undefined} className={expanded ? 'fixed inset-0 z-50 overflow-auto bg-background p-5 space-y-3 outline-none' : 'space-y-3 rounded-xl border border-border bg-card/50 p-3 sm:p-4'}>
       <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-        <span>{testing ? 'Vídeo ao vivo · teste visual' : capturedAt && Number.isFinite(Date.parse(capturedAt)) ? `Imagem capturada em ${new Date(capturedAt).toLocaleString('pt-BR')}` : 'Horário da captura não informado'}</span>
+        <span>{testing ? `Vídeo ao vivo · teste de ${simulationMode === 'object' ? 'objeto' : 'movimento'}` : capturedAt && Number.isFinite(Date.parse(capturedAt)) ? `Imagem capturada em ${new Date(capturedAt).toLocaleString('pt-BR')}` : 'Horário da captura não informado'}</span>
         <div className="flex gap-2">
           {!testing && <button className="btn btn-secondary btn-sm" onClick={() => { posterRetryCountRef.current = 0; setPosterStatus('loading'); void loadPoster(true).then((ok) => { if (!ok) schedulePosterRetry(); }); }}><RefreshCw className="h-4 w-4" /> Atualizar imagem</button>}
           <button type="button" className="btn btn-secondary btn-sm" onClick={() => { const next = Math.max(1, Number((zoom - 0.5).toFixed(1))); setZoom(next); setPanMode(next > 1); setPan({ x: 0, y: 0 }); }} disabled={zoom === 1} aria-label="Reduzir zoom">−</button>
@@ -500,7 +508,7 @@ export function DetectionZonesEditor({ cameraId, cameraName, configurationRevisi
           {drawing !== null && drawKind === 'include' && (
             <>
               <strong className="font-medium text-foreground">Área monitorada:</strong>{' '}
-              Marque o espaço que importa. Com essa regra, a análise considera apenas as áreas marcadas.
+              Marque o espaço que importa. Com essa regra, somente as áreas marcadas serão consideradas.
             </>
           )}
           {drawing !== null && drawKind === 'line' && (
@@ -709,7 +717,7 @@ export function DetectionZonesEditor({ cameraId, cameraName, configurationRevisi
 
       {testing && <div role="status" aria-live="polite" className="mx-auto max-w-[640px] rounded-lg border border-border bg-card px-3 py-2 text-xs">
         <p className="font-medium">{testMessage}</p>
-        <p className="mt-1 text-muted-foreground">Arraste sobre o vídeo para conferir a geometria. As caixas azuis são detecções reais. O gesto simulado não gera ações; uma pessoa passando diante da câmera ainda pode gerar evento, gravação ou notificação conforme a configuração ativa.</p>
+        <p className="mt-1 text-muted-foreground">{simulationMode === 'object' ? 'As caixas azuis mostram objetos reconhecidos nas classes liberadas pelo plano.' : 'Arraste sobre o vídeo para conferir a geometria; as caixas azuis mostram movimento detectado.'} Este teste é temporário, não muda o modo de gravação e não gera ações por si só.</p>
       </div>}
 
       {!testing && (zones.length || dirty || drawing !== null) ? (
