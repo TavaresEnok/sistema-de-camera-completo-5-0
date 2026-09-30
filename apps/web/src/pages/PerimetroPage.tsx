@@ -12,6 +12,7 @@ import { DetectionZonesEditor, type DetectionZone } from '../components/Detectio
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useAuthStore } from '../store/authStore';
 import { useVmsDataStore } from '../store/vmsDataStore';
+import { useClassesLiberadas } from '../hooks/use-classes-liberadas';
 
 // ── PÁGINA DE PERÍMETRO — linha e zona de detecção, por câmera ──────────────
 //
@@ -56,6 +57,13 @@ export default function PerimetroPage() {
   const pendingRef = useRef<(() => void) | null>(null);
   const saveThenLeave = useRef(false);
   const [testing, setTesting] = useState(false);
+  const [simulationMode, setSimulationMode] = useState<'motion' | 'object'>('motion');
+  const { classes: classesLiberadas, motionAllowed: podeSimularMovimento, carregando: carregandoClasses } = useClassesLiberadas();
+  const podeSimularObjeto = classesLiberadas.length > 0;
+  useEffect(() => {
+    if (!podeSimularMovimento && podeSimularObjeto) setSimulationMode('object');
+    else if (!podeSimularObjeto && simulationMode === 'object') setSimulationMode('motion');
+  }, [podeSimularMovimento, podeSimularObjeto, simulationMode]);
   const [aplicacoes, setAplicacoes] = useState<Record<string, { revision: string; since: number }>>({});
   const [revisoesPorCamera, setRevisoesPorCamera] = useState<Record<string, string>>({});
   const [editing, setEditing] = useState(false);
@@ -159,7 +167,7 @@ export default function PerimetroPage() {
   const pageCount = Math.max(1, Math.ceil(visible.length / 30));
   const currentPage = Math.min(page, pageCount - 1);
   const selectedState = selecionada ? !selecionada.camera.aiEnabled
-    ? { label: 'Ative a análise para proteger', attention: true, tone: 'warning' as const }
+    ? { label: 'Detecção desligada', attention: true, tone: 'warning' as const }
     : selecionada.camera.status === 'no_signal'
     ? { label: 'Verificando vídeo', attention: true, tone: 'checking' as const }
     : perimeterState(selecionada.camera.isOnline, selecionada.resumo.linhas > 0, processors[selecionada.camera.id], checked) : null;
@@ -179,16 +187,16 @@ export default function PerimetroPage() {
   const aplicacaoSelecionada = selecionada ? aplicacoes[selecionada.camera.id] : undefined;
   const aplicacaoDemorada = Boolean(aplicacaoSelecionada && Date.now() - aplicacaoSelecionada.since > 30_000);
   const estadoExibido = aplicacaoSelecionada
-    ? { label: aplicacaoDemorada ? 'Salvo, aplicação não confirmada' : 'Aplicando regras…', tone: aplicacaoDemorada ? 'warning' as const : 'checking' as const }
+    ? { label: aplicacaoDemorada ? 'Salvo, mas ainda não atualizado' : 'Atualizando regras…', tone: aplicacaoDemorada ? 'warning' as const : 'checking' as const }
     : healthError
-      ? { label: 'Estado da análise indisponível', tone: 'checking' as const }
+      ? { label: 'Não foi possível verificar a detecção', tone: 'checking' as const }
       : selecionada && !temPerimetro(selecionada.resumo)
         ? { label: 'Sem regra de perímetro', tone: 'warning' as const }
       : selectedState?.tone === 'ok' && selecionada && !selecionada.camera.alarmsEnabled
-        ? { label: 'Análise ativa · alertas desligados', tone: 'warning' as const }
+        ? { label: 'Detecção ligada · alertas desligados', tone: 'warning' as const }
         : selectedState?.tone === 'ok'
-          ? { label: 'Análise ativa · alertas ligados', tone: 'ok' as const }
-          : { label: selectedState?.label ?? 'Verificando análise', tone: selectedState?.tone ?? 'checking' as const };
+          ? { label: 'Detecção ligada · alertas ligados', tone: 'ok' as const }
+          : { label: selectedState?.label ?? 'Verificando detecção', tone: selectedState?.tone ?? 'checking' as const };
 
   // ── Sem nenhuma câmera ativa ────────────────────────────────────────────
   if (!lista.length) {
@@ -266,10 +274,15 @@ export default function PerimetroPage() {
               {(selecionada.resumo.monitorar > 0 || selecionada.resumo.ignorar > 0) && <p><strong className="text-foreground">Áreas:</strong> limitam onde movimento e travessias podem valer.</p>}
               <p><strong className="text-foreground">Resposta:</strong> eventos são registrados; {selecionada.camera.alarmsEnabled ? 'esta câmera permite alarmes, sujeitos às regras e silenciamentos ativos.' : 'os alarmes desta câmera estão desligados.'}</p>
             </div>}
-            <div className="mt-4 flex flex-wrap gap-2">
-              <button className="btn btn-primary btn-sm" disabled={dirty || !selecionada.zonas.length} title={dirty ? 'Salve ou descarte o desenho antes de simular' : !selecionada.zonas.length ? 'Crie e salve uma regra para simular' : undefined} onClick={() => setTesting(!testing)}>{testing ? 'Voltar ao desenho' : 'Simular regras'}</button>
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <button className="btn btn-primary btn-sm" disabled={dirty || (!podeSimularMovimento && !podeSimularObjeto)} title={dirty ? 'Salve ou descarte o desenho antes de simular' : (!podeSimularMovimento && !podeSimularObjeto) ? 'O plano não possui detecção liberada' : undefined} onClick={() => setTesting(!testing)}>{testing ? 'Voltar ao desenho' : 'Simular regras nesta câmera'}</button>
+              <div className="segment" aria-label="O que mostrar na simulação">
+                <button type="button" className={`seg-btn ${simulationMode === 'motion' ? 'active' : ''}`} aria-pressed={simulationMode === 'motion'} disabled={!podeSimularMovimento} title={!podeSimularMovimento ? 'Detecção de movimento não disponível neste plano' : undefined} onClick={() => setSimulationMode('motion')}>Movimento</button>
+                <button type="button" className={`seg-btn ${simulationMode === 'object' ? 'active' : ''}`} aria-pressed={simulationMode === 'object'} disabled={!podeSimularObjeto} title={!podeSimularObjeto ? (carregandoClasses ? 'Verificando os recursos do plano' : 'Detecção de objeto não disponível neste plano') : 'Simular caixas de pessoa, veículo e demais classes liberadas'} onClick={() => setSimulationMode('object')}>Objeto</button>
+              </div>
               {userRole === 'admin' && <button className="btn btn-secondary btn-sm" onClick={() => guard(() => setEditing(true))}>Detecção e ações</button>}
             </div>
+            <p className="mt-2 text-[11px] text-muted-foreground">Escolha Movimento ou Objeto e teste ao vivo. A gravação da câmera continua como está.</p>
           </div>}
           {selecionada && (
             <DetectionZonesEditor
@@ -281,6 +294,7 @@ export default function PerimetroPage() {
               onDirtyChange={(hasChanges, drawingNow) => { setDirty(hasChanges); setDrawingActive(drawingNow); }}
               readOnly={userRole !== 'admin' || testing}
               testing={testing}
+              simulationMode={simulationMode}
               ignoredMotion={processors[selecionada.camera.id]?.motion_detector?.perimeter_ignored_motion}
               onSaved={(zones, configurationRevision, applyStatus) => {
                 setZonasPorCamera((prev) => ({ ...prev, [selecionada.camera.id]: zones }));
@@ -296,9 +310,9 @@ export default function PerimetroPage() {
               }}
             />
           )}
-          {selecionada && !selecionada.camera.aiEnabled && (
+          {selecionada && !selecionada.camera.aiEnabled && !testing && (
             <p className="mt-3 rounded-lg border border-amber-500/25 bg-amber-500/5 px-3 py-2 text-xs text-muted-foreground">
-              IA desligada nesta câmera. Para testar linhas de passagem e objetos, ative a análise em <strong>Detecção e ações</strong>.
+              As regras desta câmera estão desligadas no dia a dia. Você pode testá-las acima sem mudar a câmera.
             </p>
           )}
         </div>
@@ -340,13 +354,13 @@ export default function PerimetroPage() {
                   />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-[12px] font-medium">{camera.name}</span>
-                    <span className="block text-[10px] text-muted-foreground">{!camera.aiEnabled ? 'Análise desligada' : healthError ? 'Análise não verificada' : camera.status === 'no_signal' ? 'Verificando vídeo' : perimeterState(camera.isOnline, resumo.linhas > 0, processors[camera.id], checked).label}</span>
+                    <span className="block text-[10px] text-muted-foreground">{!camera.aiEnabled ? 'Detecção desligada' : healthError ? 'Detecção não verificada' : camera.status === 'no_signal' ? 'Verificando vídeo' : perimeterState(camera.isOnline, resumo.linhas > 0, processors[camera.id], checked).label}</span>
                     <span className="block text-[10px] text-[hsl(var(--muted-foreground))]">
                       {temPerimetro(resumo) ? <ResumoInline resumo={resumo} /> : 'sem perímetro'}
                     </span>
                   </span>
                   {!camera.aiEnabled && (
-                    <span title="IA desligada nesta câmera">
+                    <span title="Detecção desligada nesta câmera">
                       <EyeOff className="h-3.5 w-3.5 shrink-0 text-[hsl(var(--muted-foreground))]" />
                     </span>
                   )}

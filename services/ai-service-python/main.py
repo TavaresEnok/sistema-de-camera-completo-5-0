@@ -59,6 +59,7 @@ class LiveViewLeaseRequest(BaseModel):
     session_id: str
     ttl_seconds: int = 20
     view_mode: str = "grid"
+    simulation_mode: Optional[str] = None
 
 
 def validate_internal_token(x_service_token: Optional[str]):
@@ -267,7 +268,7 @@ async def start_live_view(camera_id: str, request: LiveViewLeaseRequest, x_servi
     if not processor:
         return {"status": "not_running", "camera_id": camera_id, "session_id": request.session_id}
     try:
-        lease = processor.touch_live_view_session(request.session_id, request.ttl_seconds, request.view_mode)
+        lease = processor.touch_live_view_session(request.session_id, request.ttl_seconds, request.view_mode, request.simulation_mode)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return {"camera_id": camera_id, **lease}
@@ -280,7 +281,7 @@ async def heartbeat_live_view(camera_id: str, request: LiveViewLeaseRequest, x_s
     if not processor:
         return {"status": "not_running", "camera_id": camera_id, "session_id": request.session_id}
     try:
-        lease = processor.touch_live_view_session(request.session_id, request.ttl_seconds, request.view_mode)
+        lease = processor.touch_live_view_session(request.session_id, request.ttl_seconds, request.view_mode, request.simulation_mode)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return {"camera_id": camera_id, **lease}
@@ -296,7 +297,17 @@ async def stop_live_view(camera_id: str, request: LiveViewLeaseRequest, x_servic
         lease = processor.stop_live_view_session(request.session_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    return {"camera_id": camera_id, **lease}
+    response = {"camera_id": camera_id, **lease}
+    # Processadores criados exclusivamente para o teste não ficam consumindo
+    # CPU depois que a última lease termina. A configuração da câmera nunca foi
+    # alterada; este é apenas o encerramento do recurso temporário.
+    if processor.simulation_only and lease.get("active_sessions") == 0:
+        with _processors_lock:
+            if processors.get(camera_id) is processor:
+                processors.pop(camera_id, None)
+        await asyncio.to_thread(processor.stop)
+        response["processor_stopped"] = True
+    return response
 
 
 @app.post("/analyze/stop-all")

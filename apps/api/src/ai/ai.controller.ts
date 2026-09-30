@@ -9,6 +9,7 @@ import { AuthUser } from '../common/types/auth-user.type';
 import { AccessControlService } from '../access-control/access-control.service';
 import { CommercialPolicyService } from '../commercial-policy/commercial-policy.service';
 import { RequirePermission } from '../role-permissions/require-permission.decorator';
+import { classesPermitidas } from './helpers/escopo-de-objeto.helper';
 
 type UpdateAiSettingsBody = {
   enabled?: boolean;
@@ -21,6 +22,7 @@ type LiveViewLeaseBody = {
   sessionId?: string;
   ttlSeconds?: number;
   viewMode?: 'selected' | 'grid';
+  simulationMode?: 'motion' | 'object';
 };
 
 @Controller('ai')
@@ -80,6 +82,17 @@ export class AiController {
   @Get('escopo-objeto')
   async getEscopoDeObjeto() {
     return this.aiManagerService.escopoDeObjeto();
+  }
+
+  @Roles(UserRole.VIEWER)
+  @RequirePermission('liveView')
+  @Get('simulation-capabilities')
+  async getSimulationCapabilities() {
+    const policy = await this.commercialPolicy.getPolicy();
+    return {
+      classes: classesPermitidas({ aiObjectClasses: policy.aiObjectClasses }),
+      motionAllowed: policy.restrictions.aiMotion !== false,
+    };
   }
 
   @Roles(UserRole.OPERATOR)
@@ -199,15 +212,15 @@ export class AiController {
     @Body() body: LiveViewLeaseBody,
   ) {
     await this.accessControlService.assertCanViewCamera(user, cameraId);
-    const { sessionId, ttlSeconds, viewMode } = this.resolveLiveViewBody(body);
-    const lease = await this.aiService.startLiveViewSession(cameraId, sessionId, ttlSeconds, viewMode);
+    const { sessionId, ttlSeconds, viewMode, simulationMode } = this.resolveLiveViewBody(body);
+    const lease = await this.aiService.startLiveViewSession(cameraId, sessionId, ttlSeconds, viewMode, simulationMode);
     if (lease?.status !== 'not_running') return lease;
 
-    const startResult = await this.aiManagerService.startCamera(cameraId, { liveAutoStart: true }).catch(() => ({ status: 'error' }));
+    const startResult = await this.aiManagerService.startCamera(cameraId, { liveAutoStart: true, simulationMode }).catch(() => ({ status: 'error' }));
     if (startResult?.status === 'disabled') {
       return { status: 'not_running', camera_id: cameraId, session_id: sessionId, reason: startResult.status };
     }
-    return this.aiService.startLiveViewSession(cameraId, sessionId, ttlSeconds, viewMode);
+    return this.aiService.startLiveViewSession(cameraId, sessionId, ttlSeconds, viewMode, simulationMode);
   }
 
   @Roles(UserRole.VIEWER)
@@ -220,15 +233,15 @@ export class AiController {
     @Body() body: LiveViewLeaseBody,
   ) {
     await this.accessControlService.assertCanViewCamera(user, cameraId);
-    const { sessionId, ttlSeconds, viewMode } = this.resolveLiveViewBody(body);
-    const lease = await this.aiService.heartbeatLiveViewSession(cameraId, sessionId, ttlSeconds, viewMode);
+    const { sessionId, ttlSeconds, viewMode, simulationMode } = this.resolveLiveViewBody(body);
+    const lease = await this.aiService.heartbeatLiveViewSession(cameraId, sessionId, ttlSeconds, viewMode, simulationMode);
     if (lease?.status !== 'not_running') return lease;
 
-    const startResult = await this.aiManagerService.startCamera(cameraId, { liveAutoStart: true }).catch(() => ({ status: 'error' }));
+    const startResult = await this.aiManagerService.startCamera(cameraId, { liveAutoStart: true, simulationMode }).catch(() => ({ status: 'error' }));
     if (startResult?.status === 'disabled') {
       return { status: 'not_running', camera_id: cameraId, session_id: sessionId, reason: startResult.status };
     }
-    return this.aiService.startLiveViewSession(cameraId, sessionId, ttlSeconds, viewMode);
+    return this.aiService.startLiveViewSession(cameraId, sessionId, ttlSeconds, viewMode, simulationMode);
   }
 
   @Roles(UserRole.VIEWER)
@@ -253,6 +266,10 @@ export class AiController {
     const ttlSeconds = Number.isFinite(ttlInput) ? Math.max(5, Math.min(120, Math.round(ttlInput))) : 20;
     const rawViewMode = String(body?.viewMode ?? '').trim().toLowerCase();
     const viewMode: 'selected' | 'grid' = rawViewMode === 'selected' ? 'selected' : 'grid';
-    return { sessionId, ttlSeconds, viewMode };
+    const rawSimulationMode = String(body?.simulationMode ?? '').trim().toLowerCase();
+    const simulationMode: 'motion' | 'object' | undefined = sessionId.startsWith('perimeter-test-')
+      ? rawSimulationMode === 'object' ? 'object' : 'motion'
+      : undefined;
+    return { sessionId, ttlSeconds, viewMode, simulationMode };
   }
 }

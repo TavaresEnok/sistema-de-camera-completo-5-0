@@ -295,6 +295,46 @@ test('liveAutoStart: câmera DESARMADA não ganha processador ao abrir o live', 
   assert.equal((result as any).reason, 'not_armed');
 });
 
+test('simulação de movimento abre câmera manual mesmo com detecção desligada, sem mudar a câmera', async () => {
+  const { mgr, calls } = managerFake({
+    mode: 'motion',
+    allowed: { aiMotion: true, aiAdvanced: false },
+    camera: { recordingMode: 'manual', aiEnabled: false },
+  });
+  mgr.buildAiSource = async () => ({ rtspUrl: 'rtsp://x/grid', info: {} });
+  const result = await mgr.startCamera('cam-1', { liveAutoStart: true, simulationMode: 'motion' });
+  assert.equal((result as any).status, 'started');
+  assert.deepEqual(calls, ['start:cam-1:motion']);
+});
+
+test('simulação de objeto exige classes liberadas mesmo em câmera manual', async () => {
+  const { mgr, calls } = managerFake({
+    mode: 'motion',
+    allowed: { aiMotion: true, aiObject: true, aiAdvanced: false },
+    camera: { recordingMode: 'manual', aiEnabled: false },
+  });
+  mgr.buildAiSource = async () => ({ rtspUrl: 'rtsp://x/grid', info: { objectDetection: { classes: ['person'], ativo: false } } });
+  const result = await mgr.startCamera('cam-1', { liveAutoStart: true, simulationMode: 'object' });
+  assert.equal((result as any).status, 'started');
+  assert.deepEqual(calls, ['start:cam-1:general']);
+
+  mgr.buildAiSource = async () => ({ rtspUrl: 'rtsp://x/grid', info: { objectDetection: { classes: [], ativo: false } } });
+  assert.equal((await mgr.startCamera('cam-1', { liveAutoStart: true, simulationMode: 'object' })).status, 'disabled');
+  assert.equal(calls.length, 1);
+});
+
+test('simulação de objeto funciona em plano que libera objeto, mas não movimento', async () => {
+  const { mgr, calls } = managerFake({
+    mode: 'motion',
+    allowed: { aiMotion: false, aiObject: true, aiAdvanced: false },
+    camera: { recordingMode: 'manual', aiEnabled: false },
+  });
+  mgr.buildAiSource = async () => ({ rtspUrl: 'rtsp://x/grid', info: { objectDetection: { classes: ['person'], ativo: false } } });
+  const result = await mgr.startCamera('cam-1', { liveAutoStart: true, simulationMode: 'object' });
+  assert.equal((result as any).status, 'started');
+  assert.deepEqual(calls, ['start:cam-1:general']);
+});
+
 test('liveAutoStart: câmera ARMADA continua ganhando processador pelo live', async () => {
   const { mgr, calls } = managerFake({
     mode: 'motion',

@@ -6,7 +6,7 @@ import { testTrajectory, describePerimeterPosition } from '../src/lib/perimeter-
 test('monitorando exige captura recente e inferência confirmada para linhas', () => {
   const now = 100000;
   const healthy = { running: true, last_seen: 99, readiness: { ready: true }, inference: { status: 'ok' } };
-  assert.equal(perimeterState(true, true, healthy, true, now).label, 'Análise ativa');
+  assert.equal(perimeterState(true, true, healthy, true, now).label, 'Detecção ligada');
   assert.equal(perimeterState(true, true, undefined, true, now).attention, true);
   assert.equal(perimeterState(true, true, { ...healthy, inference: undefined }, true, now).attention, true);
   assert.equal(perimeterState(true, false, { ...healthy, last_seen: 60 }, true, now).attention, true);
