@@ -20,6 +20,7 @@ import { FfmpegMjpegService } from './ffmpeg-mjpeg.service';
 import { MediamtxProxyService } from './mediamtx-proxy.service';
 import { StreamResourceAdvisorService } from './stream-resource-advisor.service';
 import { assessLiveReadiness } from './helpers/live-readiness.helper';
+import { LiveCapacityException } from './helpers/live-capacity.helper';
 import { CamerasService } from '../cameras/cameras.service';
 import { ingestKeyFromPathName } from '../cameras/helpers/rtmp-ingest.helper';
 import { PendingIngestRegistry } from '../cameras/pending-ingest.registry';
@@ -498,6 +499,7 @@ export class CameraStreamController {
           this.mediamtxProxyService.markGridViewed(cameraId);
         }
         const ensured = await this.mediamtxProxyService.ensurePathForCamera(cameraId, viewMode);
+        await this.mediamtxProxyService.assertDeliveryCapacity(ensured.pathName);
         mediaBridge = this.mediamtxProxyService.buildPublicUrls(req, ensured.pathName, ensured.sourceUrl);
         measuredLiveCodec = ensured.sourceVideoCodec;
         gridSourceIsOriginal = ensured.sourceIsOriginal === true;
@@ -511,6 +513,9 @@ export class CameraStreamController {
         audioAvailable = ensured.audioAvailable ?? null;
         effectiveDeliveryProfile = ensured.liveProfile ?? effectiveDeliveryProfile;
       } catch (error) {
+        // Preserve the explicit capacity response for both pull and push.
+        // Returning empty URLs here left players retrying all protocols forever.
+        if (error instanceof LiveCapacityException) throw error;
         // Uma câmera RTMP só existe enquanto o equipamento/app está publicando.
         // Não devolvemos URLs vazias como se a live estivesse iniciando: o
         // player precisa encerrar a espera e informar o operador sem expor

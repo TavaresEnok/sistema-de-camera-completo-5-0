@@ -10,9 +10,9 @@ import {
   resolveLiveRtspProfile,
   resolveOriginalRtspProfile,
 } from '../cameras/helpers/rtsp-url.helper';
-import * as os from 'node:os';
 import { createHash } from 'node:crypto';
-import { isManagedLivePublisher, withTranscodeAdmission, withWeightedTranscodeAdmission, liveConversionCost } from './helpers/transcode-admission.helper';
+import { isManagedLivePublisher, withTranscodeAdmission, withWeightedTranscodeAdmission, withHostPressureAdmission, liveConversionCost } from './helpers/transcode-admission.helper';
+import { LiveCapacityBudget, LiveCapacityException, LivePressureSampler, liveCapacityDefaults } from './helpers/live-capacity.helper';
 import { audioCodecFromTracks } from './helpers/live-audio.helper';
 import { trackPacketHealth, type TrackPacketHealth } from './helpers/track-packet-health.helper';
 import { envNumber } from '../common/config/env-number.helper';
@@ -146,14 +146,17 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
   // câmeras do relatório, dá a visão correta sem transformar a sonda em carga.
   private runtimePathListCache: { at: number; items: any[] } | null = null;
   private runtimePathListInFlight: Promise<any[]> | null = null;
+  private readonly capacityDefaults = liveCapacityDefaults();
+  private readonly capacityBudget = new LiveCapacityBudget();
+  private readonly capacityPressure = new LivePressureSampler();
+  private capacityTimer: ReturnType<typeof setInterval> | null = null;
   private readonly maxTranscodes = envNumber(
     'MEDIAMTX_MAX_CONCURRENT_TRANSCODES',
-    // Reserva CPU para API, banco, gravação e IA. Em máquinas pequenas o teto
-    // antigo (10 por núcleo) aceitava conversões suficientes para saturar tudo.
-    Math.max(4, (os.cpus()?.length ?? 4) * 5),
+    // Calculado por CPU disponível/quota; o orçamento ponderado é independente.
+    this.capacityDefaults.processes,
     { min: 1, max: 2000, integer: true },
   );
-  private readonly maxTranscodePoints = envNumber('MEDIAMTX_MAX_TRANSCODE_POINTS', this.maxTranscodes, {
+  private readonly maxTranscodePoints = envNumber('MEDIAMTX_MAX_TRANSCODE_POINTS', this.capacityDefaults.points, {
     min: 1, max: 2000, integer: true,
   });
   // AUTOCURA DA GRADE: DESLIGADA por padrão (restaura o comportamento de 21/07).
@@ -463,6 +466,9 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     if (!this.isEnabled()) return;
 
     this.assertStrongApiCredentials();
+    this.capacityPressure.sample();
+    this.capacityTimer = setInterval(() => this.capacityPressure.sample(), 2000);
+    this.capacityTimer.unref?.();
 
     // Histórico primeiro, aquecimento depois: o warm-up decide O QUE aquecer a
     // partir do conjunto quente, que depende do histórico carregado.
@@ -491,6 +497,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
   }
 
   onModuleDestroy() {
+    if (this.capacityTimer) clearInterval(this.capacityTimer);
     if (this.watchdogTimer) {
       clearInterval(this.watchdogTimer);
       this.watchdogTimer = null;
@@ -2225,9 +2232,16 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     if (cached && Date.now() - cached.at < 2000) return cached.items;
     if (this.runtimePathListInFlight) return this.runtimePathListInFlight;
     this.runtimePathListInFlight = this.apiRequest('GET', '/v3/paths/list?itemsPerPage=1000')
-      .then((text) => {
+      .then(async (text) => {
         const parsed = JSON.parse(text);
-        const items = Array.isArray(parsed?.items) ? parsed.items : [];
+        if (!Array.isArray(parsed?.items)) throw new Error('Runtime de mídia inválido.');
+        const items = parsed.items;
+        const pages = Math.max(1, Number(parsed.pageCount) || 1);
+        for (let page = 1; page < pages; page += 1) {
+          const next = JSON.parse(await this.apiRequest('GET', `/v3/paths/list?itemsPerPage=1000&page=${page}`));
+          if (!Array.isArray(next?.items)) throw new Error('Runtime de mídia incompleto.');
+          items.push(...next.items);
+        }
         this.runtimePathListCache = { at: Date.now(), items };
         return items;
       })
@@ -2610,24 +2624,6 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       && liveProfile?.channel === originalProfile.channel
       && liveProfile?.subtype === originalProfile.subtype;
 
-    // FREIO: passado o teto, recusa o transcode NOVO em vez de degradar todos.
-    //
-    // Só vale para quem ainda não tem path — quem JÁ está no ar não é derrubado
-    // por um recém-chegado. Sem essa assimetria o freio viraria um revezamento
-    // onde ninguém assiste nada, que é pior que a recusa honesta.
-    if (needsPublisher && this.activeTranscodes >= this.maxTranscodes) {
-      const jaExiste = await this.isPathPublishing(pathName).catch(() => false);
-      if (!jaExiste) {
-        this.logger.warn(
-          `Teto de transcodes atingido (${this.activeTranscodes}/${this.maxTranscodes}): `
-          + `câmera ${cameraId} recusada para proteger quem já está assistindo. `
-          + 'Fonte H.265 sem sub-stream H.264 é o que puxa esse custo.',
-        );
-        throw new BadRequestException(
-          'Servidor no limite de conversões simultâneas. Feche alguma câmera ou use um navegador com suporte a H.265.',
-        );
-      }
-    }
     // Só é "transcodificado" quando o publisher FFmpeg existe de fato — no modo
     // 'original' (passthrough) a fonte HEVC segue intocada e o rótulo deve refletir isso.
     const transcodedForLive = needsPublisher && (isHevc || wantsAudio);
@@ -2635,6 +2631,9 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     // only the compatibility grid needs a HEVC -> H.264 video conversion.
     const videoEncoded = needsPublisher && isHevc && !originalDelivery;
     const audioEncoded = needsPublisher && wantsAudio && audioAvailable !== false && sourceAudioCodec !== 'opus';
+    this.capacityBudget.register(pathName, needsPublisher ? liveConversionCost({
+      videoEncoded, codec: sourceVideoCodec, width: sourceWidth, height: sourceHeight, fps: sourceFps,
+    }) : 0);
 
     const desiredPath: any = {
       source: sharedInput.url,
@@ -2812,7 +2811,8 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       });
       const admitted = withWeightedTranscodeAdmission(ffmpegCommand, this.maxTranscodePoints, conversionCost);
       // The outer helper execs a shell so its process-count lock survives too.
-      const runOnDemandScript = `${prekillHook}; ${withTranscodeAdmission(`sh -c ${this.shellQuote(admitted)}`, this.maxTranscodes)}`;
+      const capacityGuard = withTranscodeAdmission(`sh -c ${this.shellQuote(admitted)}`, this.maxTranscodes);
+      const runOnDemandScript = `${prekillHook}; ${withHostPressureAdmission(capacityGuard, this.capacityDefaults.cores)}`;
       desiredPath.runOnDemand = `sh -c ${this.shellQuote(runOnDemandScript)}`;
       // FFMPEG ÓRFÃO: o mesmo prekill, agora também na SAÍDA do último espectador.
       //
@@ -2984,6 +2984,23 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     const texto = await this.apiRequest('GET', `/v3/paths/get/${encodeURIComponent(pathName)}`);
     const info = JSON.parse(texto) as { ready?: boolean; source?: { type?: string } | null };
     return info?.ready === true;
+  }
+
+  /** Called only for an actual viewer, never for warm-up/configuration. */
+  async assertDeliveryCapacity(pathName: string | null): Promise<void> {
+    if (!pathName) return;
+    const cost = this.capacityBudget.costFor(pathName);
+    if (cost <= 0) return;
+    let runtime: any[];
+    try {
+      runtime = await this.getRuntimePathItems();
+    } catch {
+      // Unknown occupancy cannot authorize a new CPU-heavy conversion.
+      throw new LiveCapacityException();
+    }
+    this.capacityBudget.reserve(pathName, cost, runtime, {
+      processes: this.maxTranscodes, points: this.maxTranscodePoints,
+    }, this.capacityPressure.snapshot());
   }
 
   buildInternalRtspUrl(pathName: string | null) {

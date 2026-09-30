@@ -370,7 +370,10 @@ export function DetectionZonesEditor({ cameraId, cameraName, configurationRevisi
     }
     setSaving(true);
     try {
-      const { data } = await axios.patch(`${API_URL}/cameras/${cameraId}`, { detectionZones: zones, expectedUpdatedAt: configurationRevision }, {
+      const { data } = await axios.patch(`${API_URL}/cameras/${cameraId}/detection-zones`, {
+        detectionZones: zones,
+        expectedDetectionZones: baseRef.current,
+      }, {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
       setDirty(false);
@@ -387,15 +390,20 @@ export function DetectionZonesEditor({ cameraId, cameraName, configurationRevisi
           : 'Desenhos removidos. A análise, quando ativa, considera a imagem inteira.',
       });
     } catch (error) {
+      const conflict = axios.isAxiosError(error) && error.response?.status === 409;
+      const serverMessage = axios.isAxiosError<{ message?: string | string[] }>(error) ? error.response?.data?.message : null;
+      const detail = Array.isArray(serverMessage) ? serverMessage[0] : serverMessage;
       toast({
-        title: axios.isAxiosError(error) && error.response?.status === 409 ? 'A câmera mudou em outra sessão' : 'Falha ao salvar zonas',
-        description: axios.isAxiosError(error) && error.response?.status === 409 ? 'Seu desenho foi preservado. Recarregue a página e confira as alterações antes de tentar novamente.' : 'Não foi possível guardar as alterações. Seu desenho foi preservado; tente novamente.',
+        title: conflict ? 'O perímetro mudou em outra sessão' : 'Falha ao salvar zonas',
+        description: conflict
+          ? 'Seu desenho foi preservado. Recarregue a página e confira as alterações antes de tentar novamente.'
+          : detail || 'Não foi possível guardar as alterações. Seu desenho foi preservado; tente novamente.',
         variant: 'destructive',
       });
     } finally {
       setSaving(false);
     }
-  }, [accessToken, cameraId, configurationRevision, onSaved, zones, readOnly, draftKey]);
+  }, [accessToken, cameraId, onSaved, zones, readOnly, draftKey]);
 
   const polygonPoints = useCallback((points: number[][]) => (
     points.map(([x, y]) => `${(x * 100).toFixed(2)},${(y * 100).toFixed(2)}`).join(' ')

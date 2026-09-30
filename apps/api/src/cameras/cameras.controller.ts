@@ -16,6 +16,7 @@ import { CameraPreviewFrameDto } from './dto/camera-preview-frame.dto';
 import { CreateCameraDto } from './dto/create-camera.dto';
 import { TestCameraConnectionDto } from './dto/test-camera-connection.dto';
 import { UpdateCameraDto } from './dto/update-camera.dto';
+import { UpdateDetectionZonesDto } from './dto/update-detection-zones.dto';
 import { UpdateMyCameraDto } from './dto/update-my-camera.dto';
 import { TransferCameraOwnerDto } from './dto/transfer-camera-owner.dto';
 import { Public } from '../auth/decorators/public.decorator';
@@ -980,6 +981,35 @@ export class CamerasController {
     // Antes de devolver: se a auditoria falhar, a senha NÃO sai.
     await this.auditService.log(user.id, 'camera.credential_revealed', 'Camera', id, { username: credencial.username }, req);
     return credencial;
+  }
+
+  @Roles(UserRole.ADMIN)
+  @RequirePermission('cameraConfig')
+  @Patch(':id/detection-zones')
+  async updateDetectionZones(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: UpdateDetectionZonesDto,
+    @Req() req: Request,
+  ) {
+    await this.accessControlService.assertCanAdminCamera(user, id);
+    const camera = await this.camerasService.updateDetectionZones(id, dto);
+    let aiApplyStatus = 'not_enabled';
+    if ((camera as { aiEnabled?: boolean }).aiEnabled) {
+      try {
+        const aiService = this.moduleRef.get(AiService, { strict: false });
+        await aiService.stopAnalysis(id).catch(() => undefined);
+        const aiManager = this.moduleRef.get(AiManagerService, { strict: false });
+        const result = await aiManager.startCamera(id, { allowCameraTrigger: true });
+        aiApplyStatus = String((result as { status?: string })?.status ?? 'requested');
+      } catch {
+        aiApplyStatus = 'failed';
+      }
+    }
+    await this.auditService.log(user.id, 'camera.perimeter_updated', 'Camera', id, {
+      zones: dto.detectionZones.length,
+    }, req);
+    return { ...camera, aiApplyStatus };
   }
 
   @Roles(UserRole.ADMIN)

@@ -2,7 +2,8 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { ConfigService } from '@nestjs/config';
 import { ModuleRef } from '@nestjs/core';
 import { temZonaDeArea, validarZonasDeDeteccao } from './helpers/validar-zonas.helper';
-import { CameraStatus, CameraPermissionLevel } from '@prisma/client';
+import { CameraStatus, CameraPermissionLevel, Prisma } from '@prisma/client';
+import { isDeepStrictEqual } from 'node:util';
 import { type AuthUser } from '../common/types/auth-user.type';
 import { createHash, randomBytes } from 'crypto';
 import * as http from 'http';
@@ -36,6 +37,7 @@ import { AlarmsService } from '../alarms/alarms.service';
 import { CreateCameraDto } from './dto/create-camera.dto';
 import { TestCameraConnectionDto } from './dto/test-camera-connection.dto';
 import { UpdateCameraDto } from './dto/update-camera.dto';
+import { UpdateDetectionZonesDto } from './dto/update-detection-zones.dto';
 import {
   buildRtspUrl,
   isHevcCodec,
@@ -839,6 +841,44 @@ export class CamerasService implements OnApplicationBootstrap {
     // ciclo real de módulos Cameras→Ai→Cameras e o Nest não instancia
     // (MediamtxProxyService fica sem CamerasService). Incidente 2026-07-21.
     return sanitizeCamera(camera);
+  }
+
+  /**
+   * Salva somente o desenho do perímetro. Cadastros antigos podem não ter
+   * porta HTTP/ONVIF e isso não tem relação com coordenadas normalizadas.
+   * A concorrência compara o desenho recebido, pois `updatedAt` também muda
+   * com health checks e criava conflitos falsos enquanto o operador desenhava.
+   */
+  async updateDetectionZones(id: string, dto: UpdateDetectionZonesDto) {
+    validarZonasDeDeteccao(dto.detectionZones);
+    validarZonasDeDeteccao(dto.expectedDetectionZones);
+    return this.prisma.$transaction(async (tx) => {
+      const existing = await tx.camera.findUnique({
+        where: { id },
+        include: { site: true, area: true, group: true },
+      });
+      if (!existing) throw new NotFoundException('Câmera não encontrada');
+      const currentZones = Array.isArray(existing.detectionZones) ? existing.detectionZones : [];
+      // ValidationPipe transforma os itens esperados em instâncias de DTO;
+      // Prisma devolve objetos JSON simples. Compare o conteúdo serializável,
+      // sem deixar o protótipo produzir conflito falso.
+      const expectedZones = JSON.parse(JSON.stringify(dto.expectedDetectionZones));
+      if (!isDeepStrictEqual(currentZones, expectedZones)) {
+        throw new ConflictException('O perímetro foi alterado em outra sessão. Recarregue a página antes de salvar.');
+      }
+      const migrateMotionTrigger = temZonaDeArea(dto.detectionZones)
+        && existing.recordingMode === 'motion'
+        && existing.motionTrigger === 'CAMERA';
+      const updated = await tx.camera.update({
+        where: { id },
+        data: {
+          detectionZones: dto.detectionZones as unknown as Prisma.InputJsonValue,
+          ...(migrateMotionTrigger ? { motionTrigger: 'SYSTEM', aiEnabled: true } : {}),
+        },
+        include: { site: true, area: true, group: true },
+      });
+      return sanitizeCamera(updated);
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   }
 
   async transferPrivateCameraOwner(id: string, ownerUserId: string) {

@@ -130,6 +130,8 @@ function proxyComOrcamento(opts: { budget: number; envOnDemand?: boolean; vistas
   // a env global. O que importa é o payload do POST /v3/config/paths/add.
   const enviados: Array<{ path: string; body: any }> = [];
   const svc: any = Object.create(MediamtxProxyService.prototype);
+  svc.capacityBudget = { register() {} };
+  svc.capacityDefaults = { cores: 4 };
   svc.logger = { warn() {}, log() {}, debug() {}, error() {} };
   svc.configService = {
     get: (key: string) => {

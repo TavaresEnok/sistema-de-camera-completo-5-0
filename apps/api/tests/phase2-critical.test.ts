@@ -943,6 +943,7 @@ test('camera-stream: H.265 original usa HLS sem anunciar WebRTC incompatível', 
   const mediamtx = {
     isEnabled: () => true,
     markGridViewed: () => undefined,
+    assertDeliveryCapacity: async () => undefined,
     ensurePathForCamera: async () => ({
       pathName: 'cam_11111111111111111111111111111111_orig',
       sourceUrl: 'rtsp://camera.local/main',

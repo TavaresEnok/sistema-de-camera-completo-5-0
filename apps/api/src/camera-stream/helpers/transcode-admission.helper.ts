@@ -5,6 +5,18 @@ export function isManagedLivePublisher(path: any): boolean {
     && ['rtspSession', 'publisher'].includes(String(path.source?.type ?? ''));
 }
 
+/** Also protect starts through cached URLs/direct media readers. This executes
+ * in MediaMTX before any new worker, never terminates an existing stream.
+ * Base64 shields awk $fields from MediaMTX's environment expansion.
+ */
+export function withHostPressureAdmission(command: string, cores: number): string {
+  const safeCores = Math.max(0.25, Math.min(2048, Number(cores) || 1));
+  const check = `awk 'NR == 1 { if ($1 >= ${safeCores * 0.75}) exit 75 }' /proc/loadavg && `
+    + `awk '/^MemTotal:/ { total=$2 } /^MemAvailable:/ { available=$2 } END { if (available < 524288 || available < total*0.1) exit 75 }' /proc/meminfo`;
+  const encoded = Buffer.from(check).toString('base64');
+  return `printf %s ${encoded} | base64 -d | sh || { echo 'Live conversion host pressure reached' >&2; exit 75; }; ${command}`;
+}
+
 /** Kernel locks survive exec and are released even on SIGKILL. No stale PID locks.
  * Runs in the MediaMTX container, so admission also covers old configured paths
  * starting later and requests from multiple API instances. Fail closed without flock.

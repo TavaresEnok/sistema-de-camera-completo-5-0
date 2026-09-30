@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { MediamtxProxyService } from '../src/camera-stream/mediamtx-proxy.service';
+import { LiveCapacityBudget, LiveCapacityException, liveCapacityDefaults } from '../src/camera-stream/helpers/live-capacity.helper';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // FREIO DE TRANSCODES SIMULTÂNEOS
@@ -26,11 +27,13 @@ function makeProxy(overrides: Record<string, unknown> = {}) {
   return mgr;
 }
 
-test('o teto padrão preserva metade do orçamento: ~5 transcodes por núcleo', () => {
+test('os tetos padrão consideram afinidade e quota de CPU', () => {
   const mgr = makeProxy();
-  const nucleos = require('node:os').cpus().length;
-  assert.equal(mgr.maxTranscodes, Math.max(4, nucleos * 5),
-    'o padrão precisa acompanhar o tamanho da máquina, não ser um número fixo');
+  const defaults = liveCapacityDefaults();
+  assert.equal(mgr.maxTranscodes, defaults.processes,
+    'o teto de processos precisa acompanhar o tamanho da máquina');
+  assert.equal(mgr.maxTranscodePoints, defaults.points,
+    'o orçamento ponderado precisa acompanhar o tamanho da máquina');
 });
 
 test('grade HEVC tem path próprio para coexistir com a contingência H.264', () => {
@@ -76,14 +79,14 @@ test('o teto é configurável e tem limite superior', () => {
 });
 
 test('quem JÁ tem path no ar não é derrubado pelo freio', () => {
-  const fonte = require('fs').readFileSync('src/camera-stream/mediamtx-proxy.service.ts', 'utf8');
-  const bloco = fonte.slice(fonte.indexOf('FREIO: passado o teto'), fonte.indexOf('const transcodedForLive'));
-  assert.ok(/jaExiste/.test(bloco) && /if \(!jaExiste\)/.test(bloco),
-    'sem essa checagem o freio derruba quem está assistindo para dar lugar a um novo — revezamento, não proteção');
+  const budget = new LiveCapacityBudget();
+  assert.doesNotThrow(() => budget.reserve('cam_a_grid', 4,
+    [{ name: 'cam_a_grid', ready: true, source: { type: 'rtspSession' } }],
+    { processes: 1, points: 1 }, { cpuPercent: 100, availableMemory: 0, totalMemory: 1 }));
 });
 
 test('a recusa explica o que fazer, não só que falhou', () => {
-  const fonte = require('fs').readFileSync('src/camera-stream/mediamtx-proxy.service.ts', 'utf8');
-  assert.ok(/Feche alguma câmera ou use um navegador com suporte a H\.265/.test(fonte),
-    'mensagem de erro sem saída de ação vira chamado de suporte');
+  const error = new LiveCapacityException();
+  assert.equal(error.getStatus(), 503);
+  assert.match((error.getResponse() as any).userMessage, /Feche algumas câmeras/);
 });

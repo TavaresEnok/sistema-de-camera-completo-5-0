@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import axios from 'axios';
 import { AlertTriangle, LoaderCircle, VideoOff, Volume2, VolumeX } from 'lucide-react';
 import { getApiBaseUrl } from '../lib/api-base';
+import { liveCapacityWait } from '../lib/live-capacity';
 import { useAuthStore } from '../store/authStore';
 import { useAiPreferencesStore } from '../store/aiPreferencesStore';
 import { prepareNativeHls } from '../lib/native-hls';
@@ -360,6 +361,8 @@ export function LiveStreamPlayer({
   const retryTimerRef = useRef<number | null>(null);
   const retryAttemptRef = useRef(0);
   const rtmpBackgroundRecoveryRef = useRef(false);
+  const capacityWaitRef = useRef(false);
+  const [capacityWaiting, setCapacityWaiting] = useState(false);
   const activeProtocolRef = useRef<ActiveLiveProtocol | null>(null);
   const primaryProtocolRef = useRef<LiveProtocol>('webrtc');
   const hiddenAtRef = useRef<number | null>(null);
@@ -509,6 +512,8 @@ export function LiveStreamPlayer({
     setAudioSwitchMessage(null);
     retryAttemptRef.current = 0;
     rtmpBackgroundRecoveryRef.current = false;
+    capacityWaitRef.current = false;
+    setCapacityWaiting(false);
   }, [cameraId]);
   // RESTAURO TEMPORÁRIO (2026-09-01): a grade HEVC-via-WebRTC (`grid-hevc`)
   // black-screena em navegadores sem decodificação HEVC/WebRTC, e o fallback
@@ -563,7 +568,7 @@ export function LiveStreamPlayer({
   useEffect(() => {
     if (error) setAudioSwitchMessage(null);
   }, [error]);
-  const compactErrorLabel = error && TECHNICAL_LIVE_MESSAGE_REGEX.test(error)
+  const compactErrorLabel = capacityWaiting ? 'Aguardando capacidade' : error && TECHNICAL_LIVE_MESSAGE_REGEX.test(error)
     ? 'Reconectando…'
     : 'Sem vídeo';
 
@@ -970,6 +975,8 @@ export function LiveStreamPlayer({
       if (cancelled) return;
       retryAttemptRef.current = 0;
       rtmpBackgroundRecoveryRef.current = false;
+      capacityWaitRef.current = false;
+      setCapacityWaiting(false);
       setRetryMessage(null);
       setAudioSwitchMessage(null);
       setError(null);
@@ -1040,7 +1047,7 @@ export function LiveStreamPlayer({
 
     const boot = async () => {
       const alreadyHadFrame = hasFrameRef.current;
-      const backgroundRtmpRecovery = rtmpBackgroundRecoveryRef.current;
+      const backgroundRtmpRecovery = rtmpBackgroundRecoveryRef.current || capacityWaitRef.current;
       if (!backgroundRtmpRecovery) {
         setIsLoading(!alreadyHadFrame);
         setError(null);
@@ -1819,6 +1826,28 @@ export function LiveStreamPlayer({
         throw new Error('Nenhum protocolo iniciou. Verifique WebRTC/WHEP, HLS, codec da câmera e conectividade com o MediaMTX.');
       } catch (streamError) {
         if (cancelled) return;
+        const capacity = axios.isAxiosError(streamError)
+          ? liveCapacityWait(streamError.response?.status, streamError.response?.data)
+          : null;
+        if (capacity) {
+          clearRetryTimer();
+          capacityWaitRef.current = true;
+          setCapacityWaiting(true);
+          setError(capacity.message);
+          setRetryMessage(null);
+          setIsLoading(false);
+          setActiveProtocol(null);
+          activeProtocolRef.current = null;
+          retryTimerRef.current = window.setTimeout(() => {
+            retryTimerRef.current = null;
+            failedProtocolsRef.current.clear();
+            streamUrlsCache.clear(`stream-urls:${authUserId}:${cameraId}:${deliveryMode}`);
+            setReloadNonce((value) => value + 1);
+          }, capacity.delayMs);
+          return;
+        }
+        capacityWaitRef.current = false;
+        setCapacityWaiting(false);
         if (axios.isAxiosError(streamError) && streamError.response?.status === 401) {
           void useAuthStore.getState().revalidate();
           scheduleReconnect('Renovando a sessão para retomar a imagem');
@@ -2594,7 +2623,7 @@ export function LiveStreamPlayer({
         <div className="absolute inset-x-1 bottom-1 z-20 flex justify-center">
           <div className="flex max-w-[92%] items-center gap-1.5 rounded border border-white/10 bg-black/68 px-2 py-1 text-[10px] text-white/75 backdrop-blur-[2px]">
             <AlertTriangle className="h-3 w-3 shrink-0 text-[hsl(var(--status-warning))]" />
-            <span className="truncate">{compactErrorLabel}</span>
+            <span className="truncate" title={error ?? undefined} role="status">{compactErrorLabel}</span>
           </div>
         </div>
       )}
@@ -2604,7 +2633,7 @@ export function LiveStreamPlayer({
           <div className="max-w-[85%] rounded-lg border border-[hsl(var(--destructive)_/_0.3)] bg-[hsl(var(--destructive)_/_0.1)] px-4 py-3 text-center text-xs text-[hsl(var(--destructive))]">
             <div className="mb-2 flex items-center justify-center gap-2">
               <AlertTriangle className="h-4 w-4" />
-              Sem imagem da câmera
+              {capacityWaiting ? 'Visualização em espera' : 'Sem imagem da câmera'}
             </div>
             <div>{friendlyLiveText(error, 'Não foi possível conectar à câmera agora. A reconexão é automática — verifique se a câmera está ligada e com rede.')}</div>
             <button
@@ -2612,6 +2641,8 @@ export function LiveStreamPlayer({
               onClick={() => {
                 retryAttemptRef.current = 0;
                 rtmpBackgroundRecoveryRef.current = false;
+                capacityWaitRef.current = false;
+                setCapacityWaiting(false);
                 setError(null);
                 setIsLoading(true);
                 setReloadNonce((value) => value + 1);
