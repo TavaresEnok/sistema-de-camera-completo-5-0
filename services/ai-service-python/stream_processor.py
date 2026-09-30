@@ -51,6 +51,7 @@ class StreamProcessor:
         self.thread = None
         self.capture_thread = None
         self.base_process_fps = float(self.profile["detection_fps"])
+        self.perimeter_motion_test_fps = 5.0
         self.base_advanced_process_fps = float(self.profile["detection_fps"])
         self.base_frame_width = int(self.profile["analysis_width"])
         self.base_frame_height = int(self.profile["analysis_height"])
@@ -722,6 +723,12 @@ class StreamProcessor:
             return "grid"
         return None
 
+    def _has_perimeter_motion_test_session_locked(self) -> bool:
+        return any(
+            session_id.startswith("perimeter-test-") and payload.get("simulation_mode") == "motion"
+            for session_id, payload in self._live_view_sessions.items()
+        )
+
     def _apply_qos_mode(self, qos_mode: str):
         if self.advanced_analysis_type:
             if qos_mode == "grid":
@@ -765,6 +772,9 @@ class StreamProcessor:
             frame_height = max(120, int(self.base_frame_height))
             input_size_hint = 0
 
+        if self._has_perimeter_motion_test_session_locked():
+            process_fps = max(process_fps, self.perimeter_motion_test_fps)
+
         self.process_fps = process_fps
         self.advanced_process_fps = advanced_fps
         self.frame_width = frame_width
@@ -779,6 +789,7 @@ class StreamProcessor:
         state = self._adaptive_state.get(mode_key, {"fps_idx": 0, "imgsz_idx": 0, "res_idx": 0})
         signature = (
             target_qos_mode,
+            self._has_perimeter_motion_test_session_locked(),
             int(state.get("fps_idx", 0)),
             int(state.get("imgsz_idx", 0)),
             int(state.get("res_idx", 0)),
