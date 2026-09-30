@@ -64,7 +64,7 @@ def _env_csv_int(name: str, default: tuple[int, ...]) -> tuple[int, ...]:
 
 MOTION_PROFILE = {
     "mode": "motion",
-    "detection_fps": 2.0,
+    "detection_fps": _env_float("MOTION_DETECTION_FPS", 2.0),
     "analysis_width": 320,
     "analysis_height": 180,
     "motion_trigger": "SYSTEM",

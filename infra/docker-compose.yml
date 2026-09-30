@@ -840,6 +840,7 @@ services:
       # com 10 cravado: +9% de latência e CPU roubada da gravação, com o próprio
       # serviço reportando `within_budget: false` no /health sem ninguém ler.
       - AI_INFERENCE_THREADS_OVERRIDE=${AI_INFERENCE_THREADS_OVERRIDE:-}
+      - MOTION_DETECTION_FPS=${MOTION_DETECTION_FPS:-2.0}
       - AI_SELECTED_DETECTION_FPS=${AI_SELECTED_DETECTION_FPS:-3.0}
       - AI_SELECTED_ANALYSIS_WIDTH=${AI_SELECTED_ANALYSIS_WIDTH:-960}
       - AI_SELECTED_ANALYSIS_HEIGHT=${AI_SELECTED_ANALYSIS_HEIGHT:-540}
