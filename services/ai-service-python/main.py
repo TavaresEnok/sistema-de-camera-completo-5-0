@@ -4,6 +4,7 @@ import os
 import logging
 import threading
 import uvicorn
+import cv2
 from pydantic import BaseModel
 from typing import Any, Optional, Dict
 import hmac
@@ -28,6 +29,14 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
 logger = logging.getLogger("ai-service")
+
+# Paralelismo já existe entre câmeras. Para quadros pequenos de movimento,
+# dezenas de threads internas por operação só disputavam CPU entre si.
+try:
+    opencv_threads = max(1, int(os.getenv("AI_OPENCV_THREADS", "1")))
+except (TypeError, ValueError):
+    opencv_threads = 1
+cv2.setNumThreads(opencv_threads)
 
 app = FastAPI(title="VMS AI Service", description="AI analysis service for VMS Drac")
 
@@ -104,6 +113,7 @@ def health_check():
     return {
         "status": "degraded" if degraded else "online",
         "service": "ai-service",
+        "opencv_threads": cv2.getNumThreads(),
         "ready": not degraded,
         "degraded_processors": degraded,
         "capture_degraded_processors": capture_degraded,

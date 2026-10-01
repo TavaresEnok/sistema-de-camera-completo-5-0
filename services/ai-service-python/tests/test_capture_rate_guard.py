@@ -191,11 +191,11 @@ class TestStreamProcessorWiring(unittest.TestCase):
         self.assertIn("CaptureRateGuard(", self.source)
 
     def test_laco_de_captura_contabiliza_cada_frame_consumido(self):
-        # Um por caminho de consumo de frame: grab() (drenagem) e read() (análise).
+        # Todos os quadros passam pelo mesmo grab(), inclusive os analisados.
         self.assertGreaterEqual(
             self.source.count("self._note_capture_rate()"),
-            2,
-            "grab() e read() consomem frame: os dois precisam alimentar o guarda",
+            1,
+            "cada grab() precisa alimentar o guarda",
         )
         tree = ast.parse(self.source)
         self.assertTrue(

@@ -6,7 +6,7 @@ import requests
 import os
 import numpy as np
 from collections import deque
-from queue import Queue
+from queue import Empty, Full, Queue
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 from detectors.base import Detection
@@ -51,7 +51,8 @@ class StreamProcessor:
         self.thread = None
         self.capture_thread = None
         self.base_process_fps = float(self.profile["detection_fps"])
-        self.perimeter_motion_test_fps = 7.0
+        # O teste de movimento usa a mesma configuração da detecção normal.
+        self.perimeter_motion_test_fps = float(MOTION_PROFILE["detection_fps"])
         self.base_advanced_process_fps = float(self.profile["detection_fps"])
         self.base_frame_width = int(self.profile["analysis_width"])
         self.base_frame_height = int(self.profile["analysis_height"])
@@ -190,10 +191,16 @@ class StreamProcessor:
         self._miss_count = 0
         self.capture_frames_enqueued = 0
         self.capture_frames_dropped = 0
+        self.capture_frames_superseded = 0
+        self._next_motion_frame_at = 0.0
+        self._motion_cadence_fps = 0.0
         self.processed_frames = 0
         self._started_at = time.time()
         self._capture_timestamps = deque(maxlen=120)
         self._inference_timestamps = deque(maxlen=120)
+        self._motion_inference_timestamps = deque(maxlen=120)
+        self._motion_infer_latencies_ms = deque(maxlen=240)
+        self.motion_infer_runs = 0
         self._advanced_infer_latencies_ms = deque(maxlen=240)
         self._frame_age_sum_ms = 0.0
         self._frame_age_samples = 0
@@ -203,6 +210,7 @@ class StreamProcessor:
             "width": None,
             "height": None,
             "fps": None,
+            "decoder_threads": None,
         }
         self._live_view_lock = threading.Lock()
         self._live_view_sessions: dict[str, dict[str, Any]] = {}
@@ -532,6 +540,13 @@ class StreamProcessor:
         elapsed = max(0.001, timestamps[-1] - timestamps[0])
         return (len(timestamps) - 1) / elapsed
 
+    def _recent_motion_fps(self):
+        now = time.time()
+        recent = [stamp for stamp in list(self._motion_inference_timestamps) if now - 5.0 <= stamp <= now]
+        if len(recent) < 2:
+            return 0.0
+        return (len(recent) - 1) / max(0.001, now - recent[0])
+
     def _update_capture_stream_info(self, cap, frame=None):
         info = dict(self._capture_stream_info)
         try:
@@ -539,6 +554,7 @@ class StreamProcessor:
             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
             fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
             codec = self._fourcc_to_codec(cap.get(cv2.CAP_PROP_FOURCC))
+            decoder_threads = int(cap.get(cv2.CAP_PROP_N_THREADS) or 0) if hasattr(cv2, "CAP_PROP_N_THREADS") else 0
             if frame is not None:
                 frame_height, frame_width = frame.shape[:2]
                 width = int(frame_width or width)
@@ -548,6 +564,7 @@ class StreamProcessor:
                 "width": width if width > 0 else info.get("width"),
                 "height": height if height > 0 else info.get("height"),
                 "fps": round(fps, 3) if fps > 0 else info.get("fps"),
+                "decoder_threads": decoder_threads if decoder_threads > 0 else info.get("decoder_threads"),
             })
             self._capture_stream_info = info
             # O FPS declarado pela fonte é a referência do guarda de taxa (valor
@@ -606,6 +623,7 @@ class StreamProcessor:
         return {
             **self._capture_stream_info,
             "capture_fps": round(float(self._rate_from_timestamps(self._capture_timestamps)), 3),
+            "motion_fps": round(float(self._recent_motion_fps()), 3),
             "inference_fps": round(float(self._rate_from_timestamps(self._inference_timestamps)), 3),
             "frame_age_last_ms": round(float(self._frame_age_last_ms), 3),
             "frame_age_avg_ms": round(float(avg_frame_age_ms), 3),
@@ -613,6 +631,7 @@ class StreamProcessor:
             "buffer_size": 1,
             "queue_size": self.frame_queue.qsize(),
             "dropped_frames": self.capture_frames_dropped,
+            "superseded_frames": self.capture_frames_superseded,
             "last_capture_success_at": self.last_capture_success_at,
             "last_capture_failure_at": self.last_capture_failure_at,
             "consecutive_capture_failures": self.consecutive_capture_failures,
@@ -926,7 +945,7 @@ class StreamProcessor:
         # NUNCA logar self.rtsp_url cru: _sanitize_url remove user:senha (invariante 1.2.v).
         logger.info("[%s] Iniciando captura: %s", self.camera_id, self._sanitize_url(self.rtsp_url))
         cap = None
-        last_yield_time = 0
+        next_yield_time = 0.0
         grab_failures = 0
 
         while self.running:
@@ -936,7 +955,7 @@ class StreamProcessor:
                 if cap is not None:
                     cap.release()
                     cap = None
-                    last_yield_time = 0
+                    next_yield_time = 0.0
                 time.sleep(0.25)
                 continue
 
@@ -944,43 +963,37 @@ class StreamProcessor:
                 cap = self._open_capture()
                 self._update_capture_stream_info(cap)
 
-            now = time.time()
-            capture_interval = 1.0 / max(0.5, float(self.process_fps))
-            if now - last_yield_time < capture_interval:
-                # DRENA o stream entre análises: grab() consome o pacote do socket sem
-                # o custo de converter/copiar a imagem. Sem isto, analisar a ~2fps um
-                # stream de ~20fps acumula backpressure TCP e o MediaMTX derruba o
-                # leitor lento ("write i/o timeout") a cada poucos minutos — churn de
-                # sessão infinita + ~5s de detecção cega a cada reconexão (observado:
-                # 71 kills/hora com 4 câmeras). grab() bloqueia até o próximo frame,
-                # então o loop se auto-cadencia no FPS do stream.
-                if cap.grab():
+            # Consome todos os quadros para evitar atraso/backpressure RTSP.
+            # grab() já avança o decoder; retrieve() converte o quadro atual
+            # para BGR. Usar read() aqui avançava um quadro extra. Movimento
+            # mantém o último quadro disponível mesmo entre análises; objetos
+            # preservam sua seleção na captura para limitar a conversão.
+            if not cap.grab():
+                grab_failures += 1
+                time.sleep(0.05)
+                if grab_failures >= 40:
+                    self.consecutive_capture_failures += 1
+                    self.last_capture_failure_at = time.time()
+                    self.last_error = f"capture_failed (grab x{grab_failures})"
+                    delay = compute_reconnect_delay(self.consecutive_capture_failures)
+                    logger.warning("[%s] Falha na captura (grab), reconectando em %.1fs...", self.camera_id, delay)
+                    cap.release()
+                    time.sleep(delay)
+                    cap = self._open_capture()
+                    next_yield_time = 0.0
                     grab_failures = 0
-                    # Cada frame DRENADO também conta para a taxa de captura: é
-                    # justamente aqui que o timestamp quebrado aparece (grab()
-                    # deveria bloquear até o próximo frame e passa a voltar na hora).
-                    throttle = self._note_capture_rate()
-                    if throttle > 0:
-                        time.sleep(throttle)
-                else:
-                    grab_failures += 1
-                    time.sleep(0.05)
-                    if grab_failures >= 40:  # ~2s+ sem frames = stream caiu de verdade
-                        self.consecutive_capture_failures += 1
-                        self.last_capture_failure_at = time.time()
-                        self.last_error = f"capture_failed (grab x{grab_failures})"
-                        delay = compute_reconnect_delay(self.consecutive_capture_failures)
-                        logger.warning("[%s] Falha na captura (grab), reconectando em %.1fs...", self.camera_id, delay)
-                        cap.release()
-                        time.sleep(delay)
-                        cap = self._open_capture()
-                        grab_failures = 0
+                continue
+            grab_failures = 0
+            throttle = self._note_capture_rate()
+            if throttle > 0:
+                time.sleep(throttle)
+            now = time.monotonic()
+            capture_interval = 1.0 / max(0.5, float(self.process_fps))
+            continuous_motion = not self.advanced_analysis_type
+            if not continuous_motion and now < next_yield_time:
                 continue
 
-            # A IA não precisa decodificar o FPS inteiro da câmera.
-            # Com buffer baixo/nobuffer, ler no FPS de análise mantém o frame recente
-            # e evita que FFmpeg/OpenCV consuma CPU decodificando frames descartados.
-            ret, frame = cap.read()
+            ret, frame = cap.retrieve()
             if not ret:
                 self.consecutive_capture_failures += 1
                 self.last_capture_failure_at = time.time()
@@ -990,52 +1003,76 @@ class StreamProcessor:
                 cap.release()
                 time.sleep(delay)
                 cap = self._open_capture()
+                next_yield_time = 0.0
                 continue
             
             capture_timestamp = time.time()
             self.last_seen = capture_timestamp
             self.last_capture_success_at = capture_timestamp
             self.consecutive_capture_failures = 0
-            self._note_capture_rate()
             if isinstance(self.last_error, str) and self.last_error.startswith("capture_failed"):
                 self.last_error = None
             self._capture_timestamps.append(capture_timestamp)
             self._update_capture_stream_info(cap, frame)
             
-            last_yield_time = self.last_seen
-            if not self.frame_queue.full():
-                self.frame_queue.put((frame, capture_timestamp))
-                self.capture_frames_enqueued += 1
-            else:
-                # Fila cheia: descarta o antigo e coloca o novo (mantém tempo real)
+            # Agenda no relógio monotônico, sem somar o tempo de leitura a
+            # cada intervalo. Se houve travamento, retoma no presente e não
+            # entrega rajadas de quadros atrasados para "compensar" a perda.
+            next_yield_time = (next_yield_time or now) + capture_interval
+            if next_yield_time <= time.monotonic():
+                next_yield_time = time.monotonic() + capture_interval
+            queued_frame = (frame, capture_timestamp)
+            try:
+                self.frame_queue.put_nowait(queued_frame)
+            except Full:
+                # Um único produtor. O consumidor pode retirar o quadro
+                # entre put/get: mesmo nesse caso devemos guardar o novo.
                 try:
                     self.frame_queue.get_nowait()
-                    self.frame_queue.put((frame, capture_timestamp))
-                    self.capture_frames_dropped += 1
-                    self.capture_frames_enqueued += 1
-                except:
+                except Empty:
                     pass
+                else:
+                    if continuous_motion:
+                        # Seleção intencional: a análise usa o quadro mais
+                        # recente no seu próprio horário, não uma fila atrasada.
+                        self.capture_frames_superseded += 1
+                    else:
+                        self.capture_frames_dropped += 1
+                self.frame_queue.put_nowait(queued_frame)
+            self.capture_frames_enqueued += 1
         
         if cap is not None:
             cap.release()
 
     def _open_capture(self):
-        # fflags;nobuffer|flags;low_delay instrui o FFMPEG a não fazer cache de vídeo,
-        # garantindo que o primeiro frame lido seja exatamente o momento presente.
-        capture_options = os.getenv("AI_OPENCV_CAPTURE_OPTIONS", "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|stimeout;5000000").strip()
+        # O decoder precisa de poucos trabalhadores por stream: deixar em
+        # automático criava dezenas por câmera, aumentando buffers e disputa.
+        # Estas propriedades são open-only; set() depois de abrir não funciona.
+        # nobuffer/low_delay agravavam a leitura de alguns H.264 nativos.
+        # O leitor contínuo e a fila de um quadro evitam acumular vídeo para
+        # análise sem forçar essas flags do codec/demuxer. Isso não corrige
+        # quadros ausentes/interrompidos já na fonte.
+        capture_options = os.getenv("AI_OPENCV_CAPTURE_OPTIONS", "rtsp_transport;tcp|stimeout;5000000").strip()
         if capture_options:
             os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = capture_options
-        cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
+        try:
+            decoder_threads = max(1, min(16, int(os.getenv("AI_CAPTURE_DECODER_THREADS", "1"))))
+        except (TypeError, ValueError):
+            decoder_threads = 1
+        params = []
+        for name, value in (
+            ("CAP_PROP_N_THREADS", decoder_threads),
+            # A fonte on-demand pode precisar iniciar o publisher antes do RTSP.
+            ("CAP_PROP_OPEN_TIMEOUT_MSEC", 15000),
+            # Em TCP houve pausas >5 s na origem: interromper no meio de um
+            # quadro agravava erros de decode e reconexões. Continua limitado.
+            ("CAP_PROP_READ_TIMEOUT_MSEC", 15000),
+        ):
+            if hasattr(cv2, name):
+                params.extend((getattr(cv2, name), value))
+        cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG, params)
         try:
             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        except Exception:
-            pass
-        # Evita travar indefinidamente no primeiro frame quando a câmera oscila.
-        try:
-            if hasattr(cv2, "CAP_PROP_OPEN_TIMEOUT_MSEC"):
-                cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
-            if hasattr(cv2, "CAP_PROP_READ_TIMEOUT_MSEC"):
-                cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
         except Exception:
             pass
         return cap
@@ -1058,6 +1095,19 @@ class StreamProcessor:
     def _debounce_seconds(self, event_type):
         return self.motion_debounce_seconds if event_type == "MOTION_DETECTED" else self.detect_debounce_seconds
 
+    def _motion_frame_wait_seconds(self, now: float) -> float:
+        fps = max(0.5, float(self.process_fps))
+        if fps != self._motion_cadence_fps:
+            self._motion_cadence_fps = fps
+            self._next_motion_frame_at = now
+        return max(0.0, self._next_motion_frame_at - now)
+
+    def _note_motion_frame_selected(self, now: float):
+        interval = 1.0 / max(0.5, float(self.process_fps))
+        self._next_motion_frame_at = (self._next_motion_frame_at or now) + interval
+        if self._next_motion_frame_at <= now:
+            self._next_motion_frame_at = now + interval
+
     def _process(self):
         if self.advanced_analysis_type:
             logger.info("[%s] Iniciando IA global 'motion+%s' (%s fps)...", self.camera_id, self.advanced_analysis_type, self.process_fps)
@@ -1074,11 +1124,18 @@ class StreamProcessor:
         while self.running:
             self.process_loop_iterations += 1
             self._refresh_qos_mode()
+            if not self.advanced_analysis_type:
+                wait_seconds = self._motion_frame_wait_seconds(time.monotonic())
+                if wait_seconds > 0:
+                    time.sleep(min(0.05, wait_seconds))
+                    continue
             if self.frame_queue.empty():
                 time.sleep(0.01)
                 continue
 
             queued = self.frame_queue.get()
+            if not self.advanced_analysis_type:
+                self._note_motion_frame_selected(time.monotonic())
             if isinstance(queued, tuple) and len(queued) == 2:
                 frame, capture_timestamp = queued
             else:
@@ -1104,7 +1161,11 @@ class StreamProcessor:
                 self._frame_age_sum_ms += frame_age_ms
                 self._frame_age_samples += 1
                 self.processed_frames += 1
+                motion_started = time.perf_counter()
                 detections = self.motion_detector.infer(frame, perimeter_test=self._has_perimeter_test_session())
+                self._motion_infer_latencies_ms.append((time.perf_counter() - motion_started) * 1000.0)
+                self._motion_inference_timestamps.append(time.time())
+                self.motion_infer_runs += 1
                 # Movimento acusado → confirma semanticamente no recorte (só no
                 # modo 'motion'; nos modos general/face o detector já roda no
                 # frame inteiro e a confirmação seria trabalho duplicado).
@@ -1545,11 +1606,16 @@ class StreamProcessor:
             except Exception:
                 pool_busy_drops = 0
         elapsed = max(0.001, time.time() - self._started_at)
+        motion_latencies = sorted(self._motion_infer_latencies_ms)
         return {
             "capture_loop_iterations": self.capture_loop_iterations,
             "process_loop_iterations": self.process_loop_iterations,
             "processed_frames": self.processed_frames,
             "process_fps_real": round(float(self.processed_frames) / elapsed, 3),
+            "motion_infer_runs": self.motion_infer_runs,
+            "motion_fps_real": round(float(self._recent_motion_fps()), 3),
+            "motion_infer_avg_ms": round(sum(motion_latencies) / len(motion_latencies), 3) if motion_latencies else 0.0,
+            "motion_infer_p95_ms": round(motion_latencies[min(len(motion_latencies) - 1, int((len(motion_latencies) - 1) * 0.95))], 3) if motion_latencies else 0.0,
             "advanced_infer_runs": self.advanced_infer_runs,
             "advanced_infer_errors": self.advanced_infer_errors,
             "advanced_infer_last_ms": round(float(self.advanced_infer_last_ms), 3),

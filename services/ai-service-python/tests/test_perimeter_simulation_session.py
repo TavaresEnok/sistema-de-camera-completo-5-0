@@ -1,6 +1,7 @@
 import unittest
+from unittest.mock import patch
 
-from stream_processor import StreamProcessor
+from stream_processor import MOTION_PROFILE, StreamProcessor, runtime_profile
 
 
 class PerimeterSimulationSessionTest(unittest.TestCase):
@@ -52,17 +53,18 @@ class PerimeterSimulationSessionTest(unittest.TestCase):
 
         self.assertIsNone(lease["simulation_mode"])
         self.assertIsNone(processor._perimeter_simulation_mode())
-        self.assertEqual(processor.process_fps, 2.0)
+        self.assertEqual(processor.process_fps, MOTION_PROFILE["detection_fps"])
 
-    def test_motion_simulation_uses_seven_fps_only_while_open(self):
-        processor = self.processor(simulation_only=False)
-        self.assertEqual(processor.process_fps, 2.0)
-
-        processor.touch_live_view_session("perimeter-test-motion", 20, "selected", "motion")
-        self.assertEqual(processor.process_fps, 7.0)
-
-        processor.stop_live_view_session("perimeter-test-motion")
-        self.assertEqual(processor.process_fps, 2.0)
+    def test_motion_simulation_and_normal_detection_use_same_configuration(self):
+        for fps in (3.0, 5.0, 7.0, 10.0):
+            profile = {**runtime_profile("motion"), "detection_fps": fps}
+            with self.subTest(fps=fps), patch.dict(MOTION_PROFILE, {"detection_fps": fps}), patch("stream_processor.runtime_profile", return_value=profile):
+                processor = self.processor(simulation_only=False)
+                self.assertEqual(processor.process_fps, fps)
+                processor.touch_live_view_session("perimeter-test-motion", 20, "selected", "motion")
+                self.assertEqual(processor.process_fps, fps)
+                processor.stop_live_view_session("perimeter-test-motion")
+                self.assertEqual(processor.process_fps, fps)
 
 
 if __name__ == "__main__":

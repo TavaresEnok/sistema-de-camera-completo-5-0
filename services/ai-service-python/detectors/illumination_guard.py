@@ -73,6 +73,38 @@ class GlobalIlluminationGuard:
 
     def _block_offsets(self, delta: np.ndarray, mask: np.ndarray | None) -> list[float]:
         height, width = delta.shape
+        # A grade normal (320x180 / 8x6) tem blocos iguais. Uma única
+        # operação por grade evita 48 chamadas Python/NumPy por frame, que
+        # serializavam os detectores de várias câmeras no GIL. Os valores
+        # continuam sendo as medianas exatas dos mesmos pixels.
+        if height % self._grid_y == 0 and width % self._grid_x == 0:
+            block_height = height // self._grid_y
+            block_width = width // self._grid_x
+            blocks = delta.reshape(
+                self._grid_y, block_height, self._grid_x, block_width,
+            ).transpose(0, 2, 1, 3).reshape(self._grid_y * self._grid_x, -1)
+            if blocks.shape[1] < 16:
+                return []
+            if mask is None:
+                return np.median(blocks, axis=1).tolist()
+            valid = mask.reshape(
+                self._grid_y, block_height, self._grid_x, block_width,
+            ).transpose(0, 2, 1, 3).reshape(blocks.shape) > 0
+            counts = np.count_nonzero(valid, axis=1)
+            eligible = counts >= 16
+            if not np.any(eligible):
+                return []
+            # Ordenar linhas em uma operação permite extrair medianas de
+            # blocos com quantidades diferentes de pixels válidos, sem
+            # alterar a máscara nem incluir pixels externos à zona.
+            ordered = np.where(valid[eligible], blocks[eligible], np.inf)
+            ordered.sort(axis=1)
+            counts = counts[eligible]
+            rows = np.arange(len(counts))
+            middles = np.stack((ordered[rows, (counts - 1) // 2], ordered[rows, counts // 2]), axis=1)
+            return np.mean(middles, axis=1).tolist()
+
+        # Geometrias não divisíveis preservam os limites inteiros originais.
         offsets: list[float] = []
         for gy in range(self._grid_y):
             y1 = gy * height // self._grid_y

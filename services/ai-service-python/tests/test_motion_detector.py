@@ -267,7 +267,14 @@ class TestEquivalenciaPlanoY(unittest.TestCase):
         with mock.patch.dict(MOTION_PROFILE, {"motion_luma_plane": luma, "motion_max_boxes": 4}):
             det = MotionDetector(zones=zones)
             det.load()
-            return [det.infer(f) for f in self._sequence()]
+            # A periodicidade depende do relógio. Os dois caminhos precisam
+            # receber também os MESMOS instantes, não o tempo de execução
+            # variável do teste (que criava divergências intermitentes).
+            runs = []
+            for index, frame in enumerate(self._sequence()):
+                with mock.patch("detectors.motion.time.monotonic", return_value=1000 + index / 2):
+                    runs.append(det.infer(frame))
+            return runs
 
     def _decisions(self, runs):
         return [len(r) for r in runs]
