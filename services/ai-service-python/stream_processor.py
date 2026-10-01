@@ -32,6 +32,7 @@ from runtime_profiles import MOTION_PROFILE, runtime_profile
 from reconnect_backoff import compute_reconnect_delay
 from capture_rate_guard import CaptureRateGuard
 from stage_timings import StageTimings
+from event_delivery import EventDelivery
 from inference_watchdog import evaluate_inference_health, watchdog_settings
 from object_policy import eh_objeto_para_confirmar, filtrar_deteccoes_por_classe, politica_de_objeto
 
@@ -50,6 +51,7 @@ class StreamProcessor:
         self.wakeup_until = 0
         self.running = False
         self._stage_timings = StageTimings()
+        self._event_delivery = None
         self.thread = None
         self.capture_thread = None
         self.base_process_fps = float(self.profile["detection_fps"])
@@ -459,6 +461,8 @@ class StreamProcessor:
         if self.running:
             return
         self.running = True
+        if self.emit_events:
+            self._event_delivery = EventDelivery(self._send_event_payload)
         
         # Thread de captura
         self.capture_thread = threading.Thread(target=self._capture_frames)
@@ -476,6 +480,8 @@ class StreamProcessor:
             self.capture_thread.join(timeout=2)
         if self.thread:
             self.thread.join(timeout=2)
+        if self._event_delivery:
+            self._event_delivery.close()
 
     def _sanitize_url(self, url):
         try:
@@ -1661,6 +1667,7 @@ class StreamProcessor:
         return {
             "capture_loop_iterations": self.capture_loop_iterations,
             "stage_timings": self._stage_timings.snapshot(),
+            "event_delivery": self._event_delivery.snapshot() if self._event_delivery else None,
             "process_loop_iterations": self.process_loop_iterations,
             "processed_frames": self.processed_frames,
             "process_fps_real": round(float(self.processed_frames) / elapsed, 3),
@@ -1707,22 +1714,31 @@ class StreamProcessor:
 
     def _report_event(self, event_type, value, message=None, metadata=None):
         logger.info("[%s] Evento: %s (%s)", self.camera_id, event_type, value)
+        payload = {
+            "type": event_type,
+            "value": str(value),
+            "message": message or f"Evento {event_type} detectado",
+            "metadata": metadata or {"value": value, "analysisType": self.analysis_type},
+            "occurredAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
+        if self._event_delivery:
+            self._event_delivery.submit(payload)
+        else:
+            self._send_event_payload(payload)
+
+    def _send_event_payload(self, payload):
         report_started = time.perf_counter()
         try:
             url = f"{self.api_url}/cameras/internal/{self.camera_id}/events"
-            payload = {
-                "type": event_type,
-                "value": str(value),
-                "message": message or f"Evento {event_type} detectado",
-                "metadata": metadata or {"value": value, "analysisType": self.analysis_type},
-                "occurredAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-            }
             headers = {"X-Service-Token": self.service_token}
             # Timeout curto para não travar a thread de IA
             response = requests.post(url, json=payload, headers=headers, timeout=3)
             if response.status_code not in [200, 201]:
                 logger.warning("[%s] Erro API: %s", self.camera_id, response.status_code)
+                return False
+            return True
         except Exception as e:
             logger.warning("[%s] Falha de conexão com API (%s)", self.camera_id, type(e).__name__)
+            return False
         finally:
             self._stage_timings.observe("event_http", time.perf_counter() - report_started)

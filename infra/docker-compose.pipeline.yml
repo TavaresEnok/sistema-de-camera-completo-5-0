@@ -2,7 +2,8 @@
 # Revert by selecting the saved rollback image tags, keeping the same base config.
 services:
   ai-service:
-    image: drac-pipeline-ai:20261001
+    image: drac-pipeline-ai:20261001-events
+    stop_grace_period: 30s
     environment:
       MOTION_DETECTION_FPS: ${MOTION_DETECTION_FPS:-5.0}
       AI_CAPTURE_DECODER_THREADS: 1

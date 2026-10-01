@@ -46,6 +46,14 @@ app = FastAPI(title="VMS AI Service", description="AI analysis service for VMS D
 processors: Dict[str, StreamProcessor] = {}
 _processors_lock = threading.Lock()
 
+
+@app.on_event("shutdown")
+async def shutdown_processors():
+    with _processors_lock:
+        snapshot = list(processors.values())
+        processors.clear()
+    await asyncio.gather(*(asyncio.to_thread(processor.stop) for processor in snapshot))
+
 class AnalysisRequest(BaseModel):
     camera_id: str
     rtsp_url: str
