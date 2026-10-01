@@ -923,6 +923,11 @@ class StreamProcessor:
             counts = self._live_view_mode_counts_locked()
             return {
                 "active_sessions": count,
+                "perimeter_test_active": any(
+                    session_id.startswith("perimeter-test-")
+                    and payload.get("simulation_mode") in ("motion", "object")
+                    for session_id, payload in self._live_view_sessions.items()
+                ),
                 "forced_awake": count > 0,
                 "force_awake_until": self.force_awake_until,
                 "active_view_mode": self._current_live_view_mode_locked(),

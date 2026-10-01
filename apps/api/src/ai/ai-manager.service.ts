@@ -390,7 +390,15 @@ export class AiManagerService implements OnModuleInit {
             })).map((cam) => cam.id),
           );
           for (const cameraId of active) {
-            if (legitimas.has(cameraId)) {
+            const processor = health?.processors?.[cameraId];
+            // Simular não liga o toggle nem arma a câmera. Uma sessão de
+            // perímetro aberta, exclusivamente temporária e sem eventos,
+            // NÃO é órfã. Encerrar/expirar a sessão devolve a limpeza normal.
+            const simulacaoAtiva = processor?.simulation_only === true
+              && processor?.emit_events === false
+              && processor?.live_view?.perimeter_test_active === true
+              && Number(processor?.live_view?.active_sessions) > 0;
+            if (legitimas.has(cameraId) || simulacaoAtiva) {
               this.strayStrikes.delete(cameraId);
               continue;
             }

@@ -29,10 +29,13 @@ A 7 FPS, CPU do processo caiu de 5,253 para 2,691 núcleos; memória máxima de 
 - Medianas dos 48 blocos de iluminação causavam disputa entre threads Python. O cálculo foi agrupado, preservando as medianas e as decisões originais, comprovado por teste contra o algoritmo anterior.
 - Flags forçadas `nobuffer/low_delay` agravavam alguns H.264. Removidas do padrão; uma sonda isolada da mesma fonte passou de 2,37 para 10,20 quadros decodificados/s, mas isso não eliminou suas interrupções nas medições longas.
 - Corrigida corrida entre produtor/consumidor que podia abandonar a imagem nova se a fila fosse esvaziada simultaneamente.
+- A validação após publicar revelou outra causa real de interrupção: a API encerrava a simulação a cada dois ciclos de limpeza (aproximadamente um minuto), porque a câmera manual tinha `aiEnabled=false`. Logs confirmaram o encerramento das duas câmeras do ensaio e de uma simulação aberta pelo navegador. A limpeza agora preserva somente sessões de perímetro ativas, explicitamente temporárias e sem emissão de eventos. Sessões comuns e simulações expiradas continuam sujeitas à limpeza; não foi ligado o toggle nem alterado o modo de gravação das câmeras.
 - A simulação de movimento agora utiliza `MOTION_DETECTION_FPS`, como a detecção normal, sem valor 7 escondido apenas na simulação. IBTelecom permanece com meta 7 nos dois caminhos; o padrão para outras instalações é 5, ajustável por capacidade.
 - `/health` informa `motion_fps`, `motion_infer_runs`, tempo médio/p95 do detector, threads do decoder e substituições intencionais da imagem disponível. Taxa recente zera após interrupção, em vez de continuar mostrando uma média antiga.
 
 ## Limite ainda observado na origem/rede
+
+Nomes no cadastro: 100001 = Grupo Flash Cam-05; 100012 = Cam-06; 100014 = Cam-04; 100015 = Cam-08.
 
 Um leitor independente, sem detector, apresentou pausas de 2,87 / 3,28 / 4,62 / 5,34 s no H.264 de 100001. FFmpeg independente também recebeu apenas 108 quadros para aproximadamente 20 s de vídeo nesse caminho. Uma sonda direta da origem, sem passar pelo MediaMTX, também não sustentou a taxa declarada. O stream principal alternativo não foi solução: entregou apenas 18 quadros em aproximadamente 15 s na amostra. Nenhuma configuração da câmera foi alterada.
 

@@ -37,9 +37,11 @@ class PerimeterSimulationSessionTest(unittest.TestCase):
         self.assertEqual(lease["simulation_mode"], "object")
         self.assertEqual(processor._perimeter_simulation_mode(), "object")
         self.assertTrue(processor._is_awake())
+        self.assertTrue(processor.live_view_state()["perimeter_test_active"])
 
         processor.stop_live_view_session("perimeter-test-session-123")
         self.assertFalse(processor._is_awake())
+        self.assertFalse(processor.live_view_state()["perimeter_test_active"])
 
     def test_regular_live_session_cannot_request_simulation_mode(self):
         processor = self.processor(classes=["person"], simulation_only=False)
@@ -53,6 +55,7 @@ class PerimeterSimulationSessionTest(unittest.TestCase):
 
         self.assertIsNone(lease["simulation_mode"])
         self.assertIsNone(processor._perimeter_simulation_mode())
+        self.assertFalse(processor.live_view_state()["perimeter_test_active"])
         self.assertEqual(processor.process_fps, MOTION_PROFILE["detection_fps"])
 
     def test_motion_simulation_and_normal_detection_use_same_configuration(self):

@@ -198,7 +198,7 @@ test('startCamera: falha ao consultar a política não pode derrubar o movimento
 // lento "do nada" e o operador via IA em câmera que a Central dizia desligada.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function watchdogFake(opts: { active: string[]; armadas: string[] }) {
+function watchdogFake(opts: { active: string[]; armadas: string[]; processors?: Record<string, any> }) {
   const stopped: string[] = [];
   const started: string[] = [];
   const mgr: any = Object.create(AiManagerService.prototype);
@@ -208,7 +208,7 @@ function watchdogFake(opts: { active: string[]; armadas: string[] }) {
   mgr.lastDegradedRecoveryAt = new Map();
   mgr.getSettings = async () => ({ enabled: true, mode: 'motion' });
   mgr.aiService = {
-    getHealth: async () => ({ status: 'online', active_processors: opts.active, degraded_processors: [] }),
+    getHealth: async () => ({ status: 'online', active_processors: opts.active, degraded_processors: [], processors: opts.processors ?? {} }),
     stopAnalysis: async (id: string) => { stopped.push(id); },
   };
   mgr.startCamera = async (id: string) => { started.push(id); return { status: 'started' }; };
@@ -270,6 +270,38 @@ test('watchdog: processador de câmera ARMADA nunca é tocado pela reconciliaç�
   await mgr.recoverDegradedProcessors();
   await mgr.recoverDegradedProcessors();
   assert.deepEqual(stopped, [], 'a reconciliação reversa só existe para órfãos');
+});
+
+test('watchdog: simulação ativa em câmera manual com toggle desligado não é órfã', async () => {
+  for (const analysis_type of ['motion', 'general']) {
+    const processor = {
+      analysis_type,
+      simulation_only: true,
+      emit_events: false,
+      live_view: { perimeter_test_active: true, active_sessions: 1 },
+    };
+    const { mgr, stopped } = watchdogFake({ active: ['cam-teste'], armadas: [], processors: { 'cam-teste': processor } });
+    mgr.strayStrikes.set('cam-teste', 1);
+    for (let tick = 0; tick < 4; tick++) await mgr.recoverDegradedProcessors();
+    assert.deepEqual(stopped, [], 'não derruba a simulação em ticks repetidos');
+    assert.equal(mgr.strayStrikes.has('cam-teste'), false);
+    processor.live_view.perimeter_test_active = false;
+    processor.live_view.active_sessions = 0;
+    await mgr.recoverDegradedProcessors();
+    assert.deepEqual(stopped, [], 'expirar começa a contagem novamente');
+    await mgr.recoverDegradedProcessors();
+    assert.deepEqual(stopped, ['cam-teste'], 'não deixa custo eterno após a sessão');
+  }
+});
+
+test('watchdog: live comum ou processador que emite eventos não recebe exceção de simulação', async () => {
+  for (const patch of [{ simulation_only: false }, { emit_events: true }, { live_view: { perimeter_test_active: false, active_sessions: 1 } }, { live_view: { perimeter_test_active: true, active_sessions: 0 } }]) {
+    const processor = { simulation_only: true, emit_events: false, live_view: { perimeter_test_active: true, active_sessions: 1 }, ...patch };
+    const { mgr, stopped } = watchdogFake({ active: ['cam-orfa'], armadas: [], processors: { 'cam-orfa': processor } });
+    await mgr.recoverDegradedProcessors();
+    await mgr.recoverDegradedProcessors();
+    assert.deepEqual(stopped, ['cam-orfa']);
+  }
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

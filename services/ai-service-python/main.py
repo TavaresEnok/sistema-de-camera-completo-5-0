@@ -131,6 +131,8 @@ def health_check():
         "processors": {
             camera_id: {
                 "analysis_type": processor.analysis_type,
+                "simulation_only": processor.simulation_only,
+                "emit_events": processor.emit_events,
                 "base_motion_enabled": True,
                 "advanced_analysis_type": processor.advanced_analysis_type,
                 "runtime_profile": processor.profile,
