@@ -54,3 +54,13 @@ Se todo o consumo total desta frota fosse proporcional ao número de fontes, 25,
 JSONLs preservados no servidor: `/tmp/ib-motion-original-stream.jsonl`, `/tmp/ib-motion-fixed-plain.jsonl`, `/tmp/ib-motion-capture-only.jsonl`, `/tmp/ib-motion-latest-frame.jsonl` e `/tmp/ib-motion-final-fleet.jsonl`. Não contêm senhas ou imagens; podem ser removidos pela limpeza de temporários, portanto os resultados relevantes foram registrados aqui.
 
 Os testes automatizados verificam medianas idênticas, cadência 3/5/7/10, imagens únicas, ausência de rajadas de compensação, corrida da fila, parâmetros do decoder, taxas recentes e igualdade entre detecção normal e simulação. Os testes de equivalência BGR/luminância foram estabilizados fornecendo os mesmos instantes para os dois detectores, sem alterar suas expectativas ou o algoritmo.
+
+## Implantação e conferência após publicar
+
+Código implantado: `b6f0007` (captura/cadência) e `0045c7a` (limpeza da simulação). AI e API foram reconstruídas e publicadas; saudáveis e sem reinicializações espontâneas. `DRAC_VERSION=0045c7a99a353c918d63b414336d84f199327a91`, `MOTION_DETECTION_FPS=7.0`, OpenCV e decoder com 1 thread. A página pública respondeu HTTP 200, conferida de fora do servidor (o acesso do servidor ao próprio IP público não funciona por esse caminho).
+
+Validação no serviço real, via suas rotas internas, sem substituir processos/sessões que já existiam: câmeras 100002 e 100004, duração medida 90,708 s. Meta 7; médias reais 6,604 e 6,637 análises/s; captura próxima de 20 FPS. Ambas permaneceram `simulation_only=true`, `emit_events=false`, com sessão de perímetro ativa. Sobreviveram a mais de dois ciclos da limpeza automática. Encerrar cada sessão devolveu `processor_stopped=true`. As outras sessões do usuário não foram encerradas pelo teste. Consulta final do banco confirmou **28/28 câmeras em gravação manual**.
+
+Verificações finais: 339 testes Python, 36 testes de política/limpeza e 54 testes críticos de API aprovados; compilação TypeScript sem erros.
+
+Rollback anterior à implantação: ambiente em `/tmp/ib-motion-deploy-YzdLwh/env.before`; imagens `infra-ai-service:before-motion-capture-20261001` e `infra-api:before-motion-capture-20261001`. O arquivo de ambiente contém segredos e não foi incluído no Git.
