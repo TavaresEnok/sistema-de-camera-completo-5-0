@@ -19,13 +19,17 @@ export type LiveDetection = {
   frameWidth: number | null;
   frameHeight: number | null;
   occurredAt: string;
+  detectedAtMs?: number;
+  recent?: boolean;
+  ageMs?: number;
+  expiresAtMs?: number;
   overlayMode?: string | null;
   trackId?: number | null;
   stationary?: boolean | null;
   recovered?: boolean | null;
 };
 
-type Subscriber = (detections: LiveDetection[]) => void;
+type Subscriber = (detections: LiveDetection[], recent?: LiveDetection[]) => void;
 
 const POLL_INTERVAL_MS = 500;
 const MAX_AGE_MS = 700;
@@ -83,11 +87,11 @@ class LiveDetectionsPoller {
     this.consecutiveFailures = 0;
   }
 
-  private emit(cameraId: string, detections: LiveDetection[]) {
+  private emit(cameraId: string, detections: LiveDetection[], recent: LiveDetection[] = []) {
     const set = this.subscribers.get(cameraId);
     if (!set) return;
     for (const callback of set) {
-      try { callback(detections); } catch { /* Uma tela não interrompe as demais. */ }
+      try { callback(detections, recent); } catch { /* Uma tela não interrompe as demais. */ }
     }
   }
 
@@ -104,8 +108,9 @@ class LiveDetectionsPoller {
     const controller = new AbortController();
     this.request = controller;
     const userId = useAuthStore.getState().user?.id;
+    const startedAt = performance.now();
     try {
-      const response = await axios.get<{ cameras?: Record<string, { detections?: LiveDetection[] }> }>(
+      const response = await axios.get<{ cameras?: Record<string, { detections?: LiveDetection[]; recentDetections?: LiveDetection[] }> }>(
         `${getApiBaseUrl()}/ai/detections/latest-batch`,
         {
           params: { cameraIds: cameraIds.join(','), maxAgeMs: MAX_AGE_MS, limit: PER_CAMERA_LIMIT },
@@ -126,7 +131,12 @@ class LiveDetectionsPoller {
         } else {
           this.lastGood.delete(cameraId);
         }
-        this.emit(cameraId, detections);
+        const transportMs = performance.now() - startedAt;
+        const recentItems = cameras[cameraId]?.recentDetections;
+        const recent = (Array.isArray(recentItems) ? recentItems : [])
+          .filter(item => item.recent === true && Number.isFinite(item.ageMs) && item.ageMs! >= 0 && item.ageMs! + transportMs < 1200)
+          .map(item => ({ ...item, expiresAtMs: now + 1200 - item.ageMs! - transportMs }));
+        this.emit(cameraId, detections, recent);
       }
     } catch {
       if (generation !== this.generation || useAuthStore.getState().user?.id !== userId) return;

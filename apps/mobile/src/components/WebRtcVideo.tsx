@@ -84,6 +84,11 @@ export function WebRtcVideo({
   const mutedRef = useRef(muted);
   mutedRef.current = muted;
   const sessionIdentity = webRtcSessionIdentity(whepUrl);
+  const [foreground, setForeground] = useState(AppState.currentState === 'active');
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', state => setForeground(state === 'active'));
+    return () => sub.remove();
+  }, []);
 
   // Aplica o estado de mudo à trilha de áudio recebida (botão "Áudio").
   const applyMuted = (stream: RtcMediaStream | null) => {
@@ -113,6 +118,13 @@ export function WebRtcVideo({
   };
 
   useEffect(() => {
+    if (!foreground) {
+      streamRef.current = null;
+      setStreamUrl(null);
+      liveRef.current = false;
+      setStatus('connecting');
+      return;
+    }
     let cancelled = false;
     const abort = new AbortController();
     let pc: RTCPeerConnection | null = null;
@@ -121,10 +133,16 @@ export function WebRtcVideo({
     let disconnectedTimer: ReturnType<typeof setTimeout> | undefined;
     let mediaWatchdog: ReturnType<typeof setInterval> | undefined;
     let appActive = AppState.currentState === 'active';
-    let connectionLost = false;
     let connectionReady = false;
     let mediaReady = false;
     let mediaToken: string | null = null;
+    const deleteSession = (url: string) => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 3000);
+      void fetch(url, { method: 'DELETE', signal: controller.signal,
+        headers: mediaToken ? { Authorization: `Bearer ${mediaToken}` } : undefined,
+      }).catch(() => undefined).finally(() => clearTimeout(timer));
+    };
     try { mediaToken = new URL(whepUrl).searchParams.get('token'); } catch { /* URL inválida cairá no failover */ }
 
     const failover = (reason?: string) => {
@@ -200,13 +218,11 @@ export function WebRtcVideo({
           const state = pc.connectionState;
           if (state === 'connected') {
             connectionReady = true;
-            connectionLost = false;
             if (disconnectedTimer) clearTimeout(disconnectedTimer);
             disconnectedTimer = undefined;
             // Só o avanço de framesDecoded confirma vídeo, não o evento track.
           } else if (state === 'disconnected') {
             connectionReady = false;
-            connectionLost = true;
             if (!disconnectedTimer) disconnectedTimer = setTimeout(() => {
               disconnectedTimer = undefined;
               if (appActive && !cancelled) failover('A conexão WebRTC foi interrompida.');
@@ -232,10 +248,10 @@ export function WebRtcVideo({
           body: pc.localDescription?.sdp ?? offer.sdp,
         });
         if (!response.ok) throw new Error(`WHEP ${response.status}`);
-        sessionUrl = response.headers.get('location');
-        if (sessionUrl) {
+        const location = response.headers.get('location');
+        if (location) {
           const original = new URL(whepUrl);
-          const resolved = new URL(sessionUrl, whepUrl);
+          const resolved = new URL(location, whepUrl);
           // A resposta WHEP controla a URL usada no DELETE e esse request leva
           // o token de reprodução. Nunca siga Location para outro host: um
           // proxy comprometido ou mal configurado poderia capturar o token.
@@ -246,9 +262,15 @@ export function WebRtcVideo({
           sessionUrl = resolved.toString();
         }
         const answer = await response.text();
-        if (cancelled) return;
+        if (cancelled) {
+          if (sessionUrl) deleteSession(sessionUrl);
+          sessionUrl = null;
+          return;
+        }
         await pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: answer }));
       } catch (error) {
+        if (sessionUrl) deleteSession(sessionUrl);
+        sessionUrl = null;
         // Só exibe o status HTTP conhecido; nunca mostra URL, resposta ou token.
         const status = error instanceof Error ? /^WHEP (\d{3})$/.exec(error.message)?.[1] : null;
         failover(status ? `Servidor recusou WHEP (HTTP ${status}).` : 'Falha na negociação WHEP/WebRTC.');
@@ -258,7 +280,6 @@ export function WebRtcVideo({
     void start();
     const appSub = AppState.addEventListener('change', (next) => {
       appActive = next === 'active';
-      if (appActive && (connectionLost || !liveRef.current) && !cancelled) failover('A conexão WebRTC foi interrompida.');
     });
 
     return () => {
@@ -268,12 +289,8 @@ export function WebRtcVideo({
       if (disconnectedTimer) clearTimeout(disconnectedTimer);
       if (mediaWatchdog) clearInterval(mediaWatchdog);
       appSub.remove();
-      if (sessionUrl) {
-        fetch(sessionUrl, {
-          method: 'DELETE',
-          headers: mediaToken ? { Authorization: `Bearer ${mediaToken}` } : undefined,
-        }).catch(() => undefined);
-      }
+      if (sessionUrl) deleteSession(sessionUrl);
+      sessionUrl = null;
       if (pc) {
         try {
           pc.close();
@@ -281,8 +298,9 @@ export function WebRtcVideo({
           // ignore
         }
       }
+      streamRef.current = null;
     };
-  }, [sessionIdentity]);
+  }, [sessionIdentity, foreground]);
 
   const showPoster = status !== 'live' && Boolean(posterUri);
 

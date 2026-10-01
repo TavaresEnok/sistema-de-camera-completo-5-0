@@ -5,7 +5,7 @@ import logging
 import threading
 import uvicorn
 import cv2
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Any, Optional, Dict
 import hmac
 import time
@@ -62,6 +62,12 @@ class ConfirmMotionRequest(BaseModel):
 
 class ModeRequest(BaseModel):
     analysis_type: str
+
+
+class DetectionBatchRequest(BaseModel):
+    camera_ids: list[str] = Field(default_factory=list, max_length=100)
+    max_age_ms: int = Field(default=5000, ge=200, le=30000)
+    limit: int = Field(default=12, ge=1, le=50)
 
 
 class LiveViewLeaseRequest(BaseModel):
@@ -188,8 +194,28 @@ async def latest_detections(
     return {
         "status": "ok",
         "camera_id": camera_id,
-        "detections": processor.get_live_snapshot(max_age_ms=max_age_ms, limit=limit),
+        **processor.get_live_delivery(max_age_ms=max_age_ms, limit=limit),
     }
+
+
+@app.post("/detections/latest-batch")
+def latest_detections_batch(request: DetectionBatchRequest, x_service_token: Optional[str] = Header(default=None)):
+    validate_internal_token(x_service_token)
+    with _processors_lock:
+        snapshot = {key: processors.get(key) for key in dict.fromkeys(request.camera_ids)}
+    cameras = {}
+    for camera_id, processor in snapshot.items():
+        try:
+            cameras[camera_id] = {
+                "status": "ok" if processor else "not_running",
+                "camera_id": camera_id,
+                **(processor.get_live_delivery(request.max_age_ms, request.limit)
+                   if processor else {"detections": [], "recentDetections": []}),
+            }
+        except Exception:
+            logger.exception("Falha no snapshot de detecções")
+            cameras[camera_id] = {"status": "unavailable", "camera_id": camera_id, "detections": []}
+    return {"cameras": cameras, "generatedAtMs": int(time.time() * 1000)}
 
 @app.post("/analyze/start")
 async def start_analysis(request: AnalysisRequest, x_service_token: Optional[str] = Header(default=None)):

@@ -31,6 +31,7 @@ from model_registry import registry
 from runtime_profiles import MOTION_PROFILE, runtime_profile
 from reconnect_backoff import compute_reconnect_delay
 from capture_rate_guard import CaptureRateGuard
+from stage_timings import StageTimings
 from inference_watchdog import evaluate_inference_health, watchdog_settings
 from object_policy import eh_objeto_para_confirmar, filtrar_deteccoes_por_classe, politica_de_objeto
 
@@ -48,6 +49,7 @@ class StreamProcessor:
         self.motion_trigger = str(self.profile["motion_trigger"]).upper()
         self.wakeup_until = 0
         self.running = False
+        self._stage_timings = StageTimings()
         self.thread = None
         self.capture_thread = None
         self.base_process_fps = float(self.profile["detection_fps"])
@@ -187,6 +189,10 @@ class StreamProcessor:
         self._snapshot_lock = threading.Lock()
         self._latest_detections = []
         self._latest_detections_at = 0.0
+        # Histórico curto só da simulação: não prolonga o estado atual nem
+        # altera eventos/gravação. Uma passagem entre polls continua consultável.
+        self._recent_motion = deque(maxlen=64)
+        self._snapshot_sequence = 0
         self._pending_hit_count = 0
         self._miss_count = 0
         self.capture_frames_enqueued = 0
@@ -973,7 +979,10 @@ class StreamProcessor:
             # para BGR. Usar read() aqui avançava um quadro extra. Movimento
             # mantém o último quadro disponível mesmo entre análises; objetos
             # preservam sua seleção na captura para limitar a conversão.
-            if not cap.grab():
+            grab_started = time.perf_counter()
+            grabbed = cap.grab()
+            self._stage_timings.observe("grab_wait_decode", time.perf_counter() - grab_started)
+            if not grabbed:
                 grab_failures += 1
                 time.sleep(0.05)
                 if grab_failures >= 40:
@@ -998,7 +1007,9 @@ class StreamProcessor:
             if not continuous_motion and now < next_yield_time:
                 continue
 
+            retrieve_started = time.perf_counter()
             ret, frame = cap.retrieve()
+            self._stage_timings.observe("retrieve_bgr", time.perf_counter() - retrieve_started)
             if not ret:
                 self.consecutive_capture_failures += 1
                 self.last_capture_failure_at = time.time()
@@ -1168,6 +1179,7 @@ class StreamProcessor:
                 self.processed_frames += 1
                 motion_started = time.perf_counter()
                 detections = self.motion_detector.infer(frame, perimeter_test=self._has_perimeter_test_session())
+                self._stage_timings.observe("motion", time.perf_counter() - motion_started)
                 self._motion_infer_latencies_ms.append((time.perf_counter() - motion_started) * 1000.0)
                 self._motion_inference_timestamps.append(time.time())
                 self.motion_infer_runs += 1
@@ -1183,7 +1195,9 @@ class StreamProcessor:
                 )
                 if should_run_advanced:
                     det = registry.ensure_detector(effective_advanced_type)
+                    resize_started = time.perf_counter()
                     advanced_frame = self._resize_for_advanced(frame)
+                    self._stage_timings.observe("advanced_resize", time.perf_counter() - resize_started)
                     advanced_height, advanced_width = advanced_frame.shape[:2]
                     # Detecção por REGIÃO (flag do detector, padrão DESLIGADA): as
                     # caixas de movimento deste mesmo frame viram os recortes onde
@@ -1196,7 +1210,7 @@ class StreamProcessor:
                         (advanced_height, advanced_width),
                     )
                     # O detector compartilhado gerencia a inferência thread-safe.
-                    infer_started_at = time.time()
+                    infer_started_at = time.perf_counter()
                     try:
                         advanced_detections = det.infer(
                             advanced_frame,
@@ -1214,7 +1228,8 @@ class StreamProcessor:
                     except Exception:
                         self.advanced_infer_errors += 1
                         raise
-                    infer_elapsed_ms = max(0.0, (time.time() - infer_started_at) * 1000.0)
+                    infer_elapsed_ms = max(0.0, (time.perf_counter() - infer_started_at) * 1000.0)
+                    self._stage_timings.observe("advanced_infer_tracking", infer_elapsed_ms / 1000.0)
                     self.advanced_infer_runs += 1
                     self._inference_timestamps.append(time.time())
                     self.advanced_infer_sum_ms += infer_elapsed_ms
@@ -1265,6 +1280,7 @@ class StreamProcessor:
                             logger.warning("[%s] tripwire falhou: %s", self.camera_id, exc)
 
                 # Snapshot "ao vivo" para overlays (sem debounce de evento).
+                overlay_started = time.perf_counter()
                 if simulation_mode == "motion":
                     live_overlay = self._overlay_detections([d for d in detections if (d.event_type or "") == "MOTION_DETECTED"])
                     self._store_live_detections(live_overlay, current_time)
@@ -1274,6 +1290,7 @@ class StreamProcessor:
                         self._store_live_detections(live_overlay, current_time)
                 else:
                     self._store_live_detections(self._overlay_detections(detections), current_time)
+                self._stage_timings.observe("overlay_publish", time.perf_counter() - overlay_started)
 
                 # O objeto promovido apenas pela sessão serve ao overlay do
                 # teste, nunca ao pipeline de eventos/gravação da câmera.
@@ -1541,6 +1558,7 @@ class StreamProcessor:
                     "frameWidth": int(extra.get("frameWidth") or self.frame_width),
                     "frameHeight": int(extra.get("frameHeight") or self.frame_height),
                     "occurredAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(timestamp)),
+                    "detectedAtMs": ts_ms,
                     "overlayMode": extra.get("overlayMode"),
                     "trackId": extra.get("trackId"),
                     # Do pacote de tracking: a tela desenha estacionária
@@ -1552,7 +1570,9 @@ class StreamProcessor:
                 }
             )
 
+        retain_motion = self._perimeter_simulation_mode() == "motion"
         with self._snapshot_lock:
+            self._snapshot_sequence += 1
             if payload:
                 self.overlay_payload_frames += 1
                 self._pending_hit_count += 1
@@ -1560,6 +1580,10 @@ class StreamProcessor:
                 if self._pending_hit_count >= self.show_after_hits:
                     self._latest_detections = payload
                     self._latest_detections_at = timestamp
+                    if retain_motion:
+                        self._recent_motion.extend(
+                            item for item in payload if item["type"] == "MOTION_DETECTED"
+                        )
                 return
 
             self.overlay_empty_frames += 1
@@ -1591,6 +1615,28 @@ class StreamProcessor:
             return []
         return snapshot[: max(1, int(limit))]
 
+    def get_live_delivery(self, max_age_ms=5000, limit=12):
+        current = self.get_live_snapshot(max_age_ms=max_age_ms, limit=limit)
+        simulation = self._perimeter_simulation_mode() == "motion"
+        now_ms = int(time.time() * 1000)
+        with self._snapshot_lock:
+            recent = []
+            # Não desenhar trajetórias antigas enquanto há resultado atual.
+            if simulation and not current:
+                recent = [
+                    {**item, "recent": True, "ageMs": now_ms - item["detectedAtMs"]}
+                    for item in self._recent_motion
+                    if 0 <= now_ms - item["detectedAtMs"] < 1200
+                ][-max(1, min(50, int(limit))):]
+            if not simulation:
+                self._recent_motion.clear()
+            return {
+                "detections": current,
+                "recentDetections": recent,
+                "sequence": self._snapshot_sequence,
+                "generatedAtMs": now_ms,
+            }
+
     def performance_state(self) -> dict:
         avg_advanced_ms = (
             self.advanced_infer_sum_ms / self.advanced_infer_runs
@@ -1614,6 +1660,7 @@ class StreamProcessor:
         motion_latencies = sorted(self._motion_infer_latencies_ms)
         return {
             "capture_loop_iterations": self.capture_loop_iterations,
+            "stage_timings": self._stage_timings.snapshot(),
             "process_loop_iterations": self.process_loop_iterations,
             "processed_frames": self.processed_frames,
             "process_fps_real": round(float(self.processed_frames) / elapsed, 3),
@@ -1660,6 +1707,7 @@ class StreamProcessor:
 
     def _report_event(self, event_type, value, message=None, metadata=None):
         logger.info("[%s] Evento: %s (%s)", self.camera_id, event_type, value)
+        report_started = time.perf_counter()
         try:
             url = f"{self.api_url}/cameras/internal/{self.camera_id}/events"
             payload = {
@@ -1675,4 +1723,6 @@ class StreamProcessor:
             if response.status_code not in [200, 201]:
                 logger.warning("[%s] Erro API: %s", self.camera_id, response.status_code)
         except Exception as e:
-            logger.warning("[%s] Falha de conexão com API: %s", self.camera_id, e)
+            logger.warning("[%s] Falha de conexão com API (%s)", self.camera_id, type(e).__name__)
+        finally:
+            self._stage_timings.observe("event_http", time.perf_counter() - report_started)

@@ -145,8 +145,8 @@ export function DetectionZonesEditor({ cameraId, cameraName, configurationRevisi
   }, [testing]);
   useEffect(() => {
     if (!testing) { setDetections([]); return; }
-    return liveDetectionsPoller.subscribe(cameraId, (items) => {
-      setDetections(items);
+    return liveDetectionsPoller.subscribe(cameraId, (items, recent = []) => {
+      setDetections(items.length ? items : recent);
       const now = Date.now();
       for (const [id, value] of previousTracks.current) if (now - value.at > 2000) previousTracks.current.delete(id);
       for (const item of items) {
@@ -159,6 +159,14 @@ export function DetectionZonesEditor({ cameraId, cameraName, configurationRevisi
       }
     });
   }, [testing, cameraId, zones, announce]);
+  useEffect(() => {
+    if (!testing) return;
+    const timer = window.setInterval(() => {
+      setDetections(items => items.some(item => item.recent && (item.expiresAtMs ?? 0) <= Date.now())
+        ? items.filter(item => !item.recent || (item.expiresAtMs ?? 0) > Date.now()) : items);
+    }, 100);
+    return () => window.clearInterval(timer);
+  }, [testing]);
   useEffect(() => {
     if (!testing || !accessToken) return;
     const sessionId = `perimeter-test-${crypto.randomUUID()}`;
@@ -710,7 +718,7 @@ export function DetectionZonesEditor({ cameraId, cameraName, configurationRevisi
               ))}
             </>
           )}
-          {testing && detections.filter((d) => d.frameWidth && d.frameHeight).map((d) => <rect key={d.id} x={d.bbox[0] / d.frameWidth! * 100} y={d.bbox[1] / d.frameHeight! * 100} width={(d.bbox[2] - d.bbox[0]) / d.frameWidth! * 100} height={(d.bbox[3] - d.bbox[1]) / d.frameHeight! * 100} fill="none" stroke="#38bdf8" strokeWidth=".4" pointerEvents="none" />)}
+          {testing && detections.filter((d) => d.frameWidth && d.frameHeight).map((d) => <rect key={d.id} x={d.bbox[0] / d.frameWidth! * 100} y={d.bbox[1] / d.frameHeight! * 100} width={(d.bbox[2] - d.bbox[0]) / d.frameWidth! * 100} height={(d.bbox[3] - d.bbox[1]) / d.frameHeight! * 100} fill="none" stroke={d.recent ? '#9ca3af' : '#38bdf8'} strokeDasharray={d.recent ? '1 .5' : undefined} strokeWidth=".4" pointerEvents="none" />)}
         </svg>
         </div>
 
@@ -725,6 +733,7 @@ export function DetectionZonesEditor({ cameraId, cameraName, configurationRevisi
 
       {testing && <div role="status" aria-live="polite" className="mx-auto max-w-[640px] rounded-lg border border-border bg-card px-3 py-2 text-xs">
         <p className="font-medium">{testMessage}</p>
+        {detections.some(item => item.recent) && <p className="mt-1 text-muted-foreground">O contorno cinza mostra onde houve movimento há pouco.</p>}
         <p className="mt-1 text-muted-foreground">{simulationMode === 'object' ? 'As caixas azuis mostram objetos reconhecidos nas classes liberadas pelo plano.' : 'Arraste sobre o vídeo para conferir a geometria; as caixas azuis mostram movimento detectado.'} Este teste é temporário, não muda o modo de gravação e não gera ações por si só.</p>
       </div>}
 

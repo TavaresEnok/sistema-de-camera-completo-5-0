@@ -1,0 +1,13 @@
+# Temporary rollout overlay; apply with the installation's existing base compose.
+# Revert by selecting the saved rollback image tags, keeping the same base config.
+services:
+  ai-service:
+    image: drac-pipeline-ai:20261001
+    environment:
+      MOTION_DETECTION_FPS: ${MOTION_DETECTION_FPS:-5.0}
+      AI_CAPTURE_DECODER_THREADS: 1
+      AI_OPENCV_THREADS: 1
+  api:
+    image: drac-pipeline-api:20261001
+  web:
+    image: drac-pipeline-web:20261001

@@ -11,7 +11,7 @@
  * a MESMA que estava inline no player, movida sem alteração, junto com o
  * getRenderedVideoRect.
  */
-import { type CSSProperties } from 'react';
+import { type CSSProperties, useEffect, useMemo, useState } from 'react';
 import type { LiveDetection } from '../lib/live-detections-poller';
 import { useSmoothTracks } from '../lib/use-smooth-tracks';
 
@@ -60,7 +60,37 @@ export function SmoothDetectionOverlay({
   videoRef: VideoRefLike;
   containerRef: ContainerRefLike;
 }) {
-  const smoothedDetections = useSmoothTracks(detections);
+  const visibleDetections = useMemo(() => detections.filter(d =>
+    d.label !== 'motion' && !d.type.startsWith('MOTION')), [detections]);
+  const smoothedDetections = useSmoothTracks(visibleDetections);
+  const [geometry, setGeometry] = useState({ containerWidth: 0, containerHeight: 0,
+    videoWidth: 320, videoHeight: 180, rect: { left: 0, top: 0, width: 0, height: 0 } });
+  useEffect(() => {
+    const video = videoRef.current;
+    const container = containerRef.current;
+    const update = () => {
+      const containerWidth = container?.clientWidth ?? 0;
+      const containerHeight = container?.clientHeight ?? 0;
+      setGeometry({ containerWidth, containerHeight,
+        videoWidth: video?.videoWidth || 320, videoHeight: video?.videoHeight || 180,
+        rect: getRenderedVideoRect(video, containerWidth, containerHeight) });
+    };
+    update();
+    const resize = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(update) : null;
+    if (container) resize?.observe(container);
+    if (video) resize?.observe(video);
+    const mutations = typeof MutationObserver !== 'undefined' ? new MutationObserver(update) : null;
+    if (video) mutations?.observe(video, { attributes: true, attributeFilter: ['class', 'style'] });
+    video?.addEventListener('resize', update);
+    video?.addEventListener('loadedmetadata', update);
+    window.addEventListener('resize', update);
+    return () => {
+      resize?.disconnect(); mutations?.disconnect();
+      video?.removeEventListener('resize', update);
+      video?.removeEventListener('loadedmetadata', update);
+      window.removeEventListener('resize', update);
+    };
+  }, [videoRef, containerRef, visibleDetections.length > 0]);
 
   return (
     <>
@@ -69,15 +99,14 @@ export function SmoothDetectionOverlay({
         // arma a gravação, não vira overlay). Mantido igual ao player.
         if (detection.label === 'motion' || detection.type.startsWith('MOTION')) return null;
         const [x1, y1, x2, y2] = detection.bbox;
-        const fallbackVideoWidth = videoRef.current?.videoWidth || 320;
-        const fallbackVideoHeight = videoRef.current?.videoHeight || 180;
+        const fallbackVideoWidth = geometry.videoWidth;
+        const fallbackVideoHeight = geometry.videoHeight;
         const frameWidth = detection.frameWidth && detection.frameWidth > 0 ? detection.frameWidth : fallbackVideoWidth;
         const frameHeight = detection.frameHeight && detection.frameHeight > 0 ? detection.frameHeight : fallbackVideoHeight;
-        const containerWidth = containerRef.current?.clientWidth ?? 0;
-        const containerHeight = containerRef.current?.clientHeight ?? 0;
+        const { containerWidth, containerHeight } = geometry;
         let style: CSSProperties;
         if (containerWidth > 0 && containerHeight > 0) {
-          const videoRect = getRenderedVideoRect(videoRef.current, containerWidth, containerHeight);
+          const videoRect = geometry.rect;
           const leftPx = videoRect.left + (x1 / frameWidth) * videoRect.width;
           const topPx = videoRect.top + (y1 / frameHeight) * videoRect.height;
           const rightPx = videoRect.left + (x2 / frameWidth) * videoRect.width;

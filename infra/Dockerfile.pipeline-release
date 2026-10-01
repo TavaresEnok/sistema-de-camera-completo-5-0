@@ -1,0 +1,20 @@
+# Offline release using the already validated dependency images on the builder.
+# No package install, migrations, environment files or credentials are copied.
+# Build context: repository root; --target api / web / ai.
+FROM drac-api-ib-perimeter-builder:latest AS api-build
+COPY apps/api/src /app/apps/api/src
+RUN cd /app/apps/api && ./node_modules/.bin/tsc -p tsconfig.json
+
+FROM infra-api:latest AS api
+COPY --from=api-build /app/apps/api/dist /app/apps/api/dist
+
+FROM drac-web-ib-perimeter-builder:latest AS web-build
+COPY apps/web/src /app/apps/web/src
+RUN cd /app/apps/web && ./node_modules/.bin/vite build
+
+FROM infra-web:latest AS web
+COPY --from=web-build /app/apps/web/dist /usr/share/nginx/html
+
+FROM infra-ai-service:latest AS ai
+COPY --chown=1000:1000 services/ai-service-python/*.py /app/
+COPY --chown=1000:1000 services/ai-service-python/detectors /app/detectors

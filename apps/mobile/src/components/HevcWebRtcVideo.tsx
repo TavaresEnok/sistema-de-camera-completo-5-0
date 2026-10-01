@@ -280,10 +280,10 @@ export function HevcWebRtcVideo({
   };
 
   useEffect(() => {
-    if (status === 'live') return;
+    if (!active || status === 'live') return;
     const timeout = setTimeout(() => fail('O WebRTC H.265 não entregou vídeo a tempo.'), CONNECT_TIMEOUT_MS);
     return () => clearTimeout(timeout);
-  }, [identity, reload, status]);
+  }, [identity, reload, status, active]);
 
   const webRef = useRef<WebView>(null);
   useEffect(() => {

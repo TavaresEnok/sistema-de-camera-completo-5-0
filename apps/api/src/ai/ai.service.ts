@@ -173,13 +173,27 @@ export class AiService {
   // de overlay por câmera; sem o lote, uma grade 4x4 geraria 32 req/s e estouraria o
   // rate-limit do endpoint individual. Aqui o cliente faz 1 requisição por ciclo.
   async getLatestDetectionsBatch(cameraIds: string[], maxAgeMs = 5000, limit = 12) {
-    const cameras: Record<string, any> = {};
-    await Promise.all(
-      cameraIds.map(async (cameraId) => {
-        cameras[cameraId] = await this.getLatestDetections(cameraId, maxAgeMs, limit);
-      }),
-    );
-    return { cameras, generatedAt: new Date().toISOString() };
+    const ids = [...new Set(cameraIds)].slice(0, 100);
+    const empty = (status: string) => ({
+      cameras: Object.fromEntries(ids.map(camera_id => [camera_id, { status, camera_id, detections: [] }])),
+      generatedAt: new Date().toISOString(),
+    });
+    if (!ids.length || this.isDisabled()) return empty('disabled');
+    try {
+      const response = await firstValueFrom(this.httpService.post(
+        `${this.aiBaseUrl}/detections/latest-batch`,
+        { camera_ids: ids, max_age_ms: maxAgeMs, limit },
+        { headers: this.internalHeaders(), timeout: 2000 },
+      ));
+      // Somente IDs já autorizados pelo controller, inclusive na resposta.
+      const received = response.data?.cameras ?? {};
+      return {
+        cameras: Object.fromEntries(ids.map(id => [id, received[id] ?? { status: 'unavailable', camera_id: id, detections: [] }])),
+        generatedAt: new Date().toISOString(),
+      };
+    } catch {
+      return empty('unavailable');
+    }
   }
 
   async getLatestDetections(cameraId: string, maxAgeMs = 5000, limit = 12) {
@@ -192,6 +206,7 @@ export class AiService {
         {
           headers: this.internalHeaders(),
           params: { max_age_ms: maxAgeMs, limit },
+          timeout: 2000,
         },
       ));
       return response.data;
