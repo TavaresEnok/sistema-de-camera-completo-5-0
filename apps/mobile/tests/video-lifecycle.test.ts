@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
+import { URL } from 'node:url';
 
 test('native video releases its effect when app goes to background', () => {
   const source = readFileSync(new URL('../src/components/WebRtcVideo.tsx', import.meta.url), 'utf8');
