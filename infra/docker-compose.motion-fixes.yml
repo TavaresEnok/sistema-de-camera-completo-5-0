@@ -5,6 +5,8 @@ services:
   web:
     image: drac-pipeline-web:20261002-overlay-fixes
   api:
-    image: drac-pipeline-api:20261002-decoder-budget
+    image: drac-pipeline-api:20261002-live-budget
+    stop_grace_period: 30s
     environment:
       LIVE_CAPTURE_DECODER_THREADS: 2
+      LIVE_CAPTURE_FILTER_THREADS: 1

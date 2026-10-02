@@ -49,7 +49,7 @@ for threads, buffered in variants:
           '--network','container:vms-mediamtx','--read-only','--cpus','2','--memory','512m',
           '--cap-drop','ALL','--entrypoint','ffmpeg','bluenviron/mediamtx:1-ffmpeg',
           '-nostdin','-hide_banner','-loglevel','info','-nostats','-benchmark','-flags','low_delay']
-    if threads:args+=['-threads',str(threads)]
+    if threads:args+=['-threads',str(threads),'-filter_threads','1']
     args+=['-protocol_whitelist','file,pipe,tcp,udp,rtp,rtsp','-f','concat','-safe','0','-i','pipe:0',
            '-t','25','-map','0:v:0','-an',
            '-threads','2','-c:v','libx264','-preset','veryfast','-tune','zerolatency',
