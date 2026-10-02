@@ -400,6 +400,13 @@ else
 fi
 
 printf '\n\033[1mRegras de instalacao local\033[0m\n'
+if grep -qF 'MOTION_DETECTION_FPS=7.0' "$RAIZ/infra/.env.example" \
+  && grep -qF 'MOTION_DETECTION_FPS=${MOTION_DETECTION_FPS:-7.0}' "$RAIZ/infra/docker-compose.yml" \
+  && grep -qF '_env_float("MOTION_DETECTION_FPS", 7.0)' "$RAIZ/services/ai-service-python/runtime_profiles.py"; then
+  ok 'movimento nasce padronizado em 7 imagens por segundo'
+else
+  nok 'movimento padronizado em 7 imagens por segundo' 'os padroes do ambiente, compose e detector divergem'
+fi
 if grep -qF 'media_bind="0.0.0.0"; media_host="$DRAC_SERVER_IP"' "$INSTALADOR" \
   && grep -qF 'media_bind="$private_bind"; media_host="$private_bind"' "$INSTALADOR"; then
   ok 'WebRTC local nao fica preso no loopback; Gateway preserva bind privado'
