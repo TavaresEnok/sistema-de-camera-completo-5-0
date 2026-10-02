@@ -36,11 +36,11 @@ process.stdout.write(JSON.stringify({origin:'https://vibe.s2cam.com.br',auth:{ac
 '''
 config=json.loads(subprocess.check_output(['docker','exec','-e','PROBE_AUTH_SECONDS='+str(max(1200,args.soak+300)),'vms-api','node','-e',selection],timeout=20))
 config['soakSeconds']=args.soak
-code=Path(__file__).with_suffix('.cjs').read_text()
+code=Path(__file__).with_name('browser-validation-runtime.cjs').read_text()+'\n'+Path(__file__).with_suffix('.cjs').read_text()
 output=open(args.output,'x',buffering=1) if args.output else None
 if args.output:os.chmod(args.output,0o600)
 try:
-    result=subprocess.run(['docker','exec','-i','drac-operational-browser','node','-e',code],input=json.dumps(config),text=True,
+    result=subprocess.run(['docker','exec','-i','drac-operational-browser','/usr/local/bin/drac-validation-init','-s','--','node','-e',code],input=json.dumps(config),text=True,
                           timeout=max(900,args.soak+180),stdout=output,stderr=output)
 finally:
     if output:output.close()

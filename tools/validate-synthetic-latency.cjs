@@ -35,5 +35,5 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   const r=await call('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(r.exceptionDetails)throw Error(r.exceptionDetails.exception?.description||'evaluation');
   console.log(JSON.stringify(r.result.value));if(!r.result.value.samples)process.exitCode=1;
  }catch(e){console.error(JSON.stringify({error:e.message}));process.exitCode=1;}
- finally{ws?.close();chrome.kill('SIGTERM');}
+ finally{await closeValidationBrowser(chrome,ws);}
 })();

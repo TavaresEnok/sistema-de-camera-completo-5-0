@@ -51,7 +51,7 @@ config['seconds'] = args.seconds
 if args.transport:
     config['urls'] = [config['urls'][['udp','tcp','tls'].index(args.transport)]]
 config['urls'] *= args.readers
-code = Path(__file__).with_suffix('.cjs').read_text()
-result = subprocess.run(['docker','exec','-i','drac-operational-browser','node','-e',code],
+code = Path(__file__).with_name('browser-validation-runtime.cjs').read_text() + '\n' + Path(__file__).with_suffix('.cjs').read_text()
+result = subprocess.run(['docker','exec','-i','drac-operational-browser','/usr/local/bin/drac-validation-init','-s','--','node','-e',code],
                         input=json.dumps(config),text=True,timeout=len(config['urls'])*(args.seconds+40)+20)
 raise SystemExit(result.returncode)

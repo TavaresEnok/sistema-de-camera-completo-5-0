@@ -46,7 +46,8 @@ def main():
         networks=json.loads(docker('inspect','drac-operational-browser'))[0]['NetworkSettings']['Networks']
         if 'drac-srs-pilot-net' in networks:raise RuntimeError('Browser already attached to lab; refusing topology overwrite')
         docker('network','connect','drac-srs-pilot-net','drac-operational-browser');attached=True
-        result=subprocess.run(['docker','exec','drac-operational-browser','node','-e',ROOT.joinpath('tools/validate-synthetic-latency.cjs').read_text()],timeout=80)
+        code=ROOT.joinpath('tools/browser-validation-runtime.cjs').read_text()+'\n'+ROOT.joinpath('tools/validate-synthetic-latency.cjs').read_text()
+        result=subprocess.run(['docker','exec','drac-operational-browser','/usr/local/bin/drac-validation-init','-s','--','node','-e',code],timeout=80)
         return result.returncode
     finally:
         stop.set()

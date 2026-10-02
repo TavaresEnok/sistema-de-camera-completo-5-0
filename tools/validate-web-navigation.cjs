@@ -92,5 +92,5 @@ process.stdin.on('end',async()=>{
   await route('/profile');await sleep(70000);const final=await sample('final-cleanup');
   if(final.openPeers!==0)throw new Error('final leak');
  }catch(e){console.error(JSON.stringify({validationError:e.message}));process.exitCode=1;}
- finally{for(const p of pending.values()){clearTimeout(p.timer);p.reject(new Error('closed'));}ws?.close();chrome.kill('SIGTERM');}
+ finally{for(const p of pending.values()){clearTimeout(p.timer);p.reject(new Error('closed'));}await closeValidationBrowser(chrome,ws);}
 });

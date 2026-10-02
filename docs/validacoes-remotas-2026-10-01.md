@@ -1,12 +1,13 @@
 # Validações remotas adicionais — AjustCam
 
 Data do usuário: 01/10/2026, America/Fortaleza; metadados Docker usam UTC.
-Rodada de testes: nenhum serviço de produção reiniciado, modo de câmera alterado
+Rodada inicial de testes: nenhum serviço de produção reiniciado, modo de câmera alterado
 ou pacote instalado. Laboratórios usam containers próprios e descartáveis.
 
 **Não considerar o pipeline completamente aprovado.** Há novos achados na
 entrada de vídeo da IB, arranque do detector e exibição do navegador de teste.
-As observações de duas horas continuam em andamento, sem conclusão final.
+Este documento registra os achados anteriores às correções. Resultados finais e
+publicações de 02/10 estão em [correcoes-pipeline-2026-10-02.md](correcoes-pipeline-2026-10-02.md).
 
 ## Testes concluídos
 
@@ -131,7 +132,24 @@ em 8/8 fases sem confirmar. Código exige dois quadros para componente grande,
 três para pequeno (`detectors/motion.py`). Aumentar FPS ajuda, mas não substitui
 dados que não chegaram a tempo nem uma política de confirmação validada.
 
-## Ensaios de duas horas ativos, ainda não aprovados
+## Ensaios prolongados: resultados conferidos em 02/10
+
+Vibe, CPU/FPS: concluído em 7.204,3 s, 113 amostras, zero erros de coleta,
+reinícios de contador ou amostras anormais. FPS médios 5,000/5,000/4,994;
+CPU host média 42,99%, máxima 55,81%, incluindo Chromium de diagnóstico.
+
+Vibe, grid: concluído, quatro vídeos reproduzindo aos 7.203 s, 540.970 quadros,
+28.397 descartes de exibição; zero exceções JS/falhas HTTP durante a observação.
+Heap 11.878.024 bytes; após sair para perfil, zero peers abertos e heap
+14.353.696 bytes. Os descartes não permitem afirmar exibição sem perdas.
+
+IB: interrompido antes de duas horas. Última amostra aos 5.805,1 s, 91 janelas,
+zero erros/anomalias; CPU média 1,11%, máxima 2,24%; todas as 28 câmeras manual,
+sem IA normal ativa. Não há resumo final: `Result=success` da unidade não prova
+conclusão do programa. Nova observação após publicação: 302,5 s, dez janelas,
+zero erros/anomalias; CPU média 1,52%, máxima 2,75%, modos preservados.
+
+Configuração e arquivos das execuções:
 
 Vibe, CPU/serviços/FPS: unidade de usuário
 `ajustcam-readonly-validation-20261001.service`, saída
@@ -186,10 +204,11 @@ gravação de cliente apagada. Queda do sink reinicia tmpfs vazio por definiçã
 não valida persistência de disco de produção. Após perdas de encaminhador/sink,
 publicador sintético foi reiniciado: não prova autorreconexão de firmware.
 
-Próximo: concluir os três ensaios prolongados; localizar entrada RTSP IB;
-candidato isolado para contraste com regressões de baixa luz/ruído/cena real;
-comparar custo/qualidade de grid; política de confirmação com falso positivo.
-Não aplicado ajuste de detector, transporte ou modo de gravação nesta rodada.
+Correções de contraste, confirmação de movimento curto, atualização visual do
+grid e orçamento de threads foram publicadas em 02/10, com regressões descritas
+no relatório vinculado. Não houve mudança de modo de gravação. A origem RTSP da
+IB continua sem acesso administrativo fornecido; sua localização é necessária
+para corrigir as pausas anteriores à conversão, não ocultadas por esses ajustes.
 
 Excluídos conforme pedido: aparelhos físicos, rede móvel real, veículos reais e
 medição física de velocidade. Instalações sem acesso e segmento anterior à entrada

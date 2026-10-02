@@ -81,5 +81,5 @@ process.stdin.on('end',async()=>{
     }
     await Promise.all(config.urls.map(probe));
   }catch(e){console.error('Video relay probe failed ('+e.name+')');process.exitCode=1;}
-  finally{socket?.close();chrome.kill('SIGTERM');}
+  finally{await closeValidationBrowser(chrome,socket);}
 });
