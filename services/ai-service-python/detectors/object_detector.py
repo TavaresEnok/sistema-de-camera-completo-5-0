@@ -485,7 +485,6 @@ class ObjectDetector(Detector):
         ocupado/ausente), informação que o cache de estacionários precisa.
         """
         selected_size = int(runtime["input_size"])
-        blob, scale, pad_x, pad_y, width, height, _ = self._preprocess(frame, selected_size)
         pool = runtime["pool"]
         if pool is None:
             return [], False
@@ -498,6 +497,9 @@ class ObjectDetector(Detector):
             self._pool_busy_drops_by_size[selected_size] = self._pool_busy_drops_by_size.get(selected_size, 0) + 1
             return [], False
         try:
+            # Reserve a worker before allocating/resizing the full image.
+            # If all workers are occupied, this frame is skipped anyway.
+            blob, scale, pad_x, pad_y, width, height, _ = self._preprocess(frame, selected_size)
             infer_request.infer({runtime["input"]: blob})
             raw = np.array(infer_request.get_output_tensor(0).data, copy=True)
         finally:

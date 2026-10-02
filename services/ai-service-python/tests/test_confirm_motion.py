@@ -14,6 +14,59 @@ import confirm_motion
 
 
 class RunConfirmMotionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_timeout_returns_while_worker_still_holds_slot(self):
+        sem = asyncio.Semaphore(1)
+        finished = threading.Event()
+        release = threading.Event()
+
+        def worker():
+            release.wait(2)
+            finished.set()
+            return {"confirmed": False}
+
+        try:
+            result = await confirm_motion.run_confirm_motion(worker, deadline=0.05, semaphore=sem)
+            self.assertEqual(result['reason'], 'timeout')
+            self.assertFalse(finished.is_set(), 'deadline waited for native worker')
+            self.assertTrue(sem.locked())
+            called = []
+            queued = await confirm_motion.run_confirm_motion(lambda: called.append(True), deadline=0.05, semaphore=sem)
+            self.assertEqual(queued['reason'], 'timeout')
+            self.assertEqual(called, [], 'queued request started after its deadline')
+        finally:
+            release.set()
+            for _ in range(100):
+                if not sem.locked():
+                    break
+                await asyncio.sleep(0.01)
+        self.assertFalse(sem.locked())
+
+    async def test_cancelled_caller_does_not_release_running_worker(self):
+        sem = asyncio.Semaphore(1)
+        started = threading.Event()
+        release = threading.Event()
+
+        def worker():
+            started.set()
+            release.wait(2)
+            return {"confirmed": None}
+
+        call = asyncio.create_task(confirm_motion.run_confirm_motion(worker, semaphore=sem))
+        try:
+            while not started.is_set():
+                await asyncio.sleep(0.01)
+            call.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await call
+            self.assertTrue(sem.locked())
+        finally:
+            release.set()
+            for _ in range(100):
+                if not sem.locked():
+                    break
+                await asyncio.sleep(0.01)
+        self.assertFalse(sem.locked())
+
     async def test_passthrough_confirmed_true(self):
         res = await confirm_motion.run_confirm_motion(
             lambda: {"confirmed": True, "reason": None, "labels": ["person"]},

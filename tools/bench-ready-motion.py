@@ -13,6 +13,9 @@ import urllib.parse
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--limit', type=int, required=True)
 parser.add_argument('--seconds', type=int, default=20)
+parser.add_argument('--rates', default='3,5,7,10')
+parser.add_argument('--skip-motion', action='store_true')
+parser.add_argument('--include-on-demand', action='store_true', help='Read a grid whose upstream is already publishing')
 args = parser.parse_args()
 if not 1 <= args.limit <= 40:
     raise SystemExit('limit must be 1..40')
@@ -25,13 +28,25 @@ const headers={Authorization:'Basic '+Buffer.from(process.env.MEDIAMTX_API_USER+
 const r=await fetch('http://mediamtx:9997/v3/paths/list',{headers,signal:AbortSignal.timeout(5000)});
 if(!r.ok)throw new Error('paths unavailable');
 const ready=new Set((await r.json()).items.filter(x=>x.ready).map(x=>x.name));
+const cr=await fetch('http://mediamtx:9997/v3/config/paths/list',{headers,signal:AbortSignal.timeout(5000)});
+if(!cr.ok)throw new Error('path configuration unavailable');
+const configs=new Map((await cr.json()).items.map(x=>[x.name,x]));
+const eligible=c=>{const path='cam_'+c.id.replaceAll('-','')+'_grid';if(ready.has(path))return true;
+if(!process.env.BENCH_INCLUDE_ON_DEMAND)return false;
+let current=path;const visited=new Set();
+for(let i=0;i<8;i++){if(ready.has(current))return true;if(visited.has(current))return false;visited.add(current);
+try{current=decodeURIComponent(new URL(configs.get(current)?.source).pathname.replace(/^\//,''));}catch{return false;}}
+return false;};
 const active=(await (await fetch('http://ai-service:8000/health',{signal:AbortSignal.timeout(5000)})).json()).processors;
 const all=await p.camera.findMany({select:{id:true,publicId:true,detectionZones:true},orderBy:{publicId:'asc'}});
-const cameras=all.filter(c=>!active[c.id]&&ready.has('cam_'+c.id.replaceAll('-','')+'_grid'));
+const cameras=all.filter(c=>!active[c.id]&&eligible(c));
 process.stdout.write(JSON.stringify({BENCH_MEDIA_USER:process.env.MEDIAMTX_API_USER,BENCH_MEDIA_PASS:process.env.MEDIAMTX_API_PASS,BENCH_CAMERAS_JSON:JSON.stringify(cameras)}));
 }finally{await p.$disconnect();}})().catch(()=>{process.stderr.write('Unable to select ready cameras');process.exitCode=1;});
 '''
-config = json.loads(subprocess.check_output(['docker', 'exec', 'vms-api', 'node', '-e', code], timeout=15))
+selection = ['docker', 'exec']
+if args.include_on_demand:
+    selection.extend(['-e','BENCH_INCLUDE_ON_DEMAND=1'])
+config = json.loads(subprocess.check_output(selection + ['vms-api', 'node', '-e', code], timeout=15))
 cameras = json.loads(config['BENCH_CAMERAS_JSON'])
 if len(cameras) < args.limit:
     raise SystemExit(f'Only {len(cameras)} eligible ready cameras; refusing a mislabeled test')
@@ -43,7 +58,9 @@ command = ['docker', 'run', '--rm', '-i', '--name', 'drac-motion-capacity-probe'
            '-v', '/opt/drac-pipeline-20261001/services/ai-service-python:/app:ro',
            '-w', '/app', 'drac-pipeline-ai:20261001-events', 'python', '-c', bootstrap,
            '--label', f'vibe-additional-{args.limit}', '--limit', str(args.limit), '--seconds', str(args.seconds),
-           '--startup-seconds', '45', '--rates', '3,5,7,10']
+           '--startup-seconds', '45', '--rates', args.rates]
+if args.skip_motion:
+    command.append('--skip-motion')
 process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
 process.stdin.write(json.dumps(config) + '\n')
 process.stdin.close()

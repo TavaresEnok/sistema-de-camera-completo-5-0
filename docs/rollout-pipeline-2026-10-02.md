@@ -130,7 +130,76 @@ CPU não é monotônica entre janelas curtas e carga variável; não concluir qu
 análise extra permaneceu ligada. Permanecem metas normais Vibe 5 e IB 7.
 Não há evidência para subir globalmente a 10 ou dimensionar 50/100 câmeras.
 
-## Pendências e limites
+## Aprofundamento: captura, TURN completo e novas correções
+
+Novas correções de IA, imagem `drac-pipeline-ai:20261002-deadline`, implantadas
+na Vibe e IB após 355 testes Python aprovados (sem testes pulados nessa execução):
+
+- `run_confirm_motion`: prazo agora cobre espera na fila e execução. Antes,
+  a espera no semáforo não tinha prazo e, ao exceder o prazo de inferência,
+  o handler aguardava a thread acabar para responder. Agora retorna o resultado
+  seguro `confirmed=None` no prazo, mantendo a vaga ocupada até o trabalho real
+  terminar. Cancelamento do cliente também preserva a vaga. Testes com worker
+  bloqueado comprovam retorno antecipado, fila com prazo e concorrência limitada.
+- Detector de objetos reserva trabalhador antes de preparar/redimensionar o
+  tensor. Com pool ocupado, o quadro já seria descartado; antes o preparo
+  consumia CPU desnecessariamente. Testes verificam que preparo não é executado
+  nesse caso e que exceção no preparo devolve a vaga ao pool.
+
+Comparação de quatro fontes distintas (100001/100002/100006/100007), meta 5,
+30 s por amostra, vídeo ~20 FPS. Captura/conversão com detecção substituída por
+função vazia: 1,281 núcleo no processo, CPU host 42,19%. Movimento ligado:
+1,405 núcleo, CPU host 44,42%, 4,992 análises/s médias. Amostras sequenciais,
+não uma decomposição exata: evidência de custo relevante da captura/decodificação.
+Os caminhos sob demanda foram abertos somente para leitura; fonte upstream
+precisava já estar publicando. Não alterado modo de gravação.
+
+Vídeo completo no Chromium via WHEP público e política ICE relay, credenciais
+temporárias; uma câmera 1080p, 20 s por transporte:
+
+| Transporte TURN | Quadros decodificados | Pacotes perdidos | Travamentos | DELETE |
+|---|---:|---:|---:|---:|
+| UDP | 348 | 0 | 0 | HTTP 200 |
+| TCP | 360 | 0 | 0 | HTTP 200 |
+| TLS | 370 | 0 | 0 | HTTP 200 |
+
+Teste TLS ampliado para 90 s: 1.725 quadros decodificados, 0 descartados,
+0 pacotes perdidos, 0 travamentos; RTT 26 ms; sessão apagada HTTP 200.
+Primeiro quadro em 5.508 ms inclui inicialização ICE/WHEP e espera de quadro
+decodificável; não é medida da latência câmera→tela. Jitter buffer acumulado
+154,636 s / 1.725 quadros ≈89,6 ms de residência média no buffer.
+
+O primeiro harness fechava o PeerConnection antes do DELETE e recebia 404.
+Repetição apagando antes de fechar retorna 200; nenhuma evidência de vazamento
+foi atribuída a esse 404. O harness foi corrigido, não o produto.
+
+TCP medido no namespace dos containers de vídeo, não no host apenas:
+gateway SRS, 30,11 s: 38 segmentos retransmitidos /65.795 enviados (0,0578%);
+Vibe MediaMTX, 30,23 s: 146 /53.383 (0,2735%); zero erros TCP e zero resets
+de saída nas amostras. Razão de segmentos, não bytes nem quadros perdidos;
+agrega conexões do serviço e não localiza o roteador responsável.
+
+Vibe `vmstat` por 10 s: sem swap-in/swap-out nas amostras posteriores à linha
+histórica inicial; CPU ociosa 78–84%, iowait 0–2%. Swap já ocupado (~515 MiB)
+não demonstrou troca ativa. Disco de sistema 62% ocupado, 35 GiB disponíveis;
+PSI memória avg10/60/300 =0. Nenhuma alteração de swap/disco foi aplicada.
+
+Ferramentas de medição adicionadas: `probe-video-browser.py/.cjs`,
+`measure-transport-counters.py`; benchmark admite captura sem detector e
+seleção de fontes já publicando cujos caminhos grid estão sob demanda.
+
+Rollback das novas correções: recriar apenas ai-service com
+`drac-pipeline-ai:20261001-events`. Vibe seleciona a imagem no overlay
+`docker-compose.pipeline-vibe.yml`; IB usa o overlay adicional
+`/opt/drac-pipeline-20261001/infra/docker-compose.ai-deadline.yml`.
+As imagens originais e as metas Vibe 5 / IB 7 foram preservadas.
+
+Conferência após implantação: Vibe voltou automaticamente às três análises,
+5,009 FPS em cada uma na janela de 60,69 s; CPU host 24,39%. Gravação continua
+31 manual/3 movimento. IB: nova imagem healthy. Gateway: 30 streams, zero
+reinícios do container corrigido. Captura/espera/decode Vibe p95 94–103 ms.
+
+## Pendências que exigem outra cobertura
 
 - Observar estabilidade prolongada; teste pós-correção com oito adicionais concluído.
 - Vídeo ponta a ponta forçando relay e teste em rede móvel/aparelhos reais.

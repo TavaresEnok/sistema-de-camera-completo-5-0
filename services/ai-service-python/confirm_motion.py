@@ -54,26 +54,26 @@ async def run_confirm_motion(
     """Roda `blocking_call` (sem args) numa thread, com semáforo + deadline, tirando o
     trabalho pesado do event loop. Falha SEMPRE SEGURA (timeout/erro -> None)."""
     sem = semaphore if semaphore is not None else get_semaphore()
+    loop = asyncio.get_running_loop()
+    expires_at = loop.time() + max(0.0, deadline)
     try:
-        async with sem:
-            # `wait_for` cancela a ESPERA, não a thread — Python não interrompe thread.
-            # Se soltássemos o semáforo no timeout, a thread órfã seguiria usando o
-            # modelo enquanto a próxima inferência começasse: a promessa de serializar
-            # o modelo único quebraria justamente no caso de falha, e as órfãs se
-            # acumulariam no executor sob rajada. Então o `shield` protege a task do
-            # cancelamento e nós a aguardamos até o fim ANTES de liberar a vaga; quem
-            # devolve a resposta ao chamador é o deadline (fail-safe abaixo).
+        # The deadline includes waiting for the model, not only inference.
+        await asyncio.wait_for(sem.acquire(), timeout=max(0.0, expires_at - loop.time()))
+        try:
             task = asyncio.ensure_future(asyncio.to_thread(blocking_call))
-            try:
-                return await asyncio.wait_for(asyncio.shield(task), timeout=deadline)
-            except asyncio.TimeoutError:
-                # Segura a vaga do semáforo até a thread terminar de fato (ela se
-                # auto-encerra: a captura tem timeout próprio). Só então libera.
-                try:
-                    await task
-                except Exception:
-                    pass
-                raise
+        except BaseException:
+            sem.release()
+            raise
+
+        def complete(completed):
+            # The caller can return or disconnect while the native worker runs.
+            # Keep its slot until the worker really ends; consume late failures.
+            sem.release()
+            if not completed.cancelled():
+                completed.exception()
+
+        task.add_done_callback(complete)
+        return await asyncio.wait_for(asyncio.shield(task), timeout=max(0.0, expires_at - loop.time()))
     except asyncio.TimeoutError:
         if logger is not None:
             logger.warning(

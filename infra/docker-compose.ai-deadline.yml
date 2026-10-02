@@ -1,0 +1,4 @@
+services:
+  ai-service:
+    image: drac-pipeline-ai:20261002-deadline
+    stop_grace_period: 30s

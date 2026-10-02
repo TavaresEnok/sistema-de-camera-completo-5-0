@@ -1,0 +1,4 @@
+# Keep the validated deployed dependencies and pipeline unchanged.
+FROM drac-pipeline-ai:20261001-events
+COPY --chown=1000:1000 services/ai-service-python/confirm_motion.py /app/confirm_motion.py
+COPY --chown=1000:1000 services/ai-service-python/detectors/object_detector.py /app/detectors/object_detector.py

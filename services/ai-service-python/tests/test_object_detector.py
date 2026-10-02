@@ -129,6 +129,25 @@ class TestObjectDetectorPostProcessing(unittest.TestCase):
     def _frame(self, size=640):
         return np.zeros((size, size, 3), dtype=np.uint8)
 
+    def test_busy_worker_skips_preprocessing(self):
+        det = self._detector_with_output([])
+        runtime = det._runtime_for_hint()
+        runtime['pool'].get_nowait()
+        with mock.patch.object(det, '_preprocess') as preprocess:
+            detections, ran = det._detect_raw(self._frame(), runtime)
+        self.assertEqual(detections, [])
+        self.assertFalse(ran)
+        preprocess.assert_not_called()
+        self.assertEqual(det._pool_busy_drops, 1)
+
+    def test_preprocessing_failure_returns_worker_to_pool(self):
+        det = self._detector_with_output([])
+        runtime = det._runtime_for_hint()
+        with mock.patch.object(det, '_preprocess', side_effect=ValueError('invalid frame')):
+            with self.assertRaises(ValueError):
+                det._detect_raw(self._frame(), runtime)
+        self.assertEqual(runtime['pool'].qsize(), 1)
+
     def test_filtra_classe_fora_das_ativas(self):
         det = self._detector_with_output(
             [
