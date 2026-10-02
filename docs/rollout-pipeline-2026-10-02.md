@@ -114,9 +114,25 @@ Vibe após recuperação das três análises, janela de 60,68 s: 5,010 / 4,993 /
 de 4,1 análises/s agora atingiu 4,993. CPU observada maior que a janela anterior
 de 19,29%; não atribuir toda diferença ao patch sem controlar leitores e carga.
 
+Reteste com as mesmas oito câmeras adicionais, três normais preservadas:
+
+| Alvo FPS | Média antes | Média depois | CPU host depois |
+|---:|---:|---:|---:|
+| 3 | 3,000 | 3,000 | 67,06% |
+| 5 | 4,938 | 5,000 | 77,21% |
+| 7 | 5,419 | 6,955 | 74,82% |
+| 10 | 5,994 | 9,438 | 78,25% |
+
+Aquecimento 33,1 s, oito fontes capturando; 20 s por taxa. Meta 7: mínimo
+6,699, máximo 7,049; meta 10: mínimo 8,9, máximo 9,8. Sem erro de fonte reportado.
+CPU não é monotônica entre janelas curtas e carga variável; não concluir que
+7 custa menos que 5. Teste encerrado normalmente e container removido; nenhuma
+análise extra permaneceu ligada. Permanecem metas normais Vibe 5 e IB 7.
+Não há evidência para subir globalmente a 10 ou dimensionar 50/100 câmeras.
+
 ## Pendências e limites
 
-- Repetir testes de capacidade após correção SRS e observar estabilidade prolongada.
+- Observar estabilidade prolongada; teste pós-correção com oito adicionais concluído.
 - Vídeo ponta a ponta forçando relay e teste em rede móvel/aparelhos reais.
 - Inventário das demais instalações e verificação do provisionamento TURN.
 - Roteador/hipervisor 10.10.0.1: acesso solicitado, ainda não disponível.
