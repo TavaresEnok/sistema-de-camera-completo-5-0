@@ -220,6 +220,47 @@ else
 fi
 
 printf '\n\033[1mStorage de instalação limpa\033[0m\n'
+
+printf '\n\033[1mHTTPS e TURN local preservados na reexecução\033[0m\n'
+saida="$(
+  source "$INSTALADOR" >/dev/null 2>&1
+  trap - ERR
+  DRAC_GATEWAY_MODE=false DRAC_PUBLIC_ORIGIN='' DRAC_TURN_URL='' DRAC_TURN_SECRET=''
+  run_sudo() { "$@"; }
+  printf 'DRAC_PUBLIC_ORIGIN=https://cliente.exemplo.test\nMEDIAMTX_TURN_URL=turn:turn.exemplo.test:3478?transport=udp\nMEDIAMTX_TURN_SECRET=0123456789abcdef0123456789abcdef\n' > "$TMP/https-local.env"
+  restore_public_endpoint_config "$TMP/https-local.env"
+  printf '%s|%s\n' "$DRAC_PUBLIC_ORIGIN" "$DRAC_TURN_URL"
+  compose_files
+)"
+if printf '%s' "$saida" | grep -qF 'https://cliente.exemplo.test|turn:turn.exemplo.test:3478?transport=udp' \
+  && printf '%s' "$saida" | grep -qF 'docker-compose.gateway.yml'; then
+  ok 'instalação local preserva HTTPS/TURN e inclui relay sem virar Gateway'
+else
+  nok 'instalação local preserva HTTPS/TURN' 'reexecução perderia o domínio ou a configuração de relay'
+fi
+saida="$(
+  source "$INSTALADOR" >/dev/null 2>&1
+  trap - ERR
+  DRAC_PUBLIC_ORIGIN='https://novo.exemplo.test'
+  run_sudo() { "$@"; }
+  DRAC_TURN_URL='turn:novo.exemplo.test:3478' DRAC_TURN_SECRET='abcdef0123456789abcdef0123456789'
+  restore_public_endpoint_config "$TMP/https-local.env"
+  printf '%s|%s' "$DRAC_PUBLIC_ORIGIN" "$DRAC_TURN_URL"
+)"
+if [ "$saida" = 'https://novo.exemplo.test|turn:novo.exemplo.test:3478' ]; then
+  ok 'HTTPS/TURN explícitos prevalecem sobre configuração anterior'
+else
+  nok 'HTTPS/TURN explícitos prevalecem' "veio: $saida"
+fi
+saida="$(
+  source "$INSTALADOR" >/dev/null 2>&1
+  trap - ERR
+  DRAC_PUBLIC_ORIGIN='' DRAC_TURN_URL='turn:novo.exemplo.test:3478' DRAC_TURN_SECRET=''
+  run_sudo() { "$@"; }
+  restore_public_endpoint_config "$TMP/https-local.env" 2>&1
+)" || true
+espera_conter 'TURN parcial não mistura chave antiga com endereço novo' 'Configuracao TURN incompleta' "$saida"
+
 if grep -qF 'prepare_runtime_directories' "$INSTALADOR" \
   && grep -qF 'run_sudo chown 1000:1000 "$storage_dir"' "$INSTALADOR"; then
   ok 'storage nasce gravável pela API não-root antes do compose up'

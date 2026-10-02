@@ -386,6 +386,9 @@ preflight() {
     fail "curl e obrigatorio para a instalacao automatica."
   fi
 
+  if [ -n "$DRAC_PUBLIC_ORIGIN" ] && [[ ! "$DRAC_PUBLIC_ORIGIN" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?$ ]]; then
+    fail "DRAC_PUBLIC_ORIGIN deve ser uma origem HTTPS sem caminho."
+  fi
   if [ "$DRAC_GATEWAY_MODE" = "true" ]; then
     if [[ ! "$DRAC_PUBLIC_ORIGIN" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?$ ]]; then
       fail "DRAC_PUBLIC_ORIGIN deve ser uma origem HTTPS sem caminho no modo Gateway."
@@ -607,6 +610,28 @@ strip_central_only_keys() {
   done
 }
 
+# A reexecução pela Central não deve desfazer o HTTPS/TURN que o operador
+# configurou depois da instalação inicial. Valores explícitos continuam tendo
+# precedência; não executar/source o arquivo que contém os segredos.
+restore_public_endpoint_config() {
+  local env_file="$1" saved_origin
+  if [ -z "$DRAC_PUBLIC_ORIGIN" ] && [ -f "$env_file" ]; then
+    saved_origin="$(env_get "$env_file" DRAC_PUBLIC_ORIGIN)"
+    if [[ "$saved_origin" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?$ ]]; then
+      DRAC_PUBLIC_ORIGIN="$saved_origin"
+    fi
+  fi
+  if [ -z "$DRAC_TURN_URL" ] && [ -z "$DRAC_TURN_SECRET" ] && [ -f "$env_file" ]; then
+    DRAC_TURN_URL="$(env_get "$env_file" MEDIAMTX_TURN_URL)"
+    DRAC_TURN_SECRET="$(env_get "$env_file" MEDIAMTX_TURN_SECRET)"
+  fi
+  if [ -n "$DRAC_TURN_URL" ] || [ -n "$DRAC_TURN_SECRET" ]; then
+    if [[ ! "$DRAC_TURN_URL" =~ ^turns?:[^[:space:]]+:[0-9]+(\?transport=(udp|tcp))?$ ]] || [ ${#DRAC_TURN_SECRET} -lt 32 ]; then
+      fail "Configuracao TURN incompleta: informe endereco valido e chave com pelo menos 32 caracteres."
+    fi
+  fi
+}
+
 prepare_env() {
   local env_file="$DRAC_INSTALL_DIR/infra/.env"
   local example_file="$DRAC_INSTALL_DIR/infra/.env.example"
@@ -630,11 +655,12 @@ prepare_env() {
   prompt DRAC_CAMERA_ALLOWED_CIDRS \
     "CIDRs exclusivos das redes de cameras (separados por virgula; ex.: 192.168.10.0/24)"
 
+  restore_public_endpoint_config "$env_file"
   if [ "$DRAC_GATEWAY_MODE" = "true" ]; then
     public_origin="${DRAC_PUBLIC_ORIGIN%/}"
     private_bind="$DRAC_PRIVATE_BIND_IP"
   else
-    public_origin="http://${DRAC_SERVER_IP}:5173"
+    public_origin="${DRAC_PUBLIC_ORIGIN:-http://${DRAC_SERVER_IP}:5173}"
     private_bind="127.0.0.1"
   fi
   public_host="$(host_from_url "$public_origin")"
@@ -759,7 +785,7 @@ compose_files() {
   else
     files='-f infra/docker-compose.yml -f infra/docker-compose.prod.yml'
   fi
-  if [ "$DRAC_GATEWAY_MODE" = "true" ]; then
+  if [ "$DRAC_GATEWAY_MODE" = "true" ] || [ -n "$DRAC_TURN_URL" ]; then
     files="$files -f infra/docker-compose.gateway.yml"
   fi
   printf '%s' "$files"
