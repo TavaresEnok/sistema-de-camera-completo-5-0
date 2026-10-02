@@ -1,0 +1,4 @@
+# Persist this overlay when updating Central; previous image remains rollback.
+services:
+  central:
+    image: ajustcam-central:remote-install-20261002

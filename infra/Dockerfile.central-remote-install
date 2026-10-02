@@ -1,0 +1,6 @@
+# Production patch: retain the deployed image/dependency tree.
+ARG CENTRAL_BASE=ajustcam-central:cc32efa
+FROM ${CENTRAL_BASE}
+COPY --chown=node:node apps/central/src/server.js /app/apps/central/src/server.js
+COPY --chown=node:node apps/central/src/remote-install-runtime.js /app/apps/central/src/remote-install-runtime.js
+COPY --chown=node:node apps/central/public/index.html /app/apps/central/public/index.html

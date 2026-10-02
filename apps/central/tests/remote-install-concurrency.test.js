@@ -10,7 +10,7 @@ test('remote-install preserva provisionamento concorrente durante leitura do cor
   async function provision(id) {
     const response = await fetch(`${central.base}/api/admin/provision`, {
       method: 'POST', headers: central.adminHeaders(),
-      body: JSON.stringify({ installationId: id, customerName: id, serverAddress: '192.0.2.10' }),
+      body: JSON.stringify({ installationId: id, customerName: id, serverAddress: '192.0.2.10',cameraAllowedCidrs:'192.0.2.0/24' }),
     });
     assert.equal(response.status, 201);
   }

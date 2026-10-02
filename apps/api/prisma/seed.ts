@@ -1,5 +1,6 @@
 import { AlarmPriority, AlarmSource, PrismaClient, UserRole } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
+import { readFileSync } from 'node:fs';
 
 const prisma = new PrismaClient();
 
@@ -28,6 +29,13 @@ function requireSeedPassword(envName: string) {
 }
 
 async function main() {
+  if (process.env.ADMIN_STDIN_JSON === 'true') {
+    const input = JSON.parse(readFileSync(0, 'utf8'));
+    for (const [key, field] of Object.entries({ADMIN_USERNAME:'username', ADMIN_EMAIL:'email', ADMIN_PASSWORD:'password', ADMIN_NAME:'name'})) {
+      if (typeof input[field] !== 'string') throw new Error('Dados de acesso inicial inválidos.');
+      process.env[key] = input[field];
+    }
+  }
   const email = (process.env.ADMIN_EMAIL ?? '').trim().toLowerCase() || null;
   const username = (process.env.ADMIN_USERNAME ?? email ?? 'admin').trim().toLowerCase();
   const password = (process.env.ADMIN_PASSWORD ?? '').trim();

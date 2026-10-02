@@ -1367,6 +1367,10 @@
                       <input id="install-server" placeholder="Opcional — o instalador detecta sozinho" />
                     </div>
                     <div class="field">
+                      <label for="install-networks">Redes das câmeras</label>
+                      <input id="install-networks" placeholder="Ex.: 192.168.100.0/24" />
+                    </div>
+                    <div class="field">
                       <label for="install-notes">Observação interna</label>
                       <textarea id="install-notes" placeholder="Técnico responsável, endereço, observações da implantação"></textarea>
                     </div>
@@ -1432,14 +1436,15 @@
                 <div class="grid-3">
                   <div class="field"><label for="ri-host">Servidor (IP ou domínio)</label><input id="ri-host" placeholder="203.0.113.10" /></div>
                   <div class="field"><label for="ri-port">Porta SSH</label><input id="ri-port" value="22" /></div>
-                  <div class="field"><label for="ri-user">Usuário root</label><input id="ri-user" value="root" /></div>
-                  <div class="field"><label for="ri-pass">Senha root</label><input id="ri-pass" type="password" placeholder="Usada só para instalar — nunca é salva" /></div>
+                  <div class="field"><label for="ri-user">Usuário do servidor</label><input id="ri-user" value="root" /></div>
+                  <div class="field"><label for="ri-pass">Senha do servidor</label><input id="ri-pass" type="password" placeholder="Usada só para instalar — nunca é salva" /></div>
                 </div>
                 <div class="license-actions" style="margin-top:12px">
                   <button id="ri-start" class="primary">Instalar remotamente</button>
-                  <span id="ri-status" class="subtext" style="margin:0">Preencha o servidor e a senha root e clique em instalar.</span>
+                  <span id="ri-status" class="subtext" style="margin:0">Use root ou um usuário que possa instalar com sudo.</span>
                 </div>
                 <textarea id="ri-log" readonly class="term" style="margin-top:11px" placeholder="A saída da instalação aparece aqui em tempo real."></textarea>
+                <p id="ri-access" class="subtext" hidden></p>
               </div>
             </section>
           </section>
@@ -5396,7 +5401,8 @@
           const res = await fetch(centralUrl('/api/admin/provision'), {
             method: 'POST', credentials: 'include',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ customerName, installationId, serverAddress, notes }),
+            body: JSON.stringify({ customerName, installationId, serverAddress, notes,
+              cameraAllowedCidrs:document.querySelector('#install-networks').value.trim() }),
           });
           const data = await res.json();
           if (!res.ok) { showToast(data.message || 'Não foi possível gerar a instalação.'); return; }
@@ -6007,7 +6013,7 @@
         const username = document.querySelector('#ri-user').value.trim() || 'root';
         const password = document.querySelector('#ri-pass').value;
         if (!host) { statusEl.textContent = 'Informe o servidor.'; return; }
-        if (!password) { statusEl.textContent = 'Informe a senha root.'; return; }
+        if (!password) { statusEl.textContent = 'Informe a senha do servidor.'; return; }
         const btn = document.querySelector('#ri-start');
         btn.disabled = true;
         btn.textContent = 'Instalando…';
@@ -6025,6 +6031,9 @@
             return;
           }
           document.querySelector('#ri-pass').value = ''; // não mantém a senha na tela
+          const access = document.querySelector('#ri-access');
+          access.textContent = `Acesso inicial ao painel: usuário ${data.initialAccess.username}, senha ${data.initialAccess.password}. Guarde e troque essa senha no primeiro acesso; ela não fica nos logs.`;
+          access.hidden = false;
           pollRemoteInstall(data.jobId);
         } catch {
           statusEl.textContent = 'Falha ao iniciar instalação remota.';

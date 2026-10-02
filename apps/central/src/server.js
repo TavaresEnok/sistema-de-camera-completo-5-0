@@ -27,6 +27,7 @@ const {
 } = require('./cloud-storage');
 const alertas = require('./alertas');
 const releases = require('./releases');
+const {launchCommand, deliverInstaller, secretLog} = require('./remote-install-runtime');
 const operations = require('./operations');
 const { testS3Access, measureS3Performance, diagnosticarConexao, localizarServidor } = require('./s3-probe');
 const { resolverEndpoint } = require('./endpoint-scheme');
@@ -44,6 +45,8 @@ const {
   InstallerConfigurationError,
   buildInstallerExecutionCommand,
   configuredInstallerArtifact,
+  fullGitCommit,
+  fullSha256,
   consumeInstallerDownload,
   installerTokenDigest,
   installerTokenMaxDownloads,
@@ -3483,9 +3486,11 @@ async function handleInstallationApp(req, res, db, installationId) {
 // ── Instalação remota via SSH ────────────────────────────────────────────────
 // Monta o comando de instalação numa única linha (para `conn.exec`). Em Debian/
 // Ubuntu instala o curl se faltar; outras distros precisam de curl pré-instalado.
-function buildRemoteInstallCommand(item, centralUrl) {
+function buildRemoteInstallCommand(item, centralUrl, environment = {}) {
   const ensureCurl = '(command -v curl >/dev/null 2>&1 || (apt-get update -y && apt-get install -y curl))';
-  return `${ensureCurl} && ${buildApprovedInstallerCommand(item, centralUrl)}`;
+  return `${ensureCurl} && ${buildInstallerExecutionCommand({artifact:item.installerArtifact,
+    environment:{...installerEnvironment(item, centralUrl), ...environment},
+    allowInsecureLoopback:String(process.env.DRAC_CENTRAL_ALLOW_INSECURE_INSTALLER_URL || '') === 'true'})}`;
 }
 
 function appendInstallLog(job, chunk, secrets = []) {
@@ -3522,18 +3527,21 @@ function runRemoteInstall(job, conn, opts, command) {
   client
     .on('ready', () => {
       appendInstallLog(job, '>> conectado. iniciando instalador…\n');
-      client.exec(command, { pty: true }, (err, stream) => {
+      client.exec(launchCommand(opts.username), { pty: false }, (err, stream) => {
         if (err) {
           appendInstallLog(job, `>> erro ao executar: ${err.message}\n`);
           return finish('failed', null);
         }
+        const safeLog=secretLog(data=>appendInstallLog(job,data),[opts.password, opts.adminPassword, opts.licenseKey]);
+        const delivery = deliverInstaller(stream, {username:opts.username, password:opts.password, script:command,
+          onLog:(data)=>safeLog.push(data),
+          onFailure:(message)=>{appendInstallLog(job,`>> ${message}\n`); finish('failed',null);}});
         stream
           .on('close', (code) => {
+            safeLog.flush();
             appendInstallLog(job, `\n>> instalador finalizou com código ${code}.\n`);
-            finish(code === 0 ? 'done' : 'failed', code);
-          })
-          .on('data', (d) => appendInstallLog(job, d, [opts.password]))
-          .stderr.on('data', (d) => appendInstallLog(job, d, [opts.password]));
+            finish(code === 0 && delivery.started ? 'done' : 'failed', code);
+          });
       });
     })
     .on('error', (err) => {
@@ -3585,20 +3593,49 @@ async function handleRemoteInstall(req, res, installationId) {
 async function prepareRemoteInstall(req, res, db, actor, installationId, body) {
   const item = db.installations[installationId];
   if (!item) return json(req, res, 404, { error: 'installation_not_found' });
+  if ([...remoteInstalls.values()].some(job=>job.installationId===installationId && ['queued','running'].includes(job.status))) {
+    return json(req,res,409,{error:'installation_running',message:'Esta instalação já está em andamento.'});
+  }
   const host = String(body.host || item.provisionedServerAddress || '').trim();
   const port = Number(body.port || 22);
   const username = String(body.username || 'root').trim();
   const password = String(body.password || '');
+  if (!Number.isInteger(port) || port < 1 || port > 65535 || !/^[a-z_][a-z0-9_-]{0,31}$/i.test(username)) {
+    return json(req,res,400,{error:'invalid_ssh_access',message:'Confira o usuário e a porta SSH.'});
+  }
   if (!host) return json(req, res, 400, { error: 'missing_host', message: 'Informe o endereço/IP do servidor.' });
-  if (!password) return json(req, res, 400, { error: 'missing_password', message: 'Informe a senha de acesso (root).' });
+  if (!password) return json(req, res, 400, { error: 'missing_password', message: 'Informe a senha de acesso ao servidor.' });
+  if (/[\r\n\0]/.test(password)) return json(req,res,400,{error:'invalid_ssh_password',message:'A senha do servidor não pode conter quebra de linha.'});
+  if (!item.cameraAllowedCidrs) return json(req,res,400,{error:'missing_camera_networks',message:'Informe as redes das câmeras antes de instalar.'});
+
+  const adminUsername = String(body.adminUsername || 'admin').trim().toLowerCase();
+  const adminPassword = String(body.adminPassword || `Dg-${crypto.randomBytes(18).toString('base64url')}9aA`);
+  if (!/^[a-z0-9_.@-]{1,100}$/.test(adminUsername) || adminPassword.length < 12 || /[\r\n\0]/.test(adminPassword)) {
+    return json(req,res,400,{error:'invalid_admin_access',message:'Use um usuário válido e senha com pelo menos 12 caracteres.'});
+  }
 
   const centralUrl = publicBaseUrl(req);
   let command;
+  let selectedArtifact;
   try {
     // Instalações antigas só podem entrar no caminho SSH depois de receber o
     // mesmo vínculo imutável usado pelos comandos manuais.
     refreshInstallerGrant(item, { issueToken: false, release: releaseAtual(db) });
-    command = buildRemoteInstallCommand(item, centralUrl);
+    // A clean-install pilot must not promote an untested release for the fleet.
+    // Explicit immutable candidate applies only to this job, with its own audit.
+    let target = item;
+    if (body.validationRelease) {
+      if (body.validationRelease.purpose !== 'clean-install-validation') throw new InstallerConfigurationError('Finalidade inválida.');
+      fullGitCommit(body.validationRelease.commit);
+      fullSha256(body.validationRelease.installerSha256);
+      const candidate = configuredInstallerArtifact(process.env,new Date(),body.validationRelease);
+      target = {...item,installerArtifact:candidate};
+    }
+    const operator = username === 'root' ? 'drac' : username;
+    selectedArtifact = target.installerArtifact;
+    command = buildRemoteInstallCommand(target, centralUrl,{DRAC_OPERATING_USER:operator,
+      DRAC_ADMIN_USERNAME:adminUsername,DRAC_ADMIN_PASSWORD:adminPassword,
+      DRAC_PERSIST_INITIAL_CREDENTIALS:'false', DRAC_AUTO_YES:'true'});
   } catch (error) {
     if (error instanceof InstallerConfigurationError) {
       return installerConfigurationResponse(req, res);
@@ -3628,8 +3665,9 @@ async function prepareRemoteInstall(req, res, db, actor, installationId, body) {
     actor: actor.email,
     result: 'accepted',
     installationId,
-    installerArtifactId: item.installerArtifact.id,
-    installerSha256: item.installerArtifact.sha256,
+    installerArtifactId: selectedArtifact.id,
+    installerSha256: selectedArtifact.sha256,
+    validationRelease: body.validationRelease ? {commit:selectedArtifact.id, purpose:'clean-install-validation'} : null,
   });
   await saveDb(db);
 
@@ -3650,9 +3688,11 @@ async function prepareRemoteInstall(req, res, db, actor, installationId, body) {
   };
 
   // Dispara em background; o cliente acompanha por GET /remote-installs/:id.
-  runRemoteInstall(job, null, { host, port, username, password, knownHostKey, onLearnHostKey }, command);
+  runRemoteInstall(job, null, { host, port, username, password, adminPassword,
+    licenseKey:item.licenseKey, knownHostKey, onLearnHostKey }, command);
 
-  return json(req, res, 202, { jobId, status: job.status });
+  return json(req, res, 202, { jobId, status: job.status,
+    initialAccess:{username:adminUsername,password:adminPassword} });
 }
 
 function publicRemoteInstall(job) {

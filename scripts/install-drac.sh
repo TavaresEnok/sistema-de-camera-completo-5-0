@@ -14,7 +14,7 @@ for drac_key in \
   DRAC_CAMERA_ALLOWED_CIDRS DRAC_CUSTOMER_NAME DRAC_INSTALLATION_ID \
   DRAC_LICENSE_KEY DRAC_SERVER_IP DRAC_RTMP_SHORT_HOST \
   DRAC_GATEWAY_MODE DRAC_PUBLIC_ORIGIN DRAC_PRIVATE_BIND_IP DRAC_TURN_URL DRAC_TURN_SECRET \
-  DRAC_ADMIN_USERNAME DRAC_ADMIN_EMAIL DRAC_ADMIN_PASSWORD DRAC_ADMIN_NAME; do
+  DRAC_ADMIN_USERNAME DRAC_ADMIN_EMAIL DRAC_ADMIN_PASSWORD DRAC_ADMIN_NAME DRAC_PERSIST_INITIAL_CREDENTIALS; do
   if [[ -v $drac_key ]] && [ -n "${!drac_key}" ]; then
     DRAC_EXPLICIT_ENV_KEYS+="$drac_key "
   fi
@@ -62,6 +62,7 @@ DRAC_ADMIN_EMAIL="${DRAC_ADMIN_EMAIL:-}"
 DRAC_ADMIN_USERNAME="${DRAC_ADMIN_USERNAME:-}"
 DRAC_ADMIN_PASSWORD="${DRAC_ADMIN_PASSWORD:-}"
 DRAC_ADMIN_NAME="${DRAC_ADMIN_NAME:-Administrador}"
+DRAC_PERSIST_INITIAL_CREDENTIALS="${DRAC_PERSIST_INITIAL_CREDENTIALS:-true}"
 # Preenchido em tempo de execução quando a senha é gerada por nós (só então o
 # resumo final a imprime — senha escolhida pelo operador não é ecoada).
 DRAC_ADMIN_PASSWORD_GERADA=""
@@ -186,7 +187,7 @@ DRAC_WATCHDOG_ENABLED DRAC_WATCHDOG_INTERVAL_MINUTES DRAC_BUILD_AGENT_EXPECTED D
 DRAC_CAMERA_ALLOWED_CIDRS DRAC_CUSTOMER_NAME DRAC_INSTALLATION_ID
 DRAC_LICENSE_KEY DRAC_SERVER_IP DRAC_RTMP_SHORT_HOST
 DRAC_GATEWAY_MODE DRAC_PUBLIC_ORIGIN DRAC_PRIVATE_BIND_IP DRAC_TURN_URL DRAC_TURN_SECRET
-DRAC_ADMIN_USERNAME DRAC_ADMIN_EMAIL DRAC_ADMIN_PASSWORD DRAC_ADMIN_NAME
+DRAC_ADMIN_USERNAME DRAC_ADMIN_EMAIL DRAC_ADMIN_PASSWORD DRAC_ADMIN_NAME DRAC_PERSIST_INITIAL_CREDENTIALS
 "
 
 usage() {
@@ -354,6 +355,10 @@ wait_for_http() {
 
 preflight() {
   log "Executando pre-checagens"
+  case "$DRAC_INSTALL_DIR" in /|/opt|/home|/etc|/usr|/var|/root)
+    fail "DRAC_INSTALL_DIR deve ser um diretorio dedicado, como /opt/drac.";; esac
+  [ ! -L "$DRAC_INSTALL_DIR" ] || fail "DRAC_INSTALL_DIR nao pode ser um link simbolico."
+  case "$DRAC_PERSIST_INITIAL_CREDENTIALS" in true|false) ;; *) fail "DRAC_PERSIST_INITIAL_CREDENTIALS deve ser true ou false.";; esac
 
   if [[ ! "$DRAC_INSTALLER_COMMIT" =~ ^[0-9a-fA-F]{40}$ ]]; then
     fail "DRAC_INSTALLER_COMMIT deve ser um commit Git completo e imutavel de 40 caracteres hexadecimais."
@@ -509,7 +514,10 @@ sync_repository() {
   local parent_dir fetched_commit current_origin untracked
   parent_dir="$(dirname "$DRAC_INSTALL_DIR")"
   run_sudo mkdir -p "$parent_dir"
-  run_sudo chown -R "$DRAC_OPERATING_USER:$DRAC_OPERATING_USER" "$parent_dir"
+  # Never change ownership of /opt or other installations below the parent.
+  if [ ! -e "$DRAC_INSTALL_DIR" ]; then
+    run_sudo install -d -m 0755 -o "$DRAC_OPERATING_USER" -g "$DRAC_OPERATING_USER" "$DRAC_INSTALL_DIR"
+  fi
 
   if [ -d "$DRAC_INSTALL_DIR/.git" ]; then
     if ! run_git_as_user "$DRAC_OPERATING_USER" -C "$DRAC_INSTALL_DIR" diff --quiet --ignore-submodules --; then
@@ -776,7 +784,7 @@ run_migrations() {
 # Idempotente pelo lado seguro: se JÁ existe qualquer usuário, não toca em
 # nada. Reinstalar/atualizar não pode resetar a senha de quem está usando.
 seed_admin() {
-  local files env_file pg_user pg_db total u_q e_q p_q n_q
+  local files env_file pg_user pg_db total seed_payload
   files="$(compose_files)"
   env_file="$DRAC_INSTALL_DIR/infra/.env"
   pg_user="$(env_get "$env_file" POSTGRES_USER)"
@@ -808,13 +816,17 @@ seed_admin() {
   fi
 
   log "Criando o primeiro administrador ($DRAC_ADMIN_USERNAME)"
-  printf -v u_q '%q' "$DRAC_ADMIN_USERNAME"
-  printf -v e_q '%q' "$DRAC_ADMIN_EMAIL"
-  printf -v p_q '%q' "$DRAC_ADMIN_PASSWORD"
-  printf -v n_q '%q' "$DRAC_ADMIN_NAME"
+  seed_payload="$(printf '{"username":"%s","email":"%s","password":"%s","name":"%s"}' \
+    "$(json_escape "$DRAC_ADMIN_USERNAME")" "$(json_escape "$DRAC_ADMIN_EMAIL")" \
+    "$(json_escape "$DRAC_ADMIN_PASSWORD")" "$(json_escape "$DRAC_ADMIN_NAME")")"
   # shellcheck disable=SC2086
-  if ! run_as_user "$DRAC_OPERATING_USER" bash -lc "cd '$DRAC_INSTALL_DIR' && docker compose --env-file infra/.env $files exec -T -e ADMIN_USERNAME=$u_q -e ADMIN_EMAIL=$e_q -e ADMIN_PASSWORD=$p_q -e ADMIN_NAME=$n_q -w /app/apps/api api npx tsx prisma/seed.ts"; then
+  if ! printf '%s' "$seed_payload" | run_as_user "$DRAC_OPERATING_USER" bash -lc "cd '$DRAC_INSTALL_DIR' && docker compose --env-file infra/.env $files exec -T -e ADMIN_STDIN_JSON=true -w /app/apps/api api npx tsx prisma/seed.ts"; then
     fail "O seed do administrador falhou. A instalacao NAO esta utilizavel: ninguem consegue entrar. Veja 'docker logs vms-api'."
+  fi
+  seed_payload=''
+  if [ "$DRAC_PERSIST_INITIAL_CREDENTIALS" = "false" ]; then
+    log "Administrador criado; senha mantida somente em memoria durante a instalacao."
+    return
   fi
 
   # Guarda as credenciais num arquivo só do dono — o terminal rola, e perder a
