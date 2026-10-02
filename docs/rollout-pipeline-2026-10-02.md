@@ -243,6 +243,12 @@ aparelho aparece em `adb devices`, portanto não foi alegado teste em aparelho.
 Verificação independente `apksigner verify` aprovada; `aapt` confirma pacote,
 versão e versionCode. SHA256 APK:
 `4447268655039eb8388294fbd31a7e5ba9b1190b795d011b55974ff1041af0f8`.
+Suíte completa mobile: 117 testes aprovados, zero pulados; `tsc --noEmit`
+aprovado no checkout isolado `ddb2416`. Essa checagem encontrou e corrigiu
+uma incompatibilidade apenas no teste de ciclo de vida: importação explícita
+de `URL` de `node:url`, evitando mistura com o tipo DOM do React Native.
+O código de execução do app é o mesmo do APK construído no commit `38dac58`;
+o teste corrigido não exige recompilar/publicar outro APK.
 
 Primeira geração falhou ao fazer fetch por propriedade incorreta de quatro
 itens Git. Corrigido proprietário para management somente nestes alvos exatos:
