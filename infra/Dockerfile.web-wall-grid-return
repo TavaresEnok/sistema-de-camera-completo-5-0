@@ -1,0 +1,16 @@
+# Reuse the installed dependency set and media proxy; update frontend only.
+FROM drac-web-ib-perimeter-builder AS wall_builder
+WORKDIR /app
+COPY apps/web ./apps/web
+COPY apps/api/src ./apps/api/src
+COPY apps/mobile ./apps/mobile
+ARG FRONTEND_BUILD_ID=wall-grid-return-20261002
+ENV VITE_FRONTEND_BUILD_ID=$FRONTEND_BUILD_ID
+RUN cd /app/apps/web && node --test tests/*.test.mts \
+    && pnpm --filter web exec tsc --noEmit \
+    && pnpm --filter web build
+
+FROM drac-pipeline-web:20261002-overlay-fixes
+USER root
+COPY --from=wall_builder /app/apps/web/dist /usr/share/nginx/html
+USER nginx

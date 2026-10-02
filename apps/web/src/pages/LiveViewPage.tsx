@@ -1582,16 +1582,32 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
             <Video className="w-3.5 h-3.5 text-[hsl(var(--status-online))]" />
             {displayCoordination.label} / Modo Mural
           </div>
-          <button
-            onClick={handleWallMode}
+          <div
             {...muralControles.propsDoControle}
-            className={`ops-button fixed top-3 right-3 z-50 flex items-center gap-1.5 border-white/10 bg-black/72 px-3 text-xs text-white transition-opacity duration-300 motion-reduce:transition-none ${
-              muralControles.visivel ? 'opacity-100' : 'opacity-0 pointer-events-none'
+            className={`fixed top-3 right-3 z-50 flex items-center gap-2 transition-opacity duration-300 motion-reduce:transition-none ${
+              focusedCameraId || muralControles.visivel ? 'opacity-100' : 'opacity-0 pointer-events-none'
             }`}
           >
-            <Maximize2 className="w-3.5 h-3.5" />
-            {wallMode && !document.fullscreenElement ? 'Usar tela cheia' : 'Sair do Modo Mural'}
-          </button>
+            {focusedCameraId && (
+              <button
+                type="button"
+                onClick={restoreLayout}
+                data-testid="button-restore-grid-wall"
+                className="ops-button flex items-center gap-1.5 border-white/20 bg-black/80 px-3 text-xs text-white"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+                Voltar à grade
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={handleWallMode}
+              className="ops-button flex items-center gap-1.5 border-white/10 bg-black/72 px-3 text-xs text-white"
+            >
+              <Maximize2 className="w-3.5 h-3.5" />
+              {wallMode && !document.fullscreenElement ? 'Usar tela cheia' : 'Sair do Modo Mural'}
+            </button>
+          </div>
         </>
       )}
     </div>

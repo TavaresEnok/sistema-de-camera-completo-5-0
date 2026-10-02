@@ -20,3 +20,15 @@ test('voltar da câmera única restaura o retrato da grade, não um preenchiment
   assert.match(source, /storeCameraIds\(previous\.cameraIds\)/);
   assert.match(source, /current\.gridSize === '1x1' && currentIds\.length <= 1/);
 });
+
+test('mural oferece volta à grade sem sair da tela cheia nem esconder o controle da câmera ampliada', async () => {
+  const source = await readFile(livePagePath, 'utf8');
+  const mural = source.slice(source.lastIndexOf('{wallMode && ('));
+  assert.match(mural, /focusedCameraId \|\| muralControles\.visivel \? 'opacity-100'/);
+  assert.match(mural, /focusedCameraId && \(\s*<button[\s\S]*?onClick=\{restoreLayout\}[\s\S]*?data-testid="button-restore-grid-wall"[\s\S]*?Voltar à grade/);
+  const restore = source.match(/const restoreLayout = useCallback\(\(\) => \{([\s\S]*?)\}, \[storeGridSize, storeCameraIds\]\)/)?.[1];
+  assert.ok(restore, 'a volta usa a mesma restauração da grade anterior');
+  assert.doesNotMatch(restore, /exitFullscreen|requestFullscreen|toggleWallMode|setLocation/);
+  assert.match(restore, /setFocusedCameraId\(null\)/);
+  assert.match(restore, /storeCameraIds\(previous\.cameraIds\)/);
+});
