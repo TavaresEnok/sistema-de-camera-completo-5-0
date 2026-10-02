@@ -8,15 +8,16 @@ manual do instalador. Servidor Ubuntu 24.04 x86-64, oito vCPUs Xeon E5-2680 v4,
 Host local `192.168.100.166/24`, roteador `192.168.100.1`; acesso administrativo
 autorizado `45.176.143.184:45222`, usuário `dguardian`, elevado com sudo.
 
-**Ainda não liberado para uso externo pelo domínio.** Domínio confirmado pelo
-usuário: `dguardian.s2cam.com.br` deve apontar a `45.176.143.184`. Os encaminhamentos
-foram informados pelo usuário e testados nesta continuação. DNS público ainda
-retorna `177.104.156.25`, não o servidor novo (Google, Cloudflare e VM, ~17:32 UTC).
-HTTP instalado e alcançável pelo IP; página provisória 503 intencional até HTTPS.
+**Acesso externo HTTPS liberado e validado às 17:43 UTC.** Usuário alterou o DNS;
+Google, Cloudflare e VM confirmaram `dguardian.s2cam.com.br → 45.176.143.184`.
+Certificado Let's Encrypt emitido, expira em 31/12/2026, renovação automática
+ativa/testada. Painel HTTP 200, `/api/health/ready` pronto, certificado validado
+sem desativar TLS. Login real desde Vibe HTTP 201; câmeras/settings HTTP 200.
+Os encaminhamentos foram informados pelo usuário e testados nesta continuação.
 Plano/limite e redes adicionais de câmeras ainda precisam de informação.
 Nenhum DNS, NAT do roteador ou licença comercial foi inventado/alterado.
 Não foram cadastradas câmeras fictícias como se fossem equipamentos do cliente.
-Sem câmera e sem HTTPS público correto, transmissão/playback externo/app
+Sem câmera cadastrada, transmissão/playback externo/app
 **não foram aprovados**. TURN já configurado e preservado na reexecução, incluindo
 UDP, TCP e TLS; isso não comprova a entrega de vídeo/relay para um cliente real.
 
@@ -67,11 +68,11 @@ versão ainda sob validação para toda a frota. Release global anterior mantida
 | Primeiro backup antes das migrations era aceito vazio | Gerar nova cópia depois de migrations/seed; restore exige migrations >0 e quatro tabelas críticas, retry 60 s e healthcheck | Proteção contra dump vazio; não garante restauração de mídia que ainda não existe |
 | Reexecução local apagava HTTPS/TURN configurados depois | Preservar origem HTTPS e par TURN existente; aceitar origem HTTPS local sem confundir com Gateway; incluir overlay se TURN presente | Três testes novos aprovados; rejeitar configuração TURN parcial sem misturar chaves |
 
-## Domínio, NAT e HTTPS — continuação às 17:26–17:35 UTC
+## Domínio, NAT e HTTPS — preparação às 17:26–17:35 UTC
 
 Nginx/certbot instalados **somente na VM Dguardian**, sem reiniciar o servidor
-nem modificar outros clientes ou o MikroTik. Nginx ativo/configuração válida;
-certbot.timer ativo. Configuração HTTPS preparada (não carregada sem certificado):
+nem modificar outros clientes ou o MikroTik nesta preparação. Nginx ativo/configuração válida;
+certbot.timer ativo. Configuração HTTPS preparada (naquele momento ainda sem certificado):
 `/etc/nginx/dguardian-https.prepared`. Renovações terão reload validado de Nginx.
 Modelo completo validado com `nginx -t` em container isolado com certificado de
 teste; esse certificado **não foi colocado em produção**.
@@ -118,6 +119,62 @@ readiness HTTPS local com validação de certificado. Depois ainda verificar pel
 domínio desde a internet, renovação em staging e sessão de vídeo autorizada.
 Não agendado para executar sozinho antes da confirmação da troca de DNS.
 
+## Conclusão HTTPS após alteração do DNS — 17:42–17:48 UTC
+
+Executado o finalizador quando usuário informou a troca e a resolução correta
+foi confirmada. Certificado `/etc/letsencrypt/live/dguardian.s2cam.com.br/`,
+expira 31/12/2026. Backup protegido da configuração pré-HTTPS:
+`/etc/nginx/dguardian-before-https.1Iz071/`.
+Recriados somente API e MediaMTX para atualizar URLs públicas/CORS; banco,
+IA, gravação e web não foram reiniciados. Erro HTTP 502 transitório durante
+subida da API seguido de readiness aprovado pelo retry do finalizador.
+
+```text
+GET https://dguardian.s2cam.com.br/ -> 200, remote=45.176.143.184, TLS verify=0
+GET /api/health/ready -> ready=true, todos os seis checks ok
+POST /api/auth/login desde Vibe -> 201, token presente (não exibido)
+GET /api/cameras com login -> 200, zero câmeras
+GET /api/settings com login -> 200
+GET /api/cameras sem login -> 401
+GET /api/camera-stream/mediamtx-auth/ externo -> 404
+HTTP raiz -> 308 https://dguardian.s2cam.com.br/
+```
+
+API runtime anuncia painel/API/WHEP/HLS exclusivamente no domínio HTTPS.
+`certbot renew --cert-name dguardian.s2cam.com.br --dry-run --run-deploy-hooks`
+aprovou renovação simulada. Hook inicialmente emitia saída normal do `nginx -t`
+em stderr, apresentada em vermelho pelo Certbot mesmo com sucesso; alterado para
+`nginx -t -q`, reexecutado diretamente, exit=0. Nginx, certbot.timer, watchdog e
+ops-agent ativos. Não confundir login/readiness com teste de vídeo sem câmera.
+
+## Vibe — DNS alterado pelo usuário e HTTPS direto
+
+Usuário informou que também faria a troca; consulta pública já mostrou
+`vibe.s2cam.com.br → 168.194.15.218`. Diagnóstico encontrou ausência de listener
+443 no host, entrada legada só HTTP/domínio antigo. Preparado vhost próprio
+sem substituir a configuração legada nem alterar o checkout sujo de `/opt/drac`.
+Nginx/certbot já instalados; nenhum pacote novo, reboot ou restart de container.
+
+Fonte versionada: `infra/vibe/nginx-direct-https.conf`; destino
+`/etc/nginx/sites-available/vibe-direct`, link em sites-enabled.
+Backup prévio `/etc/nginx/vibe-before-direct-https.2AYhfp/`.
+Certificado Let's Encrypt expira 31/12/2026, renovação simulada aprovada; hook
+`/etc/letsencrypt/renewal-hooks/deploy/vibe-nginx`, teste direto exit=0.
+Diretiva HTTP/2 ajustada ao Nginx 1.28.3 da Vibe, sem aviso de depreciação.
+
+Vibe HTTPS direto: HTTP 200, TLS verify=0, remote=168.194.15.218; confirmado
+também desde a VM Dguardian forçando resolução para o IP novo (cache local ainda
+retinha o gateway antigo). API `/health/ready` pronta. Entrada pelo gateway antigo
+forçada a 177.104.156.25 também HTTP 200/certificado válido: preservado o acesso
+de clientes com DNS em cache sem loop de redirect. HTTP direto externo agora
+redireciona a HTTPS; requisições HTTP do gateway antigo continuam encaminhadas.
+
+MediaMTX permaneceu ativo: 74 paths, 47 ready (paths não são contagem de câmeras),
+host ICE 168.194.15.218, três alternativas TURN presentes. Não declarar sessão
+WebRTC/HLS de cliente validada por esses contadores; nenhum player/app físico
+foi testado nesta alteração de DNS. API/URLs já anunciavam o domínio correto,
+portanto não foi necessário reiniciar API/MediaMTX/IA ou mexer nas câmeras.
+
 ## Validações executadas
 
 - Central: 524 casos totais; primeira rodada 511 aprovados/13 pulados por ausência
@@ -158,14 +215,12 @@ mas não foi redimensionado sem dimensionamento de gravações.
 
 ## Pendências que exigem informação externa
 
-1. Alterar o registro A confirmado `dguardian.s2cam.com.br` de `177.104.156.25`
-   para `45.176.143.184`; não há credenciais de administração DNS nesta sessão.
-2. Após DNS: concluir certificado/HTTPS e homologar mídia bidirecional e TURN.
-   Os encaminhamentos de entrada testados funcionam; não confundir isso com vídeo.
-3. Plano/limite comercial e credenciais de câmera de homologação. Sem isso não
+1. Credenciais de câmera de homologação para validar mídia bidirecional,
+   gravação, reprodução, IA e relay. HTTPS/DNS já concluídos; encaminhamentos
+   de entrada testados funcionam, mas não equivalem a vídeo ponta a ponta.
+2. Plano/limite comercial e redes adicionais das câmeras. Sem isso não
    declarar teste real de vídeo, gravação, reprodução, IA ou app como aprovado.
 
-Não é uma instalação externa completamente entregue: backend instalado e fluxo
-automático/reexecução validados; acesso público e teste de câmera dependem dos
-itens acima. Senha SSH não foi persistida; acesso inicial do painel permanece
+Backend, acesso HTTPS público e fluxo automático/reexecução validados;
+homologação de vídeo depende dos itens acima. Senha SSH não foi persistida; acesso inicial do painel permanece
 somente em memória no atendimento, sem ser reproduzido neste relatório.
