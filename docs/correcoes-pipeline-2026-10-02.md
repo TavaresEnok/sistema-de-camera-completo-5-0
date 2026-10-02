@@ -137,6 +137,47 @@ Correção dessa origem depende de identificar/acessar `160.19.47.74:45554` para
 medir proxy/TCP/timestamps/buffers e aplicar mudança fundamentada. Não reutilizar
 credenciais dos outros hosts por suposição. Não ampliar FPS para ocultar pausas.
 
+#### Rastreamento adicional após pedido de correção
+
+Reautenticados gateway e management com os acessos fornecidos; diagnóstico
+somente leitura. IB `10.10.0.20`, gateway `10.10.0.10` e management `10.10.0.11`
+encaminham esse destino pelo roteador `10.10.0.1`; Vibe usa `168.194.15.217`.
+O destino não é um endereço local nessas interfaces. Regras `iptables-save` do
+gateway não contêm esse IP/porta nem encaminhamento correspondente; os DNAT
+consultados são dos serviços 80/443/1935/1985/8080. Isso não descarta um NAT
+no roteador externo, cuja configuração não foi fornecida.
+
+Consulta somente leitura de `central_installations`: uma instalação contém esse
+IP, `Grupo Flash`/`ibtelecom`, **apenas** na chave `cameraAllowedCidrs`; endereço
+observado e servidor provisionado são `10.10.0.20`. Não foi encontrado cadastro
+de servidor administrável para esse destino. Consulta de câmeras da IB encontrou
+24 cadastros com esse IP em portas RTSP distintas; 100002 e 100024 compartilham
+porta 45554/canal/subtipo e hash de caminho. Essa duplicidade é observação, não
+causa demonstrada nem autorização para remover cadastro.
+
+Novo probe limitado ao path interno de entrada da 100002, sem abrir URL direta
+da câmera: HEVC 640×360/30 FPS, 601 quadros medidos, FPS 29,919, intervalo p95
+86,226 ms, máximo 386,982 ms; 12 intervalos acima de 150 ms. Média próxima do
+alvo não significa entrega uniforme. Enquanto esse probe estava ativo,
+`nsenter` no namespace do MediaMTX + `ss -tin dst 160.19.47.74:45554` mostrou:
+
+```text
+ESTAB 172.18.0.2:53054 -> 160.19.47.74:45554
+rtt:278.187/45.788 minrtt:199.135 rto:609 pmtu:1500 mss:1460
+Primeira leitura: bytes_received:508178 data_segs_in:383 rcv_ooopack:72
+Segunda leitura: bytes_received:1895973 data_segs_in:1424 rcv_ooopack:321
+Recv-Q: 0 -> 1212 bytes; Send-Q: 0 em ambas
+```
+
+`rcv_ooopack` documenta recepção fora de ordem, **não** prova perda, retransmissão
+de entrada ou localização da causa. RTT deriva da conexão TCP, não é latência
+absoluta de vídeo. Hipótese: caminho/NAT/origem pode introduzir as pausas;
+é necessário medir também a outra ponta. Não há evidência suficiente para
+alterar MTU/buffers/transportes ou firmware em produção. Nenhuma configuração
+ou serviço foi alterado nesta continuação. Probe e sessão administrativa foram
+encerrados normalmente. Próximo requisito: acesso ao administrador do endpoint
+ou ao roteador que encaminha suas portas, não nova autorização genérica.
+
 ## Reprodução e rollback
 
 Ferramentas: `validate-short-motion.py`, `bench-live-decoder.py`,
