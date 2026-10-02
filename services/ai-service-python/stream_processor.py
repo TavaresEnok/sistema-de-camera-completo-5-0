@@ -1215,6 +1215,11 @@ class StreamProcessor:
                         frame.shape[:2],
                         (advanced_height, advanced_width),
                     )
+                    if effective_advanced_type == "general":
+                        # Apply the current plan inside the detector, before
+                        # legacy flags can discard allowed vehicles. Never send
+                        # object-class restrictions to the face detector.
+                        extra_infer_kwargs["allowed_classes"] = self.object_policy["classes"]
                     # O detector compartilhado gerencia a inferência thread-safe.
                     infer_started_at = time.perf_counter()
                     try:

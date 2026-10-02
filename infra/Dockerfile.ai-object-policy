@@ -1,0 +1,4 @@
+# Keep motion, decoder, model files and dependencies exactly as deployed.
+FROM drac-pipeline-ai:20261002-small-motion
+COPY --chown=1000:1000 services/ai-service-python/detectors/object_detector.py /app/detectors/object_detector.py
+COPY --chown=1000:1000 services/ai-service-python/stream_processor.py /app/stream_processor.py

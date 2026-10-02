@@ -10,6 +10,7 @@ from .base import Detection, Detector
 from .region_proposal import MotionRegionPlanner, RegionConfig
 from onnxruntime_session import inference_threading_status
 from runtime_profiles import GENERAL_PROFILE
+from object_policy import filtrar_deteccoes_por_classe, normalizar_classe
 from detectors.escolha_de_modelo import TETO_DE_CPU_PADRAO, escolher_modelo
 from trackers import TrackerBackend, create_tracker, tracker_names
 from trackers.camera_motion import GlobalMotionEstimator
@@ -42,7 +43,7 @@ def _gpu_realmente_presente() -> bool:
     return os.path.exists("/dev/nvidia0") or os.path.exists("/dev/nvidiactl")
 
 
-def classe_liberada(cls: int) -> bool:
+def classe_liberada(cls: int, allowed_class_ids: set[int] | None = None) -> bool:
     """A licença deste cliente permite MOSTRAR esta classe?
 
     Escrito em 14/08/2026, depois de o dono ver quadrado em CARRO com a Central
@@ -51,6 +52,11 @@ def classe_liberada(cls: int) -> bool:
     licença virava enfeite. Preservado ao mesclar o pacote de tracking, que não
     o continha.
     """
+    # The API's per-camera plan is authoritative when supplied. Legacy process
+    # flags cannot veto a vehicle explicitly enabled by the current plan.
+    # None preserves old standalone callers; an empty set denies every class.
+    if allowed_class_ids is not None:
+        return cls in allowed_class_ids
     if cls == PERSON_CLASS_ID:
         return True
     if cls in VEHICLE_CLASS_IDS:
@@ -65,6 +71,7 @@ CLASS_LABELS = {
     MOTORCYCLE_CLASS_ID: "moto",
     BUS_CLASS_ID: "onibus",
 }
+CLASS_IDS_BY_NAME = {normalizar_classe(label): cls for cls, label in CLASS_LABELS.items()}
 
 
 class ObjectDetector(Detector):
@@ -417,7 +424,8 @@ class ObjectDetector(Detector):
                 self._region_planners[key] = MotionRegionPlanner(self._region_config)
             return self._region_planners[key], self._region_planner_locks[key]
 
-    def _infer_by_regions(self, frame, runtime, motion_boxes, context_key: str | None) -> list[Detection]:
+    def _infer_by_regions(self, frame, runtime, motion_boxes, context_key: str | None,
+                          allowed_class_ids: set[int] | None = None) -> list[Detection]:
         """Roda o modelo NAS REGIÕES do movimento, em resolução nativa.
 
         As coordenadas voltam para o frame INTEIRO (a região é uma fatia, então
@@ -443,7 +451,7 @@ class ObjectDetector(Detector):
                 crop = frame[y1:y2, x1:x2]
                 if getattr(crop, "size", 0) == 0:
                     continue
-                found, ran = self._detect_raw(crop, runtime)
+                found, ran = self._detect_raw(crop, runtime, allowed_class_ids=allowed_class_ids)
                 if not ran:
                     # Pool ocupado: a região NÃO rodou. Não pode entrar em
                     # `executed`, senão o cache concluiria que o objeto sumiu por
@@ -464,20 +472,33 @@ class ObjectDetector(Detector):
         context_key: str | None = None,
         input_size_hint: int | None = None,
         motion_boxes=None,
+        allowed_classes: set[str] | None = None,
         **kwargs,
     ) -> list[Detection]:
+        permitted = None if allowed_classes is None else {normalizar_classe(c) for c in allowed_classes}
+        allowed_class_ids = None if permitted is None else {
+            CLASS_IDS_BY_NAME[c] for c in permitted if c in CLASS_IDS_BY_NAME
+        }
+        if allowed_class_ids is not None and not allowed_class_ids:
+            return []
         if self.model is None:
             self.load()
         runtime = self._runtime_for_hint(input_size_hint)
         if self._region_config.enabled and motion_boxes is not None:
-            detections = self._infer_by_regions(frame, runtime, motion_boxes, context_key)
+            detections = self._infer_by_regions(frame, runtime, motion_boxes, context_key, allowed_class_ids)
         else:
-            detections, _ran = self._detect_raw(frame, runtime)
+            detections, _ran = self._detect_raw(frame, runtime, allowed_class_ids=allowed_class_ids)
+        if permitted is not None:
+            # Cached regions may belong to an earlier permission set.
+            detections = filtrar_deteccoes_por_classe(detections, permitted)
         if GENERAL_PROFILE["persistent_track_id"] and context_key:
-            return self._track_people(detections, context_key, frame=frame)
+            detections = self._track_people(detections, context_key, frame=frame)
+        if permitted is not None:
+            # Tracking can coast previously allowed objects after revocation.
+            detections = filtrar_deteccoes_por_classe(detections, permitted)
         return detections
 
-    def _detect_raw(self, frame, runtime) -> tuple[list[Detection], bool]:
+    def _detect_raw(self, frame, runtime, allowed_class_ids: set[int] | None = None) -> tuple[list[Detection], bool]:
         """Inferência + pós-processamento NAS COORDENADAS de `frame`.
 
         `frame` é o quadro inteiro (caminho de hoje) ou o recorte de uma região.
@@ -517,7 +538,7 @@ class ObjectDetector(Detector):
             # LICENÇA antes de qualquer contagem: classe não liberada pela
             # Central não vira detecção nem entra no funil — senão o operador
             # veria "raw" alto de uma classe que jamais aparece na tela.
-            if not classe_liberada(cls):
+            if not classe_liberada(cls, allowed_class_ids):
                 continue
             self._pipeline_bump(cls, "raw")
             min_conf = self._confidence_for_class(cls)

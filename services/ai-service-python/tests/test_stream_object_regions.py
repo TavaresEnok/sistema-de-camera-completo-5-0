@@ -123,6 +123,14 @@ class TestArgumentosDaInferenciaAvancada(unittest.TestCase):
         fonte = inspect.getsource(StreamProcessor._process)
         self.assertIn("_advanced_infer_kwargs", fonte)
 
+    def test_current_object_plan_reaches_detector_before_post_filter(self):
+        import inspect
+        fonte = inspect.getsource(StreamProcessor._process)
+        permission = 'extra_infer_kwargs["allowed_classes"] = self.object_policy["classes"]'
+        self.assertIn(permission, fonte)
+        self.assertLess(fonte.index(permission), fonte.index("advanced_detections = det.infer("))
+        self.assertIn('if effective_advanced_type == "general":', fonte[:fonte.index(permission)])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -129,6 +129,64 @@ class TestObjectDetectorPostProcessing(unittest.TestCase):
     def _frame(self, size=640):
         return np.zeros((size, size, 3), dtype=np.uint8)
 
+    def _policy_rows(self):
+        return [[20 + cls * 60, 20, 60 + cls * 60, 100, 0.95, cls]
+                for cls in [PERSON_CLASS_ID, BICYCLE_CLASS_ID, CAR_CLASS_ID, MOTORCYCLE_CLASS_ID, BUS_CLASS_ID]]
+
+    def test_current_plan_allows_vehicles_despite_disabled_legacy_flag(self):
+        with mock.patch.dict(GENERAL_PROFILE, {"detect_vehicles": False}):
+            det = self._detector_with_output(self._policy_rows())
+            out = det.infer(self._frame(), allowed_classes={"person", "car", "motorcycle", "bicycle"})
+        self.assertEqual({d.label for d in out}, {"pessoa", "carro", "moto", "bicicleta"})
+        self.assertNotIn("onibus", {d.label for d in out})
+
+    def test_person_only_plan_rejects_vehicles_even_when_legacy_flag_enabled(self):
+        det = self._detector_with_output(self._policy_rows())
+        out = det.infer(self._frame(), allowed_classes={"person"})
+        self.assertEqual([d.label for d in out], ["pessoa"])
+
+    def test_empty_plan_blocks_everything_without_running_model(self):
+        det = self._detector_with_output(self._policy_rows())
+        with mock.patch.object(det, "_detect_raw") as infer:
+            self.assertEqual(det.infer(self._frame(), allowed_classes=set()), [])
+            infer.assert_not_called()
+
+    def test_unknown_policy_classes_cannot_enable_default_person(self):
+        det = self._detector_with_output(self._policy_rows())
+        self.assertEqual(det.infer(self._frame(), allowed_classes={"not-a-class"}), [])
+
+    def test_legacy_callers_still_respect_vehicle_flag(self):
+        with mock.patch.dict(GENERAL_PROFILE, {"detect_vehicles": False}):
+            det = self._detector_with_output(self._policy_rows())
+            self.assertEqual([d.label for d in det.infer(self._frame())], ["pessoa"])
+
+    def test_policy_is_local_to_each_request_not_shared_detector_state(self):
+        det = self._detector_with_output(self._policy_rows())
+        original_ids = det.active_class_ids.copy()
+        self.assertEqual([d.label for d in det.infer(self._frame(), allowed_classes={"car"})], ["carro"])
+        self.assertEqual([d.label for d in det.infer(self._frame(), allowed_classes={"person"})], ["pessoa"])
+        self.assertEqual(det.active_class_ids, original_ids)
+
+    def test_policy_aliases_are_normalized_before_detector_filter(self):
+        det = self._detector_with_output(self._policy_rows())
+        self.assertEqual({d.label for d in det.infer(self._frame(), allowed_classes={"carro", "moto"})}, {"carro", "moto"})
+
+    def test_cached_regions_cannot_leak_previously_allowed_class(self):
+        det = self._detector_with_output(self._policy_rows())
+        det._region_config = mock.Mock(enabled=True)
+        cached = [Detection(label="carro", confidence=0.9, bbox=[20, 20, 60, 100], extra={"classId": CAR_CLASS_ID})]
+        with mock.patch.object(det, "_infer_by_regions", return_value=cached) as infer:
+            self.assertEqual(det.infer(self._frame(), motion_boxes=[], allowed_classes={"person"}), [])
+            self.assertEqual(infer.call_args.args[-1], {PERSON_CLASS_ID})
+
+    def test_tracking_coast_cannot_leak_revoked_vehicle(self):
+        det = self._detector_with_output(self._policy_rows())
+        coast = [Detection(label="carro", confidence=0.9, bbox=[20, 20, 60, 100], extra={"classId": CAR_CLASS_ID})]
+        with mock.patch.dict(GENERAL_PROFILE, {"persistent_track_id": True}):
+            with mock.patch.object(det, "_track_people", return_value=coast) as tracker:
+                self.assertEqual(det.infer(self._frame(), context_key="camera", allowed_classes={"person"}), [])
+                self.assertEqual([d.label for d in tracker.call_args.args[0]], ["pessoa"])
+
     def test_busy_worker_skips_preprocessing(self):
         det = self._detector_with_output([])
         runtime = det._runtime_for_hint()
