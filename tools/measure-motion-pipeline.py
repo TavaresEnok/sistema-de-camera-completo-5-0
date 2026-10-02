@@ -12,6 +12,15 @@ def cpu():
     return sum(values), values[3] + values[4]
 
 
+def container_cpu():
+    """Cgroup v2 accumulated CPU time; 100% represents one CPU core."""
+    output = subprocess.check_output(
+        ['docker', 'exec', 'vms-ai-service', 'cat', '/sys/fs/cgroup/cpu.stat'],
+        timeout=15, text=True,
+    )
+    return int(dict(line.split() for line in output.splitlines())['usage_usec'])
+
+
 def health():
     code = 'import requests,json;h=requests.get("http://localhost:8000/health",timeout=5).json();print(json.dumps({"status":h.get("status"),"processors":{k:{"processed":v.get("performance",{}).get("processed_frames",0),"target":v.get("process_fps"),"running":v.get("running"),"stages":v.get("performance",{}).get("stage_timings"),"stream":{f:v.get("stream",{}).get(f) for f in ["width","height","fps","frame_age_last_ms","decoder_threads"]}} for k,v in h.get("processors",{}).items()}}))'
     return json.loads(subprocess.check_output(['docker', 'exec', 'vms-ai-service', 'python', '-c', code], timeout=15))
@@ -23,6 +32,7 @@ def main():
     parser.add_argument('--seconds', type=int, default=60)
     args = parser.parse_args()
     before = health()
+    initial_ai_cpu = container_cpu()
     initial_cpu = last_cpu = cpu()
     started = time.monotonic()
     while time.monotonic() - started < args.seconds:
@@ -32,11 +42,17 @@ def main():
         print(json.dumps({'label': args.label, 'elapsed': round(time.monotonic() - started, 1), 'host_cpu_percent': round(busy, 2)}), flush=True)
         last_cpu = current_cpu
     after = health()
+    final_ai_cpu = container_cpu()
     elapsed = time.monotonic() - started
     print(json.dumps({'label': args.label, 'elapsed': round(elapsed, 2),
+                      'ai_cpu_percent_one_core': round((final_ai_cpu - initial_ai_cpu) / (elapsed * 10000), 2),
                       'host_cpu_percent': round(100 * (1 - (last_cpu[1] - initial_cpu[1]) / max(1, last_cpu[0] - initial_cpu[0])), 2),
                       'status': after['status'],
                       'cameras': {key: {**value,
+                                       'advanced_frames_during_sample': (
+                                           (value.get('stages') or {}).get('advanced_infer_tracking', {}).get('count', 0)
+                                           - (before['processors'][key].get('stages') or {}).get('advanced_infer_tracking', {}).get('count', 0)
+                                       ),
                                        'counter_reset': value['processed'] < before['processors'][key]['processed'],
                                        'measured_fps': (round((value['processed'] - before['processors'][key]['processed']) / elapsed, 3)
                                                         if value['processed'] >= before['processors'][key]['processed'] else None)}

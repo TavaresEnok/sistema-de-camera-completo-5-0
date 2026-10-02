@@ -79,6 +79,9 @@ class MotionDetector(Detector):
         self.min_component_pixels = max(
             12, int(frame_area * float(MOTION_PROFILE["motion_min_component_ratio"]))
         )
+        self._morph_kernel_default = np.ones((5, 5), np.uint8)
+        self._morph_kernel_high = np.ones((3, 3), np.uint8)
+        self._refresh_zone_processing()
         self._test_excluded_masks = self._build_test_excluded_masks(self._zones)
         self._test_ignored_hits = 0
         self._test_ignored_motion = None
@@ -263,12 +266,58 @@ class MotionDetector(Detector):
         self._zones = zones or []
         self._zone_mask = self._build_zone_mask(self._zones)
         self._zone_factor_map = self._build_zone_factor_map(self._zones)
+        self._refresh_zone_processing()
         self._test_excluded_masks = self._build_test_excluded_masks(self._zones)
         self._test_ignored_hits = 0
         self._test_ignored_motion = None
         # A referencia fotometrica foi aprendida sob outra area monitorada.
         # Recriar evita que uma troca de zona pareca uma mudanca de luz.
         self._illumination = None
+
+    def _refresh_zone_processing(self) -> None:
+        """Cache zone decisions once, not on every frame.
+
+        The early whole-frame gate must not reject a component that its zone
+        accepts. Only monitored pixels contribute to this minimum. High zones
+        also keep thin movement through a smaller morphology kernel; other
+        zones retain the existing cleanup.
+        """
+        self._minimum_zone_component_pixels = self.min_component_pixels
+        self._high_sensitivity_mask = None
+        self._all_monitored_high = False
+        if self._zone_factor_map is None:
+            return
+        monitored = (self._zone_mask > 0) if self._zone_mask is not None else np.ones(
+            (self.frame_height, self.frame_width), dtype=bool
+        )
+        levels = self._zone_factor_map[monitored]
+        if levels.size == 0:
+            return
+        self._minimum_zone_component_pixels = min(
+            max(1, int(round(self.min_component_pixels * _FATOR_POR_NIVEL[int(level)])))
+            for level in np.unique(levels)
+        )
+        high = monitored & (self._zone_factor_map == _NIVEL_POR_NOME["alta"])
+        if np.any(high):
+            self._high_sensitivity_mask = high
+            self._all_monitored_high = bool(np.all(high[monitored]))
+
+    def _clean_motion_mask(self, mask):
+        if self._all_monitored_high:
+            kernel = self._morph_kernel_high
+        else:
+            kernel = self._morph_kernel_default
+        cleaned = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+        cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_CLOSE, kernel)
+        if self._high_sensitivity_mask is not None and not self._all_monitored_high:
+            fine = cv2.morphologyEx(mask, cv2.MORPH_OPEN, self._morph_kernel_high)
+            fine = cv2.morphologyEx(fine, cv2.MORPH_CLOSE, self._morph_kernel_high)
+            np.copyto(cleaned, fine, where=self._high_sensitivity_mask)
+        # Closing may expand foreground across a polygon boundary. Exclusions
+        # must remain excluded even after the less aggressive high-zone pass.
+        if self._zone_mask is not None:
+            cv2.bitwise_and(cleaned, self._zone_mask, dst=cleaned)
+        return cleaned
 
     def _build_test_excluded_masks(self, zones):
         masks = []
@@ -440,9 +489,7 @@ class MotionDetector(Detector):
             fgmask = cv2.bitwise_and(fgmask, self._zone_mask)
 
         # Morfologia para eliminar ruído fino e unir fragmentos do mesmo objeto.
-        kernel = np.ones((5, 5), np.uint8)
-        fgmask = cv2.morphologyEx(fgmask, cv2.MORPH_OPEN, kernel)
-        fgmask = cv2.morphologyEx(fgmask, cv2.MORPH_CLOSE, kernel)
+        fgmask = self._clean_motion_mask(fgmask)
 
         if self._warmup_frames < warmup_total:
             self._stats["warmup_suppressed_frames"] += 1
@@ -524,10 +571,10 @@ class MotionDetector(Detector):
         piso = 0
         if self._noise_floor_enabled and len(self._noise_window) >= self._noise_window.maxlen:
             piso = int(np.median(self._noise_window) * self._noise_floor_factor)
-        limiar_efetivo = max(self.min_component_pixels, piso)
+        limiar_efetivo = max(self._minimum_zone_component_pixels, piso)
 
         if motion_pixels < limiar_efetivo:
-            if piso > self.min_component_pixels and motion_pixels >= self.min_component_pixels:
+            if piso > self._minimum_zone_component_pixels and motion_pixels >= self._minimum_zone_component_pixels:
                 self._stats["noise_floor_suppressed_frames"] += 1
                 self._last_suppression_reason = "adaptive_noise_floor"
             self._consecutive_hits = 0
@@ -612,6 +659,12 @@ class MotionDetector(Detector):
         """Estado explicavel para health/benchmark, sem expor imagens."""
         return {
             "engine": "opencv_mog2_hardened",
+            "analysis_width": self.frame_width,
+            "analysis_height": self.frame_height,
+            "min_component_pixels": self.min_component_pixels,
+            "minimum_zone_component_pixels": self._minimum_zone_component_pixels,
+            "high_sensitivity_cleanup": self._high_sensitivity_mask is not None,
+            "all_monitored_high": self._all_monitored_high,
             "illumination_compensation": self._illumination_enabled,
             "photometric_scene_suppression": self._photometric_scene_suppression,
             "single_frame_strong": self._single_frame_strong,
