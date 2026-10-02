@@ -1,0 +1,11 @@
+[Unit]
+Description=Renew the dedicated AjustCam TURN certificate
+Requires=docker.service
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+UMask=0077
+Nice=10
+ExecStart=/usr/bin/docker run --rm -v /opt/ajustcam-gateway/certbot/conf:/etc/letsencrypt -v /opt/ajustcam-gateway/certbot/www:/var/www/certbot certbot/certbot:latest renew --cert-name turn.s2cam.com.br --quiet --non-interactive
+ExecStartPost=/opt/ajustcam-gateway/coturn/refresh-tls.sh

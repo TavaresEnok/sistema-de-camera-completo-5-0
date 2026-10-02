@@ -1,0 +1,29 @@
+diff --git a/trunk/src/app/srs_app_forward.cpp b/trunk/src/app/srs_app_forward.cpp
+index 1622bdb..dbb5d74 100755
+--- a/trunk/src/app/srs_app_forward.cpp
++++ b/trunk/src/app/srs_app_forward.cpp
+@@ -245,7 +245,18 @@ srs_error_t SrsForwarder::forward()
+ {
+     srs_error_t err = srs_success;
+     
+-    sdk->set_recv_timeout(SRS_CONSTS_RTMP_PULSE);
++    // Keep upstream behavior unless explicitly enabled for a validated rollout.
++    // A 500 ms wait for control messages also batches outgoing video frames.
++    int forward_pulse_ms = 500;
++    const char* configured_pulse = ::getenv("SRS_FORWARDER_PULSE_MS");
++    if (configured_pulse) {
++        char* end = NULL;
++        long value = ::strtol(configured_pulse, &end, 10);
++        if (end != configured_pulse && *end == '\0' && value >= 10 && value <= 500) {
++            forward_pulse_ms = (int)value;
++        }
++    }
++    sdk->set_recv_timeout(forward_pulse_ms * SRS_UTIME_MILLISECONDS);
+     
+     SrsPithyPrint* pprint = SrsPithyPrint::create_forwarder();
+     SrsAutoFree(SrsPithyPrint, pprint);
+@@ -311,4 +322,3 @@ srs_error_t SrsForwarder::forward()
+     return err;
+ }
+ 
+-

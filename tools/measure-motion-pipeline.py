@@ -36,7 +36,10 @@ def main():
     print(json.dumps({'label': args.label, 'elapsed': round(elapsed, 2),
                       'host_cpu_percent': round(100 * (1 - (last_cpu[1] - initial_cpu[1]) / max(1, last_cpu[0] - initial_cpu[0])), 2),
                       'status': after['status'],
-                      'cameras': {key: {**value, 'measured_fps': round((value['processed'] - before['processors'][key]['processed']) / elapsed, 3)}
+                      'cameras': {key: {**value,
+                                       'counter_reset': value['processed'] < before['processors'][key]['processed'],
+                                       'measured_fps': (round((value['processed'] - before['processors'][key]['processed']) / elapsed, 3)
+                                                        if value['processed'] >= before['processors'][key]['processed'] else None)}
                                   for key, value in after['processors'].items() if key in before['processors']}}), flush=True)
 
 

@@ -1,0 +1,4 @@
+# Build with context at the patched SRS source root after make succeeds.
+# Keep the exact deployed major/version/runtime; do not upgrade SRS in this fix.
+FROM ossrs/srs:5@sha256:b429bdb565f0a533e60634856760a500a1b673f8cadce072b2a2eb2674cd7b31
+COPY trunk/objs/srs /usr/local/srs/objs/srs

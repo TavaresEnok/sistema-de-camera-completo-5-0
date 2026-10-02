@@ -1,0 +1,6 @@
+# Opt-in only after synthetic A/B validation; retain the base pinned image for rollback.
+services:
+  srs:
+    image: drac-srs-forward:20261002
+    environment:
+      SRS_FORWARDER_PULSE_MS: "50"

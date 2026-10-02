@@ -1,0 +1,7 @@
+# Dedicated certificate/key, readable only by root and the Coturn supplementary group.
+services:
+  coturn:
+    group_add:
+      - "165534"
+    volumes:
+      - ./coturn/tls:/etc/coturn/tls:ro

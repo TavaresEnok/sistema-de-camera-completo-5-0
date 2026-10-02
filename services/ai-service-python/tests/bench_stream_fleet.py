@@ -33,6 +33,8 @@ def main():
     parser.add_argument("--startup-seconds", type=float, default=180)
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--cv-threads", type=int, default=1)
+    parser.add_argument("--max-host-cpu", type=float, default=75)
+    parser.add_argument("--overload-seconds", type=float, default=15)
     parser.add_argument("--skip-motion", action="store_true", help="Isolate capture throughput without running the detector")
     args = parser.parse_args()
     logging.basicConfig(level=logging.WARNING)
@@ -44,6 +46,25 @@ def main():
     user = quote(os.environ["BENCH_MEDIA_USER"], safe="")
     password = quote(os.environ["BENCH_MEDIA_PASS"], safe="")
     processors = []
+    safety_cpu = host_cpu()
+    safety_at = time.monotonic()
+    overloaded_since = None
+
+    def check_safety():
+        nonlocal safety_cpu, safety_at, overloaded_since
+        now = time.monotonic()
+        if now - safety_at < 1:
+            return
+        current = host_cpu()
+        busy = 100 * (1 - (current[1] - safety_cpu[1]) / max(1, current[0] - safety_cpu[0]))
+        safety_cpu, safety_at = current, now
+        overloaded_since = (overloaded_since or now) if busy > args.max_host_cpu else None
+        if overloaded_since is not None and now - overloaded_since >= args.overload_seconds:
+            raise RuntimeError("Safety stop: sustained host CPU overload")
+        with open('/proc/meminfo', encoding='ascii') as handle:
+            available = next(int(line.split()[1]) for line in handle if line.startswith('MemAvailable:'))
+        if available < 512 * 1024:
+            raise RuntimeError("Safety stop: host available memory below 512 MiB")
     for camera in cameras:
         path = "cam_" + camera["id"].replace("-", "") + "_grid"
         processor = StreamProcessor(
@@ -63,6 +84,7 @@ def main():
 
     def wait_until(deadline):
         while time.monotonic() < deadline:
+            check_safety()
             maintain_leases()
             time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
 
@@ -74,6 +96,7 @@ def main():
             processor.start()
         startup_start = time.monotonic()
         while time.monotonic() - startup_start < args.startup_seconds:
+            check_safety()
             maintain_leases()
             if all(processor.processed_frames >= 35 for _, processor in processors):
                 break
