@@ -599,7 +599,9 @@ check_runtime_security() {
     fail "Logs recentes contem ${raw_credentials} URL(s) RTSP com credenciais"
   fi
 
-  if curl -fsS --max-time 5 http://172.17.0.1:8780/health >/dev/null 2>&1; then
+  if [ "${DRAC_BUILD_AGENT_EXPECTED:-false}" != "true" ]; then
+    ok "Build do app executado na Central; agente local nao necessario"
+  elif curl -fsS --max-time 5 http://172.17.0.1:8780/health >/dev/null 2>&1; then
     ok "Agente de build white-label respondeu no endpoint interno"
   else
     warn "Agente de build white-label nao respondeu no endpoint interno"

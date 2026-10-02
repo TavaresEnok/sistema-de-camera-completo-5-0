@@ -715,8 +715,15 @@ prepare_env() {
   env_set "$env_file" DRAC_MEDIAMTX_RTSP_BIND "127.0.0.1"
   env_set "$env_file" DRAC_MEDIAMTX_HLS_BIND "127.0.0.1"
   env_set "$env_file" DRAC_MEDIAMTX_WEBRTC_HTTP_BIND "127.0.0.1"
-  env_set "$env_file" DRAC_MEDIAMTX_WEBRTC_UDP_BIND "${private_bind}"
-  env_set "$env_file" MEDIAMTX_WEBRTC_ADDITIONAL_HOST "${private_bind}"
+  # Loopback is correct for HTTP proxy, never for standalone WebRTC media.
+  local media_bind media_host
+  if [ "$DRAC_GATEWAY_MODE" = "true" ]; then
+    media_bind="$private_bind"; media_host="$private_bind"
+  else
+    media_bind="0.0.0.0"; media_host="$DRAC_SERVER_IP"
+  fi
+  env_set "$env_file" DRAC_MEDIAMTX_WEBRTC_UDP_BIND "$media_bind"
+  env_set "$env_file" MEDIAMTX_WEBRTC_ADDITIONAL_HOST "$media_host"
   env_set "$env_file" MEDIAMTX_PUBLIC_HOST "$public_host"
   env_set "$env_file" MEDIAMTX_RTMP_SHORT_HOST "$rtmp_short_host"
   env_set "$env_file" MEDIAMTX_PUBLIC_SCHEME "$public_scheme"
@@ -1152,13 +1159,13 @@ validate_installation() {
   log "Validando instalacao"
   docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}' | sed -n '1,20p'
 
-  wait_for_http "API local" "http://127.0.0.1:3000/health" 30 3 || true
+  wait_for_http "API local" "http://127.0.0.1:3000/health/ready" 30 3 || fail "API local nao ficou pronta."
   web_bind="$(env_get "$DRAC_INSTALL_DIR/infra/.env" DRAC_WEB_BIND)"
   case "$web_bind" in
     ''|0.0.0.0|127.0.0.1) web_health_url="http://127.0.0.1:5173/" ;;
     *) web_health_url="http://${web_bind}:5173/" ;;
   esac
-  wait_for_http "Painel local" "$web_health_url" 20 3 || true
+  wait_for_http "Painel local" "$web_health_url" 20 3 || fail "Painel local nao respondeu."
 
   if curl -fsS "${DRAC_CENTRAL_URL%/}/api/health" >/dev/null; then
     log "Central respondeu em ${DRAC_CENTRAL_URL%/}/api/health"

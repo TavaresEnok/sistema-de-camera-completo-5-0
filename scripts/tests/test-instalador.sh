@@ -358,6 +358,30 @@ else
   falha 'agente remoto não prepara Git/Docker para atualização isolada' 'a atualização remota pode falhar por ownership, filemode ou ProtectHome'
 fi
 
+printf '\n\033[1mRegras de instalacao local\033[0m\n'
+if grep -qF 'media_bind="0.0.0.0"; media_host="$DRAC_SERVER_IP"' "$INSTALADOR" \
+  && grep -qF 'media_bind="$private_bind"; media_host="$private_bind"' "$INSTALADOR"; then
+  ok 'WebRTC local nao fica preso no loopback; Gateway preserva bind privado'
+else
+  nok 'WebRTC local/Gateway' 'midia inacessivel ou bind de Gateway alterado'
+fi
+if ! grep -qF 'chown -R "$DRAC_OPERATING_USER:$DRAC_OPERATING_USER" "$parent_dir"' "$INSTALADOR"; then
+  ok 'instalador nao altera ownership de /opt e instalacoes vizinhas'
+else
+  nok 'ownership isolado' 'chown recursivo do diretorio pai'
+fi
+if grep -qF 'DRAC_BUILD_AGENT_EXPECTED:-false' "$READINESS"; then
+  ok 'readiness nao exige agente de build em cliente local'
+else
+  nok 'agente de build opcional' 'falso aviso em cliente local'
+fi
+if grep -qF 'health/ready" 30 3 || fail' "$INSTALADOR" \
+  && grep -qF '"$web_health_url" 20 3 || fail' "$INSTALADOR"; then
+  ok 'falha de prontidao ou painel impede conclusao falsa da instalacao'
+else
+  nok 'prontidao obrigatoria' 'instalador declara sucesso sem painel/API'
+fi
+
 printf '\n'
 if [ "$falhas" -eq 0 ]; then
   printf '\033[1;32mTodos os testes do instalador passaram.\033[0m\n\n'
