@@ -29,7 +29,8 @@ process.stdin.on('end',async()=>{
         const cfg=${JSON.stringify(config)};
         const pc=new RTCPeerConnection({iceTransportPolicy:'relay',iceServers:[{urls:${JSON.stringify(url)},username:cfg.username,credential:cfg.credential}]});
         const video=document.createElement('video');video.muted=true;video.autoplay=true;document.body.append(video);
-        let location;let locationHeaderPresent=false;let deleteStatus=null;let stage='offer';let deleted=false;const began=performance.now();let firstFrameMs=null;let lastFrames=0;let stalledSamples=0;
+        let location;let locationHeaderPresent=false;let deleteStatus=null;let stage='offer';let deleted=false;const began=performance.now();let firstFrameMs=null;let lastFrames=0;let stalledSamples=0;let relayCandidates=0;
+        pc.addEventListener('icecandidate',e=>{if(e.candidate?.type==='relay')relayCandidates++;});
         try{
           pc.addTransceiver('video',{direction:'recvonly'});pc.addTransceiver('audio',{direction:'recvonly'});
           pc.ontrack=e=>{video.srcObject=e.streams[0]||new MediaStream([e.track]);video.play().catch(()=>{});};
@@ -46,7 +47,7 @@ process.stdin.on('end',async()=>{
             location=resolved.href;}
           stage='answer';await pc.setRemoteDescription({type:'answer',sdp:await response.text()});
           stage='receive';
-          let totals={},selected={};
+          let totals={},selected={};const freezeEvents=[];let lastFreezeCount=0;
           for(let i=0;i<cfg.seconds;i++){
             await new Promise(r=>setTimeout(r,1000));const stats=await pc.getStats();
             for(const s of stats.values())if(s.type==='inbound-rtp'&&s.kind==='video'){
@@ -56,13 +57,14 @@ process.stdin.on('end',async()=>{
                 totalDecodeTime:s.totalDecodeTime,freezeCount:s.freezeCount,totalFreezesDuration:s.totalFreezesDuration};
               if(totals.framesDecoded>0&&firstFrameMs===null)firstFrameMs=Math.round(performance.now()-began);
               if(firstFrameMs!==null&&totals.framesDecoded===lastFrames)stalledSamples++;lastFrames=totals.framesDecoded;
+              if((s.freezeCount||0)>lastFreezeCount){if(freezeEvents.length<64)freezeEvents.push({second:i+1,count:s.freezeCount,totalDuration:s.totalFreezesDuration});lastFreezeCount=s.freezeCount;}
             }
             for(const s of stats.values())if(s.type==='transport'&&s.selectedCandidatePairId){
               const pair=stats.get(s.selectedCandidatePairId),local=stats.get(pair?.localCandidateId);
               selected={candidateType:local?.candidateType,relayProtocol:local?.relayProtocol,rtt:pair?.currentRoundTripTime};
             }
           }
-          return {whepStatus:201,firstFrameMs,stalledSamples,selected,videoWidth:video.videoWidth,...totals};
+          return {whepStatus:201,firstFrameMs,stalledSamples,selected,icePolicy:pc.getConfiguration().iceTransportPolicy,relayCandidates,videoWidth:video.videoWidth,freezeEvents,...totals};
         }catch(e){return {error:e.name,stage};}
         finally{if(location){try{
           const r=await fetch(location,{method:'DELETE',headers:{Authorization:cfg.authorization},signal:AbortSignal.timeout(3000)});deleteStatus=r.status;deleted=r.ok;
@@ -73,7 +75,9 @@ process.stdin.on('end',async()=>{
       const cleanup=await call('Runtime.evaluate',{expression:'window.__probeCleanup['+index+']',returnByValue:true});
       if(r.exceptionDetails)throw new Error('evaluation');
       const value=r.result.value;console.log(JSON.stringify({reader:index+1,url,...value,...cleanup.result.value}));
-      if(!value?.framesDecoded||value.selected?.candidateType!=='relay'||!cleanup.result.value?.sessionDeleted)process.exitCode=1;
+      // A nominated peer-reflexive candidate can still carry relayProtocol.
+      // Verify policy, gathered relay and nominated relay transport together.
+      if(!value?.framesDecoded||value.icePolicy!=='relay'||!value.relayCandidates||!value.selected?.relayProtocol||!cleanup.result.value?.sessionDeleted)process.exitCode=1;
     }
     await Promise.all(config.urls.map(probe));
   }catch(e){console.error('Video relay probe failed ('+e.name+')');process.exitCode=1;}

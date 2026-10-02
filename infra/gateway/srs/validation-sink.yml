@@ -1,0 +1,16 @@
+# Isolated Docker lab only, synthetic stream; no ports published.
+logLevel: warn
+api: yes
+rtsp: yes
+rtmp: yes
+hls: yes
+hlsAlwaysRemux: yes
+webrtc: yes
+webrtcAdditionalHosts: [drac-validation-sink]
+paths:
+  all_others:
+    record: yes
+    recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S-%f
+    recordFormat: fmp4
+    recordPartDuration: 1s
+    recordSegmentDuration: 5s

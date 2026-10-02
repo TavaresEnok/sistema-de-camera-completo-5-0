@@ -1,5 +1,9 @@
 # AjustCam — implementação e validação do pipeline
 
+Nova rodada, achados adicionais e ensaios prolongados ainda ativos:
+[validações remotas](validacoes-remotas-2026-10-01.md). Não considerar o pipeline
+integralmente aprovado somente pelos testes anteriores abaixo.
+
 ## Estado confirmado
 
 API/web `9a44dfe` e IA `6a8632a` implantados na Vibe e IB Telecom.
