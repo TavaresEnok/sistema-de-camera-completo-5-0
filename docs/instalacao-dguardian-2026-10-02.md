@@ -8,15 +8,17 @@ manual do instalador. Servidor Ubuntu 24.04 x86-64, oito vCPUs Xeon E5-2680 v4,
 Host local `192.168.100.166/24`, roteador `192.168.100.1`; acesso administrativo
 autorizado `45.176.143.184:45222`, usuário `dguardian`, elevado com sudo.
 
-**Ainda não liberado para uso externo.** IP público portas 80/443: conexão
-recusada nas verificações; DNS `dguardian.s2cam.com.br` retorna `177.104.156.25`,
-não o servidor novo. Usuário foi consultado sobre domínio, encaminhamento de
-portas, plano/limite e redes adicionais de câmeras; ainda sem resposta.
+**Ainda não liberado para uso externo pelo domínio.** Domínio confirmado pelo
+usuário: `dguardian.s2cam.com.br` deve apontar a `45.176.143.184`. Os encaminhamentos
+foram informados pelo usuário e testados nesta continuação. DNS público ainda
+retorna `177.104.156.25`, não o servidor novo (Google, Cloudflare e VM, ~17:32 UTC).
+HTTP instalado e alcançável pelo IP; página provisória 503 intencional até HTTPS.
+Plano/limite e redes adicionais de câmeras ainda precisam de informação.
 Nenhum DNS, NAT do roteador ou licença comercial foi inventado/alterado.
 Não foram cadastradas câmeras fictícias como se fossem equipamentos do cliente.
-Sem câmera e sem rota pública confirmada, transmissão/playback externo/app
-e TURN da nova instalação **não foram aprovados**. A mídia UDP disponível no
-host não comprova que o roteador a encaminha.
+Sem câmera e sem HTTPS público correto, transmissão/playback externo/app
+**não foram aprovados**. TURN já configurado e preservado na reexecução, incluindo
+UDP, TCP e TLS; isso não comprova a entrega de vídeo/relay para um cliente real.
 
 ## Fluxo e revisões
 
@@ -41,9 +43,10 @@ revisão 1, logo presente com 55.331 caracteres no banco da instalação.
 | `1790956853243-dguardian` | `eb61ad6021fbd876bb37cdddca19d1698f3f9a88` | done, exitCode 0; instalação limpa |
 | `1790959765219-dguardian` | `0c32e33e49cba6c4953946b2354a430d290ec45d` | failed, exitCode 1 antes de trocar código; achou mudança somente de permissão criada pelo instalador |
 | `1790959896064-dguardian` | `2ab1988073b201aafe94c3dda7b47cac2d962f70` | done, exitCode 0; reexecução, correções e administrador preservado |
+| `1790962210656-dguardian` | `da267c32c315e5eb6bb3c9b63d8c3d0c137f7c69` | done, exitCode 0; TURN preservado e overlay aplicado, administrador mantido |
 
 SHA-256 do instalador final:
-`9ce843825822a4f39d296eb183a36158fcb6ddd22c7f2bdb420767d16d307413`.
+`47a859ab1354292e0e44e42aa0ff38d8baaee231d696b85855afe762cf6bc7ff`.
 Piloto usa commit/hash imutáveis explícitos e auditoria; **não promove** uma
 versão ainda sob validação para toda a frota. Release global anterior mantida.
 
@@ -62,6 +65,58 @@ versão ainda sob validação para toda a frota. Release global anterior mantida
 | Falso aviso de build-agent local | Readiness respeita `DRAC_BUILD_AGENT_EXPECTED`, padrão false | Build continua na Central |
 | Instalador tolerava falha de HTTP/readiness | Falha de API `/health/ready` ou painel aborta conclusão | Readiness geral pode manter avisos honestos sobre ausência de câmera |
 | Primeiro backup antes das migrations era aceito vazio | Gerar nova cópia depois de migrations/seed; restore exige migrations >0 e quatro tabelas críticas, retry 60 s e healthcheck | Proteção contra dump vazio; não garante restauração de mídia que ainda não existe |
+| Reexecução local apagava HTTPS/TURN configurados depois | Preservar origem HTTPS e par TURN existente; aceitar origem HTTPS local sem confundir com Gateway; incluir overlay se TURN presente | Três testes novos aprovados; rejeitar configuração TURN parcial sem misturar chaves |
+
+## Domínio, NAT e HTTPS — continuação às 17:26–17:35 UTC
+
+Nginx/certbot instalados **somente na VM Dguardian**, sem reiniciar o servidor
+nem modificar outros clientes ou o MikroTik. Nginx ativo/configuração válida;
+certbot.timer ativo. Configuração HTTPS preparada (não carregada sem certificado):
+`/etc/nginx/dguardian-https.prepared`. Renovações terão reload validado de Nginx.
+Modelo completo validado com `nginx -t` em container isolado com certificado de
+teste; esse certificado **não foi colocado em produção**.
+
+| Teste externo desde Vibe | Evidência | Limite |
+|---|---|---|
+| 80/TCP | `--resolve ...:80:45.176.143.184`, `/api/health`: HTTP 200, service api; raiz responde mensagem Dguardian/503 | Confirma NAT e backend, não libera login HTTP |
+| 443/TCP | Conexão aceita por listener diagnóstico temporário na VM; peer `192.168.100.1`; encerrado após uma conexão | Confirma encaminhamento TCP, **não** TLS; listener HTTPS ainda depende de certificado |
+| 1935/TCP | Conexão TCP estabelecida ao IP público | Não comprova publicação RTMP/câmera autorizada |
+| 45222/TCP | Conexão/SSH usados na instalação real | Administração confirmada |
+| 8189/UDP | `tcpdump -nn -i ens18 -c 1`: `192.168.100.1.49667 > 192.168.100.166.8189: UDP, length 30` | Confirma chegada de um pacote externo; não confirma ICE/DTLS/vídeo nem sentido de volta |
+
+**Observação de rede:** o tráfego de teste TCP/UDP chegou com endereço de origem
+do roteador `192.168.100.1`, não da Vibe. A causa específica da tradução é
+**hipótese** (regra de src-NAT/masquerade); não foi lida a configuração completa
+do roteador. Se ocorrer com todo cliente, logs/limites por IP verão o mesmo
+endereço. Não mudar NAT por suposição; revisar com o técnico futuramente.
+8189/TCP adicional da imagem não foi usado como prova de WebRTC/UDP.
+
+MediaMTX API real após a reexecução: três entradas `webrtcICEServers2` com
+UDP 3478, TCP 3478 e TLS 5349, credenciais presentes (não exibidas),
+`clientOnly=true`; `webrtcAdditionalHosts=[45.176.143.184]`.
+Da VM, `openssl s_client` para `turn.s2cam.com.br:5349` validou TLS 1.3,
+certificado e hostname (`Verification: OK`). Segredo transferido somente pelo
+stdin SSH criptografado e salvo no `.env` 0600; backup protegido, nada em Git.
+Alocação relay e vídeo externo permanecem não homologados.
+
+Finalizador preparado em `/usr/local/sbin/dguardian-https-finalize`, fonte em
+`infra/dguardian/finalize-https.sh`. Teste real com DNS atual encerrou antes de
+qualquer mudança: `DNS ainda aponta para 177.104.156.25; esperado 45.176.143.184`.
+**Não foi acionada emissão de certificado no IP antigo**, não houve certificado
+autoassinado no painel nem desativação da validação TLS.
+
+Depois da mudança pública do registro A, executar como root:
+
+```bash
+/usr/local/sbin/dguardian-https-finalize
+```
+
+O comando verifica o DNS, solicita certificado por HTTP-01/webroot, preserva
+backup da configuração, valida/recarrega Nginx, ajusta somente URLs públicas no
+`.env`, recria API/MediaMTX (não banco/IA/web), instala hook de renovação e testa
+readiness HTTPS local com validação de certificado. Depois ainda verificar pelo
+domínio desde a internet, renovação em staging e sessão de vídeo autorizada.
+Não agendado para executar sozinho antes da confirmação da troca de DNS.
 
 ## Validações executadas
 
@@ -103,10 +158,10 @@ mas não foi redimensionado sem dimensionamento de gravações.
 
 ## Pendências que exigem informação externa
 
-1. Domínio definitivo e DNS apontando ao servidor local, ou outra estratégia
-   explicitamente escolhida; não enviar tráfego para o gateway antigo por suposição.
-2. Encaminhamento do acesso HTTPS do roteador ao host, mais estratégia de mídia
-   WebRTC/TURN e eventual RTMP; não abrir API/banco/mídia de controle diretamente.
+1. Alterar o registro A confirmado `dguardian.s2cam.com.br` de `177.104.156.25`
+   para `45.176.143.184`; não há credenciais de administração DNS nesta sessão.
+2. Após DNS: concluir certificado/HTTPS e homologar mídia bidirecional e TURN.
+   Os encaminhamentos de entrada testados funcionam; não confundir isso com vídeo.
 3. Plano/limite comercial e credenciais de câmera de homologação. Sem isso não
    declarar teste real de vídeo, gravação, reprodução, IA ou app como aprovado.
 
