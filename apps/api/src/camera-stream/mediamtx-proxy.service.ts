@@ -16,6 +16,7 @@ import { LiveCapacityBudget, LiveCapacityException, LivePressureSampler, liveCap
 import { audioCodecFromTracks } from './helpers/live-audio.helper';
 import { trackPacketHealth, type TrackPacketHealth } from './helpers/track-packet-health.helper';
 import { envNumber } from '../common/config/env-number.helper';
+import { liveDecoderInputArgs } from './helpers/live-decoder-budget.helper';
 import {
   ingestPathNames,
   isAcceptableIngestPath,
@@ -2765,10 +2766,9 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
         ? (sourceAudioCodec === 'opus' ? '-map 0:a:0? -c:a copy' : '-map 0:a:0? -c:a libopus -b:a 64k -ac 1 -ar 48000')
         : '-an';
       // MediaMTX preenche $MTX_PATH e $RTSP_PORT automaticamente para o script.
-      // -threads 4: limita libx264 a 4 threads por câmera (3 câmeras × 4 = 12 threads totais).
-      // Sem este limite, libx264 cria automaticamente N threads = nº de núcleos lógicos,
-      // causando 3 × 14 = 42 threads encode + 3 × 15 = 45 threads decode competindo,
-      // sobrecarregando C0/C1 por efeito de scheduler clustering.
+      // Input and output need independent limits. The -threads in videoArgs
+      // caps only x264; without a pre-input limit, HEVC decoding still grows
+      // with host core count (26 threads observed for one 640x360 publisher).
       const publishUrl = this.buildInternalPublishRtspUrl(pathName);
       const buildFfmpegCommand = (videoArgs: string) =>
         `ffmpeg -nostdin -hide_banner -loglevel warning -fflags +genpts+discardcorrupt+nobuffer ` +
@@ -2783,6 +2783,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
         // instead of passing corrupted NAL units downstream (which causes
         // green frames in the browser until the next IDR keyframe arrives).
         `-flags low_delay -err_detect careful -rtsp_transport ${inputTransport} ` +
+        `${liveDecoderInputArgs()} ` +
         `-i "${privateSourceUrl}" -map 0:v:0 ${videoArgs} ${audioArgs} ` +
         `-f rtsp -rtsp_transport tcp -muxdelay 0.1 -pkt_size 1200 "${publishUrl}"`;
       const ffmpegCommand = buildFfmpegCommand(videoArgs);

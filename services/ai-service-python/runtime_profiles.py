@@ -77,6 +77,9 @@ MOTION_PROFILE = {
     # (IR dia/noite, exposição, relâmpago, câmera mexida) — reaprende, não dispara.
     "motion_global_change_ratio": _env_float("MOTION_GLOBAL_CHANGE_RATIO", 0.55),
     "motion_min_consecutive_hits": 3,
+    # A strong compact region may exist in only one sampled frame (fast pass).
+    # Weak/small movement retains temporal confirmation; reversible kill switch.
+    "motion_single_frame_strong": str(os.getenv("MOTION_SINGLE_FRAME_STRONG", "true")).strip().lower() != "false",
     # 30 frames a 2 fps = 15s de aprendizado no boot (antes 60 = 30s cego).
     "motion_warmup_frames": _env_int("MOTION_WARMUP_FRAMES", 30),
     # Normalização de contraste pré-diff (padrão Frigate) — essencial à noite.

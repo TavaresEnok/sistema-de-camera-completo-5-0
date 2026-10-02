@@ -8,6 +8,7 @@ import { useAiPreferencesStore } from '../store/aiPreferencesStore';
 import { prepareNativeHls } from '../lib/native-hls';
 import { streamUrlsCache } from '../lib/stream-urls-cache';
 import { liveDetectionsPoller } from '../lib/live-detections-poller';
+import { nextLiveOverlayState } from '../lib/live-overlay-state';
 import { SmoothDetectionOverlay } from './SmoothDetectionOverlay';
 import { useRedeStore } from '../store/redeStore';
 import { classificarFalhaDePlayer } from '../lib/qualidade-de-rede';
@@ -2522,7 +2523,9 @@ export function LiveStreamPlayer({
 
     // Assina o poller compartilhado: todos os tiles são agregados em uma única
     // requisição em lote por ciclo, em vez de uma requisição por câmera.
-    const unsubscribe = liveDetectionsPoller.subscribe(cameraId, setDetections);
+    const unsubscribe = liveDetectionsPoller.subscribe(cameraId, incoming => {
+      setDetections(previous => nextLiveOverlayState(previous, incoming));
+    });
     return () => {
       unsubscribe();
       setDetections([]);

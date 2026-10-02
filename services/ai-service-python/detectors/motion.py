@@ -44,8 +44,8 @@ class MotionDetector(Detector):
       a camada de cima; o gatilho da gravação não pode ser engolido.
     - SOMBRAS: MOG2 com detectShadows=True e pixels de sombra (127) descartados
       antes da análise — sombra projetada não vira movimento.
-    - VIA RÁPIDA: movimento grande confirma em 2 frames (~1,0s a 2 fps);
-      movimento pequeno segue exigindo 3 (~1,5s) para matar falso positivo.
+    - VIA RÁPIDA: região grande e compacta pode confirmar em 1 frame; regiões
+      menos fortes continuam exigindo 2 ou 3 frames para filtrar ruído.
     - TODAS AS CAIXAS: devolve um Detection por objeto coeso (maior primeiro,
       com teto), não só o maior. Quem lê apenas o [0] continua vendo o mesmo de
       sempre; a confirmação semântica passa a enxergar a pessoa que entrou ao
@@ -95,6 +95,7 @@ class MotionDetector(Detector):
         self._consecutive_hits = 0
         self._min_consecutive = int(MOTION_PROFILE.get("motion_min_consecutive_hits", 3))
         self._fast_min_consecutive = max(1, self._min_consecutive - 1)
+        self._single_frame_strong = bool(MOTION_PROFILE.get("motion_single_frame_strong", True))
         # Normalização de contraste (padrão Frigate): estica o histograma entre os
         # percentis 4–96, suavizado por média móvel — crucial à noite/baixa luz,
         # quando a imagem "achata" e o diff perde amplitude.
@@ -125,6 +126,7 @@ class MotionDetector(Detector):
         self._contrast_history = np.zeros((50, 2), dtype=np.float32)
         self._contrast_history[:, 1] = 255.0
         self._contrast_index = 0
+        self._contrast_initialized = False
         # Preservação de quem FICA na cena (padrão Frigate): enquanto o movimento
         # é recente, o fundo NÃO aprende (pessoa parada não é "engolida" e some);
         # só depois de persistir é que a mudança começa a ser absorvida (carro
@@ -384,6 +386,13 @@ class MotionDetector(Detector):
         if self._improve_contrast:
             lo = uint8_percentile(gray_probe, 4)
             hi = uint8_percentile(gray_probe, 96)
+            # Seed once before background learning. A uniform first scene uses
+            # the identity transform: reseeding later when an object appears
+            # would turn that local movement into an artificial global change.
+            if not self._contrast_initialized:
+                if hi > lo:
+                    self._contrast_history[:] = (lo, hi)
+                self._contrast_initialized = True
             if hi > lo:
                 self._contrast_history[self._contrast_index] = (lo, hi)
                 self._contrast_index = (self._contrast_index + 1) % len(self._contrast_history)
@@ -567,19 +576,35 @@ class MotionDetector(Detector):
 
         best_area = components[0][0]
 
-        # Confirmação temporal: grande = 2 frames; pequeno = 3 frames.
+        # A brief pass can be present in only one of the sampled frames. Allow
+        # that frame only for a large, dense region AFTER illumination, noise,
+        # chronic activity, zones and periodicity guards. Do not bypass the
+        # regular 2/3-frame policy for weak or scattered changes.
         self._motion_streak += 1
         self._consecutive_hits += 1
-        required = (
-            self._fast_min_consecutive
-            if best_area >= self.min_component_pixels * 6
-            else self._min_consecutive
+        _area, (x, y, w, h) = components[0]
+        local_minimum = self.min_component_pixels
+        if self._zone_factor_map is not None:
+            local_level = int(np.max(self._zone_factor_map[y:y+h, x:x+w]))
+            local_minimum *= _FATOR_POR_NIVEL[local_level]
+        strong_single_frame = (
+            self._single_frame_strong
+            and not self._last_illumination.photometric
+            and best_area >= max(local_minimum * 8, limiar_efetivo * 2)
+            and best_area / max(1, w * h) >= 0.8
         )
+        required = self._min_consecutive
+        if best_area >= self.min_component_pixels * 6:
+            required = self._fast_min_consecutive
+        if strong_single_frame:
+            required = 1
         if self._consecutive_hits < required:
             self._stats["temporal_suppressed_frames"] += 1
             self._last_suppression_reason = "temporal_confirmation"
             return []
 
+        if strong_single_frame and self._consecutive_hits == 1:
+            self._stats["strong_single_frame_confirmations"] += 1
         self._stats["motion_emitted_frames"] += 1
         return self._build_detections(frame, components, motion_pixels)
 
@@ -589,6 +614,7 @@ class MotionDetector(Detector):
             "engine": "opencv_mog2_hardened",
             "illumination_compensation": self._illumination_enabled,
             "photometric_scene_suppression": self._photometric_scene_suppression,
+            "single_frame_strong": self._single_frame_strong,
             "last_suppression_reason": self._last_suppression_reason,
             "illumination": (
                 self._illumination.diagnostics()

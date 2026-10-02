@@ -90,15 +90,33 @@ def test_ruido_de_sensor_nao_vira_gravacao():
 
 
 def test_a_suavizacao_e_o_que_resolve():
-    """Guarda-costas do teste acima: prova que o ganho vem DAQUI.
+    """Verify smoothing at the model input, independently of other guards.
 
-    Sem isto, alguém poderia remover o blur e o teste anterior continuaria
-    passando por outro motivo qualquer, sem ninguém perceber a regressão.
+    Contrast startup is now seeded from the scene. The old no-blur control
+    produced false events from its artificial contrast ramp; after that fix
+    both event counts are zero. Counting those events no longer isolates blur.
+    Compare high-frequency noise in the exact input delivered to MOG2 instead.
     """
-    assert _falsos_positivos(ksize=0, sigma=10) > 20, (
-        "sem suavização o ruído DEVE disparar — se não dispara mais, este banco "
-        "perdeu o sentido e os limiares mudaram; revise antes de mexer"
-    )
+    import cv2
+
+    class CaptureModel:
+        frame = None
+        def apply(self, frame, learningRate):
+            self.frame = frame.copy()
+            return np.zeros(frame.shape[:2], dtype=np.uint8)
+
+    rng = np.random.default_rng(SEMENTE)
+    noisy = _ruidoso(_cena(rng), rng, sigma=10)
+    energy = {}
+    for ksize in (0, 3):
+        detector = _detector(ksize)
+        model = CaptureModel()
+        detector.fgbg = model
+        detector.infer(noisy)
+        gray = cv2.cvtColor(model.frame, cv2.COLOR_BGR2GRAY)
+        energy[ksize] = float(np.var(cv2.Laplacian(gray, cv2.CV_32F)))
+    assert energy[0] > 0
+    assert energy[3] < energy[0] * 0.2, "3x3 smoothing stopped removing high-frequency sensor noise before MOG2"
 
 
 @pytest.mark.parametrize(

@@ -1,0 +1,10 @@
+services:
+  ai-service:
+    image: drac-pipeline-ai:20261002-motion-fixes
+    stop_grace_period: 30s
+  web:
+    image: drac-pipeline-web:20261002-overlay-fixes
+  api:
+    image: drac-pipeline-api:20261002-decoder-budget
+    environment:
+      LIVE_CAPTURE_DECODER_THREADS: 2
