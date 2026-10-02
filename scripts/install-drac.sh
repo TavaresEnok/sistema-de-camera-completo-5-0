@@ -1262,6 +1262,10 @@ main() {
   # A instalação só é "concluída" depois que dá para ENTRAR nela e depois que o
   # monitoramento provou que funciona. Ambos falham alto.
   seed_admin
+  # The backup daemon starts with Compose, before migrate deploy. Refresh its
+  # first dump only after the schema and initial administrator exist.
+  log "Gerando backup apos migrations e criacao do administrador"
+  run_as_user "$DRAC_OPERATING_USER" bash -lc "cd '$DRAC_INSTALL_DIR' && docker compose --env-file infra/.env $(compose_files) restart postgres-backup"
   provision_watchdog || warn "Watchdog nao pode ser agendado automaticamente; agende scripts/runtime-watchdog.sh manualmente."
   provision_operations_agent
   verify_watchdog
