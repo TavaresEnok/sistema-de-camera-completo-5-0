@@ -24,7 +24,7 @@ process.stdin.on('end',async()=>{
       pending.set(key,{resolve,reject,timer});socket.send(JSON.stringify({id:key,method,params}));});
     await call('Page.navigate',{url:new URL(config.whep).origin});
     await new Promise(r=>setTimeout(r,2000));
-    for(const url of config.urls){
+    async function probe(url,index){
       const expression=`(async()=>{
         const cfg=${JSON.stringify(config)};
         const pc=new RTCPeerConnection({iceTransportPolicy:'relay',iceServers:[{urls:${JSON.stringify(url)},username:cfg.username,credential:cfg.credential}]});
@@ -66,15 +66,16 @@ process.stdin.on('end',async()=>{
         }catch(e){return {error:e.name,stage};}
         finally{if(location){try{
           const r=await fetch(location,{method:'DELETE',headers:{Authorization:cfg.authorization},signal:AbortSignal.timeout(3000)});deleteStatus=r.status;deleted=r.ok;
-        }catch{} }pc.close();video.srcObject=null;video.remove();window.__probeCleanup={sessionDeleted:deleted,deleteStatus,locationHeaderPresent,
+        }catch{} }pc.close();video.srcObject=null;video.remove();window.__probeCleanup ||= {};window.__probeCleanup[${index}]={sessionDeleted:deleted,deleteStatus,locationHeaderPresent,
           locationPrefixMatches:location?new URL(location).pathname.startsWith(new URL(cfg.whep).pathname+'/'):null};}
       })()`;
       const r=await call('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});
-      const cleanup=await call('Runtime.evaluate',{expression:'window.__probeCleanup',returnByValue:true});
+      const cleanup=await call('Runtime.evaluate',{expression:'window.__probeCleanup['+index+']',returnByValue:true});
       if(r.exceptionDetails)throw new Error('evaluation');
-      const value=r.result.value;console.log(JSON.stringify({url,...value,...cleanup.result.value}));
+      const value=r.result.value;console.log(JSON.stringify({reader:index+1,url,...value,...cleanup.result.value}));
       if(!value?.framesDecoded||value.selected?.candidateType!=='relay'||!cleanup.result.value?.sessionDeleted)process.exitCode=1;
     }
+    await Promise.all(config.urls.map(probe));
   }catch(e){console.error('Video relay probe failed ('+e.name+')');process.exitCode=1;}
   finally{socket?.close();chrome.kill('SIGTERM');}
 });

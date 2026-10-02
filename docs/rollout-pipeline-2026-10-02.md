@@ -14,7 +14,8 @@ e não repete automaticamente requisições. Não é uma fila durável contra fa
 
 Testes: 351 Python, 553 web, 43 API focados; TypeScript API/web passou.
 Seis testes relevantes mobile passaram, mas não equivalem a teste em aparelho.
-As mudanças mobile estão no código; APK atualizado ainda não foi publicado.
+As mudanças mobile foram compiladas e publicadas no APK Vibe no aprofundamento
+registrado abaixo. Validação física em aparelho ainda pendente.
 
 ## Movimento: medições anteriores à correção do encaminhador
 
@@ -202,12 +203,66 @@ reinícios do container corrigido. Captura/espera/decode Vibe p95 94–103 ms.
 ## Pendências que exigem outra cobertura
 
 - Observar estabilidade prolongada; teste pós-correção com oito adicionais concluído.
-- Vídeo ponta a ponta forçando relay e teste em rede móvel/aparelhos reais.
+- Teste em rede móvel e aparelhos reais. Vídeo completo via relay já foi testado.
 - Inventário das demais instalações e verificação do provisionamento TURN.
 - Roteador/hipervisor 10.10.0.1: acesso solicitado, ainda não disponível.
-- Medição separada de inferência/tracking de objetos e latência câmera→tela ainda
-  não concluída. Os tempos atuais têm estágios combinados.
+- Latência câmera→tela ainda não medida. Tempos de objeto separados em piloto
+  sintético, sem representar acurácia nem carga de tracking de uma rua real.
 - Não há garantia de recuperar quadros que a câmera/rede de origem não entregou.
+
+## Fechamento do aprofundamento
+
+Tres espectadores simultâneos, mesma câmera 1080p, TURN/TLS, 30 s: 552/558/558
+quadros decodificados, zero quadros descartados, zero pacotes perdidos, zero
+travamentos; as três sessões apagadas HTTP 200. Servidor não reteve sessões
+do teste (consulta posterior: zero sessões WebRTC).
+
+Benchmark offline separou objeto em preparo, inferência e tracking usando o
+modelo INT8 640 já instalado, 20 quadros medidos após cinco de aquecimento.
+Frame sintético 1080p, um trabalhador; containers limitados por cgroup:
+
+| Cota CPU | Threads OpenVINO | Preparo médio | Inferência média | Tracking médio |
+|---:|---:|---:|---:|---:|
+| 4 núcleos | 8 | 15,964 ms | 266,802 ms | 2,629 ms |
+| 4 núcleos | 4 | 9,799 ms | 113,830 ms | 1,747 ms |
+| 8 núcleos | 10 | 9,377 ms | 98,776 ms | 1,868 ms |
+| 8 núcleos | 8 | 10,456 ms | 97,392 ms | 1,965 ms |
+
+Mostra que exceder a cota pode piorar latência; não equivale a FPS de uma câmera
+real nem avalia acurácia. Vibe tinha override 10, orçamento 8, `within_budget=false`.
+Overlay local agora fixa 8; após recriar somente IA, health confirma
+`within_budget=true`, três análises recuperadas. IB tem 30 CPUs e orçamento 25;
+override 10 cabe nesse orçamento, portanto não foi reduzido.
+
+App Vibe: builder existente executou commit exato
+`38dac585cff0459dc505a81ac8813f768ec2b108`, job `1790904923247-vibe`, finalizado
+com sucesso em ~3 min 30 s. Versão 2.0.1, versionCode 40, pacote `com.s2cam.vibe`.
+APK/AAB/kit publicados pelo fluxo existente; HEAD público APK HTTP 200,
+43.485.050 bytes; build-info público confere commit e versionCode. Nenhum
+aparelho aparece em `adb devices`, portanto não foi alegado teste em aparelho.
+Verificação independente `apksigner verify` aprovada; `aapt` confirma pacote,
+versão e versionCode. SHA256 APK:
+`4447268655039eb8388294fbd31a7e5ba9b1190b795d011b55974ff1041af0f8`.
+
+Primeira geração falhou ao fazer fetch por propriedade incorreta de quatro
+itens Git. Corrigido proprietário para management somente nestes alvos exatos:
+diretório e ref `.git/refs/remotes/origin/migration[/repository-5-0]`, e refs
+`dependabot/npm_and_yarn/development-dependencies-fe9c58089c` e
+`production-dependencies-209eee2b4b`. Conteúdo de código não foi modificado
+nessa correção. Nova geração concluiu normalmente.
+
+Inventário real da Central foi consultado no PostgreSQL (JSON legado estava
+desatualizado). Existem Vibe, Grupo Flash/IB, DEMO 03, Demo 04, DRAC Local e
+duas entradas Cortex. Últimos heartbeats diferem: presença no cadastro não
+comprova instalação ativa. Acessos adicionais solicitados para estender inspeção
+e rollout; não foi alegada implantação nas instalações sem acesso disponível.
+
+Conferência final Vibe, após limite de oito threads: três câmeras em 4,986
+análises/s para meta 5, CPU host 24,33% numa janela de 30,68 s. Nova amostra
+passiva no gateway: 30 s, mediana de pausas 50,681 ms, p95 101,268 ms,
+máximo 102,719 ms; zero pausas acima de 400 ms. SRS manteve 30 streams e
+zero reinícios desde 00:16:45 UTC. Nenhum container de benchmark/probe ficou
+executando após os testes.
 
 ## Reversão
 

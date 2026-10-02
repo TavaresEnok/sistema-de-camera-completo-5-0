@@ -12,9 +12,12 @@ import time
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--seconds', type=int, default=20)
 parser.add_argument('--transport', choices=['udp','tcp','tls'])
+parser.add_argument('--readers', type=int, default=1)
 args = parser.parse_args()
 if not 5 <= args.seconds <= 300:
     raise SystemExit('seconds must be between 5 and 300')
+if not 1 <= args.readers <= 4:
+    raise SystemExit('readers must be between 1 and 4')
 
 values = dict(line.split('=', 1) for line in Path('/opt/drac/infra/.env').read_text().splitlines()
               if '=' in line and not line.startswith('#'))
@@ -38,6 +41,7 @@ config.update(username=username, credential=credential, urls=[
 config['seconds'] = args.seconds
 if args.transport:
     config['urls'] = [config['urls'][['udp','tcp','tls'].index(args.transport)]]
+config['urls'] *= args.readers
 code = Path(__file__).with_suffix('.cjs').read_text()
 result = subprocess.run(['docker','exec','-i','drac-operational-browser','node','-e',code],
                         input=json.dumps(config),text=True,timeout=len(config['urls'])*(args.seconds+40)+20)
