@@ -41,6 +41,7 @@ logger = logging.getLogger("ai-service.stream")
 class StreamProcessor:
     def __init__(self, camera_id, rtsp_url, api_url, service_token, analysis_type="motion", source_info=None):
         self.camera_id = camera_id
+        self._context_owner = id(self)
         self.rtsp_url = rtsp_url
         self.api_url = api_url
         self.service_token = service_token
@@ -206,6 +207,11 @@ class StreamProcessor:
         self._started_at = time.time()
         self._capture_timestamps = deque(maxlen=120)
         self._inference_timestamps = deque(maxlen=120)
+        self._object_model_timestamps = deque(maxlen=120)
+        self._visual_track_timestamps = deque(maxlen=120)
+        self.object_model_runs = 0
+        self.visual_track_runs = 0
+        self.object_busy_calls = 0
         self._motion_inference_timestamps = deque(maxlen=120)
         self._motion_infer_latencies_ms = deque(maxlen=240)
         self.motion_infer_runs = 0
@@ -213,6 +219,7 @@ class StreamProcessor:
         self._frame_age_sum_ms = 0.0
         self._frame_age_samples = 0
         self._frame_age_last_ms = 0.0
+        self._analysis_completion_age_ms = None
         self._capture_stream_info = {
             "codec": None,
             "width": None,
@@ -470,7 +477,7 @@ class StreamProcessor:
         self.capture_thread.start()
         
         # Thread de processamento
-        self.thread = threading.Thread(target=self._process)
+        self.thread = threading.Thread(target=self._process_with_cleanup)
         self.thread.daemon = True
         self.thread.start()
 
@@ -482,6 +489,15 @@ class StreamProcessor:
             self.thread.join(timeout=2)
         if self._event_delivery:
             self._event_delivery.close()
+        # Do not free shared per-camera state while its old inference is alive.
+        if not self.thread or not self.thread.is_alive():
+            registry.release_context(self.camera_id, self._context_owner)
+
+    def _process_with_cleanup(self):
+        try:
+            self._process()
+        finally:
+            registry.release_context(self.camera_id, self._context_owner)
 
     def _sanitize_url(self, url):
         try:
@@ -639,6 +655,7 @@ class StreamProcessor:
             "inference_fps": round(float(self._rate_from_timestamps(self._inference_timestamps)), 3),
             "frame_age_last_ms": round(float(self._frame_age_last_ms), 3),
             "frame_age_avg_ms": round(float(avg_frame_age_ms), 3),
+            "analysis_completion_age_ms": self._analysis_completion_age_ms,
             "latest_frame_only": True,
             "buffer_size": 1,
             "queue_size": self.frame_queue.qsize(),
@@ -1220,6 +1237,16 @@ class StreamProcessor:
                         # legacy flags can discard allowed vehicles. Never send
                         # object-class restrictions to the face detector.
                         extra_infer_kwargs["allowed_classes"] = self.object_policy["classes"]
+                        if getattr(det, "accepts_temporal_context", False):
+                            extra_infer_kwargs.update(
+                                native_frame=frame,
+                                native_motion_boxes=self._motion_boxes_for_advanced(detections, frame.shape[:2], frame.shape[:2]),
+                                motion_boxes=self._motion_boxes_for_advanced(detections, frame.shape[:2], (advanced_height, advanced_width)),
+                                timestamp=time.monotonic(),
+                                context_owner=self._context_owner,
+                                confirmed_track_ids=(self.confirmador.confirmed_track_ids()
+                                                     if self.emit_events and self.advanced_analysis_type == "general" else None),
+                            )
                     # O detector compartilhado gerencia a inferência thread-safe.
                     infer_started_at = time.perf_counter()
                     try:
@@ -1229,6 +1256,8 @@ class StreamProcessor:
                             input_size_hint=self.current_input_size_hint,
                             **extra_infer_kwargs,
                         )
+                        execution_kind = getattr(advanced_detections, "execution_kind", "model")
+                        model_calls = int(getattr(advanced_detections, "model_calls", 1))
                         # Classes por câmera pertencem ao detector de OBJETOS.
                         # Aplicá-las ao modo face apagaria todos os rostos.
                         if effective_advanced_type == "general":
@@ -1242,7 +1271,17 @@ class StreamProcessor:
                     infer_elapsed_ms = max(0.0, (time.perf_counter() - infer_started_at) * 1000.0)
                     self._stage_timings.observe("advanced_infer_tracking", infer_elapsed_ms / 1000.0)
                     self.advanced_infer_runs += 1
-                    self._inference_timestamps.append(time.time())
+                    if execution_kind not in ("busy", "blocked"):
+                        self._inference_timestamps.append(time.time())
+                    if effective_advanced_type == "general":
+                        if execution_kind == "visual":
+                            self.visual_track_runs += 1
+                            self._visual_track_timestamps.append(time.time())
+                        elif execution_kind == "model":
+                            self.object_model_runs += model_calls
+                            self._object_model_timestamps.append(time.time())
+                        elif execution_kind == "busy":
+                            self.object_busy_calls += 1
                     self.advanced_infer_sum_ms += infer_elapsed_ms
                     self.advanced_infer_last_ms = infer_elapsed_ms
                     self._advanced_infer_latencies_ms.append(infer_elapsed_ms)
@@ -1302,6 +1341,7 @@ class StreamProcessor:
                 else:
                     self._store_live_detections(self._overlay_detections(detections), current_time)
                 self._stage_timings.observe("overlay_publish", time.perf_counter() - overlay_started)
+                self._analysis_completion_age_ms = round(max(0.0, (time.time() - float(capture_timestamp)) * 1000.0), 3)
 
                 # O objeto promovido apenas pela sessão serve ao overlay do
                 # teste, nunca ao pipeline de eventos/gravação da câmera.
@@ -1572,6 +1612,10 @@ class StreamProcessor:
                     "detectedAtMs": ts_ms,
                     "overlayMode": extra.get("overlayMode"),
                     "trackId": extra.get("trackId"),
+                    "trackingSource": extra.get("trackingSource"),
+                    "observedByModel": extra.get("observedByModel"),
+                    "estimated": bool(extra.get("estimated", False)),
+                    "modelAgeMs": extra.get("modelAgeMs"),
                     # Do pacote de tracking: a tela desenha estacionária
                     # tracejada e usa `recovered` para saber que o MESMO objeto
                     # voltou depois de uma oclusão. None quando o tracker não
@@ -1681,6 +1725,11 @@ class StreamProcessor:
             "motion_infer_avg_ms": round(sum(motion_latencies) / len(motion_latencies), 3) if motion_latencies else 0.0,
             "motion_infer_p95_ms": round(motion_latencies[min(len(motion_latencies) - 1, int((len(motion_latencies) - 1) * 0.95))], 3) if motion_latencies else 0.0,
             "advanced_infer_runs": self.advanced_infer_runs,
+            "object_model_runs": self.object_model_runs,
+            "object_model_frame_fps": round(float(self._rate_from_timestamps(self._object_model_timestamps)), 3),
+            "visual_track_runs": self.visual_track_runs,
+            "visual_track_fps": round(float(self._rate_from_timestamps(self._visual_track_timestamps)), 3),
+            "object_busy_calls": self.object_busy_calls,
             "advanced_infer_errors": self.advanced_infer_errors,
             "advanced_infer_last_ms": round(float(self.advanced_infer_last_ms), 3),
             "advanced_infer_avg_ms": round(float(avg_advanced_ms), 3),

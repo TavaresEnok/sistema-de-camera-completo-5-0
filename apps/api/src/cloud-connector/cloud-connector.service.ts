@@ -404,13 +404,23 @@ export class CloudConnectorService implements OnModuleInit, OnModuleDestroy {
         skipDuplicates: true,
       });
 
-      const cameraRows = rows(source.cameras).map((raw) => ({
-        ...unmanaged(raw),
-        enabled: false,
-        passwordEncrypted: blankCameraPassword,
-        ownerUserId: raw.ownerUserId ? userIds.get(String(raw.ownerUserId)) || null : null,
-      }));
+      const cameraRows = rows(source.cameras).map((raw) => {
+        const { groupIds: _groupIds, ...camera } = unmanaged(raw);
+        return {
+          ...camera,
+          enabled: false,
+          passwordEncrypted: blankCameraPassword,
+          ownerUserId: raw.ownerUserId ? userIds.get(String(raw.ownerUserId)) || null : null,
+        };
+      });
       if (cameraRows.length) await tx.camera.createMany({ data: cameraRows as any, skipDuplicates: true });
+      for (const raw of rows(source.cameras)) {
+        if (raw.id && Array.isArray(raw.groupIds)) {
+          const ids = [...new Set(raw.groupIds.filter((id): id is string => typeof id === 'string'))];
+          if (ids.length > 4) throw new Error('Uma câmera do arquivo tem mais de 4 grupos.');
+          await tx.camera.update({ where: { id: String(raw.id) }, data: { groups: { connect: ids.map((id) => ({ id })) } } });
+        }
+      }
 
       const permissionRows = rows(source.cameraPermissions).flatMap((raw) => {
         const userId = userIds.get(String(raw.userId || ''));
@@ -454,7 +464,7 @@ export class CloudConnectorService implements OnModuleInit, OnModuleDestroy {
       this.prisma.area.findMany(),
       this.prisma.cameraGroup.findMany(),
       this.prisma.user.findMany(),
-      this.prisma.camera.findMany(),
+      this.prisma.camera.findMany({ include: { groups: { select: { id: true } } } }).then((items) => items.map(({ groups, ...camera }) => ({ ...camera, groupIds: groups.map((g) => g.id) }))),
       this.prisma.cameraPermission.findMany(),
       this.prisma.liveLayout.findMany(),
       this.prisma.aiSettings.findMany(),

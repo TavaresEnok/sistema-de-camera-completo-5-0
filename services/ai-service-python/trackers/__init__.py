@@ -9,8 +9,9 @@ hardcoded dentro do ObjectDetector. Este pacote fecha esse buraco:
                              lost_track_buffer=20, frame_rate=4)
 
 Backends disponíveis:
-    - "bytetrack": adapter fino sobre sv.ByteTrack, comportamento IDÊNTICO ao
-      que estava hardcoded (teste de caracterização em tools/).
+    - "bytetrack": sv.ByteTrack com início explícito por classe e recuperação
+      limitada por tempo real. GENERAL_TRACKER_LEGACY_THRESHOLDS restaura
+      os gates/buffer anteriores para comparação ou rollback.
     - "ajustcam":  tracker próprio para CFTV — associação pelo pé da caixa
       (bottom-center) normalizada pelo tamanho, Kalman de velocidade constante,
       associação em dois estágios (alta/baixa confiança), janela de oclusão com

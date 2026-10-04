@@ -18,6 +18,7 @@ import { getApiBaseUrl } from '@/lib/api-base';
 import { useAuthStore } from '@/store/authStore';
 import { useVmsDataStore } from '@/store/vmsDataStore';
 import { toast } from '../hooks/use-toast';
+import { analysisMetrics, formatAnalysisRate } from '@/lib/analysis-metrics';
 
 const API_URL = getApiBaseUrl();
 const HISTORY = 40; // samples in sparkline
@@ -285,6 +286,29 @@ export default function PerformancePage() {
           );
         })}
       </div>
+
+      {Object.keys(processors).length > 0 && (
+        <section className="rounded-xl border border-border bg-card p-4 space-y-3">
+          <h2 className="text-sm font-semibold">Análise por câmera</h2>
+          <p className="text-xs text-muted-foreground">Recebidas, verificadas por movimento, analisadas pela IA e acompanhadas entre análises. Valores por segundo.</p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs text-left whitespace-nowrap">
+              <thead><tr>{['Câmera', 'Recebidas', 'Movimento', 'IA de objetos', 'Acompanhadas', 'Atraso da análise', 'Substituídas', 'IA ocupada'].map((label) => <th key={label} className="p-2 font-medium">{label}</th>)}</tr></thead>
+              <tbody>{Object.entries(processors).map(([id, processor]) => {
+                const m = analysisMetrics(processor);
+                return <tr key={id} className="border-t border-border/60">
+                  <td className="p-2">{cameras.find((camera) => camera.id === id)?.name ?? 'Câmera'}</td>
+                  {[m.received, m.motion, m.model, m.tracked].map((value, index) => <td key={index} className="p-2 tabular-nums">{formatAnalysisRate(value)}</td>)}
+                  <td className="p-2 tabular-nums">{m.delay === null ? '—' : `${Math.round(m.delay)} ms`}</td>
+                  <td className="p-2 tabular-nums">{m.replaced?.toLocaleString('pt-BR') ?? '—'}</td>
+                  <td className="p-2 tabular-nums">{m.busy?.toLocaleString('pt-BR') ?? '—'}</td>
+                </tr>;
+              })}</tbody>
+            </table>
+          </div>
+          <p className="text-xs text-muted-foreground">O atraso vai da imagem recebida até o resultado da análise; não inclui a rede da câmera nem a exibição na tela. “Substituídas” conta imagens trocadas por outras mais novas; não significa perda de vídeo. Os dois últimos valores acumulam desde que a análise começou.</p>
+        </section>
+      )}
 
       {/* Sugestões traduzidas para impacto operacional. Código/codec não é
           uma decisão que o operador precise conhecer para agir corretamente. */}

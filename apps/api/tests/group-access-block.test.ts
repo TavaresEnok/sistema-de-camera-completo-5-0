@@ -40,7 +40,7 @@ function makeService(accessStatus: 'ACTIVE' | 'RESTRICTED' | 'SUSPENDED', isActi
         else if (w.id?.in && w.isPrivate === true) rows = [];
         else if (w.id?.in) rows = rows.filter((c) => w.id.in.includes(c.id));
         else if (w.isPrivate === false) rows = rows.filter((c) => !c.isPrivate);
-        else if (w.groupId?.in) rows = rows.filter((c) => w.groupId.in.includes(c.groupId));
+        else if (w.groups?.some?.id?.in) rows = rows.filter((c) => w.groups.some.id.in.includes(c.groupId));
         return rows.map((c) => ({ ...c }));
       },
     },
@@ -63,7 +63,7 @@ function makeService(accessStatus: 'ACTIVE' | 'RESTRICTED' | 'SUSPENDED', isActi
         if (w.groupId?.not === null) rows = rows.filter((p) => p.groupId !== null);
         if (Array.isArray(w.OR)) {
           rows = rows.filter((p) => w.OR.some((c: any) =>
-            (c.cameraId && p.cameraId === c.cameraId) || (c.groupId && p.groupId === c.groupId)));
+            (c.cameraId && p.cameraId === c.cameraId) || (c.groupId && (c.groupId.in ? c.groupId.in.includes(p.groupId) : p.groupId === c.groupId))));
         }
         return rows.map((p) => ({ ...p }));
       },

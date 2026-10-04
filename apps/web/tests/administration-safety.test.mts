@@ -12,11 +12,11 @@ test('personalização: envia só alterações e preserva edições feitas duran
   assert.match(page, /Alterações não salvas/);
   assert.match(page, /png\.length > 550000/);
 });
-test('grupos: confirma transferência, bloqueia repetição e não mostra IPs', () => {
+test('grupos: permite quatro vínculos sem transferência e não mostra IPs', () => {
   const page = source('pages/GroupsPage.tsx');
-  assert.match(page, /Transferir câmera\?/);
-  assert.match(page, /expectedGroupId: confirmedFrom/);
-  assert.match(page, /disabled=\{cameraBusy\}/);
+  assert.match(page, /até 4 grupos/);
+  assert.doesNotMatch(page, /Transferir câmera\?|expectedGroupId/);
+  assert.match(page, /disabled=\{cameraBusy \|\| \(!inGroup && groupCount >= 4\)\}/);
   assert.match(page, /sequence !== loadSequence\.current/);
   assert.doesNotMatch(page, /cam\.ipAddress/);
   assert.match(page, /Buscar grupos/);

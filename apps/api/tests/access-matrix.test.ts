@@ -67,8 +67,10 @@ function makeService() {
           rows = rows.filter((c) => where.id.in.includes(c.id) && c.isPrivate);
         } else if (where.isPrivate === false) {
           rows = rows.filter((c) => !c.isPrivate);
-        } else if (where.groupId?.in) {
-          rows = rows.filter((c) => where.groupId.in.includes(c.groupId));
+        } else if (where.id?.in) {
+          rows = rows.filter((c) => where.id.in.includes(c.id));
+        } else if (where.groups?.some?.id?.in) {
+          rows = rows.filter((c) => where.groups.some.id.in.includes(c.groupId));
         }
         return rows.map((c) => ({ ...c }));
       },
@@ -79,6 +81,7 @@ function makeService() {
         return GROUPS.filter((g) =>
           (!where.id?.in || where.id.in.includes(g.id))
           && (where.isActive === undefined || g.isActive === where.isActive)
+          && (typeof where.accessStatus !== 'string' || g.accessStatus === where.accessStatus)
           && (!where.accessStatus?.not || g.accessStatus !== where.accessStatus.not))
           .map((g) => ({ ...g }));
       },
@@ -97,7 +100,7 @@ function makeService() {
         if (Array.isArray(where.OR)) {
           rows = rows.filter((p) => where.OR.some((cond: any) =>
             (cond.cameraId && p.cameraId === cond.cameraId) ||
-            (cond.groupId && p.groupId === cond.groupId)));
+            (cond.groupId && (cond.groupId.in ? cond.groupId.in.includes(p.groupId) : p.groupId === cond.groupId))));
         }
         return rows.map((p) => ({ ...p }));
       },

@@ -103,6 +103,12 @@ class ConfirmadorDeObjeto:
 
         for deteccao in deteccoes or []:
             chave = self._chave(deteccao)
+            extra = getattr(deteccao, "extra", None) or {}
+            if extra.get("estimated") or extra.get("observedByModel") is False:
+                # Estimates keep an existing ID alive but are not new evidence.
+                if chave is not None and chave in self._faixas:
+                    vistas.add(chave)
+                continue
             if chave is None:
                 # Sem identidade entre quadros não há como exigir persistência.
                 # Deixa passar para NÃO piorar o que já existia — o caminho de
@@ -144,6 +150,10 @@ class ConfirmadorDeObjeto:
             "confirmadas": sum(1 for f in self._faixas.values() if f.confirmada),
             "aguardando_evidencia": sum(1 for f in self._faixas.values() if not f.confirmada),
         }
+
+    def confirmed_track_ids(self) -> set:
+        """Read by the owning camera loop; never replace real confirmation hits."""
+        return {key for key, faixa in self._faixas.items() if faixa.confirmada}
 
     # ── Interno ─────────────────────────────────────────────────────────────
     @staticmethod

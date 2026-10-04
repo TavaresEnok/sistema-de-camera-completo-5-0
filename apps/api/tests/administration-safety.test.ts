@@ -41,20 +41,28 @@ for (const role of Object.values(UserRole)) {
     }
   });
 }
-test('grupos: transferência exige origem confirmada e bloqueia alteração concorrente', async () => {
-  let updates = 0;
-  const prisma = {
+test('grupos: adicionar preserva os vínculos existentes e bloqueia o quinto', async () => {
+  const ids = ['old'];
+  const tx = {
+    $queryRaw: async () => [],
     cameraGroup: { findUnique: async () => ({ id: 'new', isActive: true }) },
-    camera: { findUnique: async () => ({ id: 'camera', groupId: 'old' }), updateMany: async () => { updates++; return { count: 0 }; } },
+    camera: {
+      findUnique: async () => ({ id: 'camera', groupId: 'old', groups: ids.map((id) => ({ id })) }),
+      update: async ({ data }: any) => { assert.equal(data.groupId, undefined); ids.push(data.groups.connect.id); },
+    },
   };
-  const service = new CameraGroupsService(prisma as any, {} as any);
-  await assert.rejects(service.addCamera('new', 'camera'), /Confirme a transferência/);
-  assert.equal(updates, 0);
-  await assert.rejects(service.addCamera('new', 'camera', 'old'), /grupo da câmera mudou/);
-  assert.equal(updates, 1);
+  const service = new CameraGroupsService({ $transaction: (fn: any) => fn(tx) } as any, {} as any);
+  await service.addCamera('second', 'camera');
+  await service.addCamera('third', 'camera');
+  await service.addCamera('fourth', 'camera');
+  assert.deepEqual(ids, ['old', 'second', 'third', 'fourth']);
+  await service.addCamera('second', 'camera');
+  assert.equal(ids.length, 4);
+  await assert.rejects(service.addCamera('fifth', 'camera'), /4 grupos/);
 });
 test('grupos: câmeras particulares não são transferidas', async () => {
-  const service = new CameraGroupsService({ cameraGroup: { findUnique: async () => ({ isActive: true }) }, camera: { findUnique: async () => ({ isPrivate: true }) } } as any, {} as any);
+  const tx = { $queryRaw: async () => [], cameraGroup: { findUnique: async () => ({ isActive: true }) }, camera: { findUnique: async () => ({ isPrivate: true }) } };
+  const service = new CameraGroupsService({ $transaction: (fn: any) => fn(tx) } as any, {} as any);
   await assert.rejects(service.addCamera('group', 'camera'), /particulares/);
 });
 test('minha conta: usuário comum lê suas próprias permissões, não as de outra pessoa', async () => {

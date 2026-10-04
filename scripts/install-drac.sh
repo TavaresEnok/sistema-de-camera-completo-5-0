@@ -1283,6 +1283,8 @@ main() {
   sync_repository
   prepare_env
   prepare_runtime_directories
+  log "Instalando o modelo de objetos validado (sem downloads adicionais)"
+  run_sudo bash "$DRAC_INSTALL_DIR/scripts/install-ai-models.sh" "$DRAC_INSTALL_DIR/infra/ai-models"
   start_stack
   run_migrations
   # A instalação só é "concluída" depois que dá para ENTRAR nela e depois que o

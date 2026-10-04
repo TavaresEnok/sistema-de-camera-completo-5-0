@@ -253,7 +253,8 @@ model Camera {
 
   site          Site?              @relation(fields: [siteId], references: [id], onDelete: SetNull)
   area          Area?              @relation(fields: [areaId], references: [id], onDelete: SetNull)
-  group         CameraGroup?       @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  group         CameraGroup?       @relation("PrimaryCameraGroup", fields: [groupId], references: [id], onDelete: SetNull)
+  groups        CameraGroup[]      @relation("CameraMemberships")
   owner         User?              @relation("CameraOwner", fields: [ownerUserId], references: [id], onDelete: Restrict)
   recordings    Recording[]
   exportedClips ExportedClip[]
@@ -714,7 +715,8 @@ model CameraGroup {
   /// Retenção do GRUPO. Todo grupo nasce com um número — grupo sem valor
   /// deixaria o toggle "seguir o grupo" apontando para o nada.
   retentionDays     Int                @default(3)
-  cameras           Camera[]
+  cameras           Camera[]         @relation("CameraMemberships")
+  primaryCameras    Camera[]         @relation("PrimaryCameraGroup")
   permissions       CameraPermission[]
   messages          GroupMessage[]
   mosaicosRecebidos LiveLayoutShare[]

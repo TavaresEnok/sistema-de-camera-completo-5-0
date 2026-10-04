@@ -65,17 +65,19 @@ export class CameraGroupsService {
   }
 
   async softDelete(id: string) {
-    await this.ensureExists(id);
+    const group = await this.ensureExists(id);
     return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "CameraGroup" WHERE "id" = ${id} FOR UPDATE`;
+      await tx.camera.updateMany({ where: { groupId: id, retentionFollowsGroup: true }, data: { retentionDays: group.retentionDays, retentionFollowsGroup: false } });
       await tx.camera.updateMany({ where: { groupId: id }, data: { groupId: null } });
-      return tx.cameraGroup.update({ where: { id }, data: { isActive: false }, include: { cameras: { select: cameraSummary } } });
+      return tx.cameraGroup.update({ where: { id }, data: { isActive: false, cameras: { set: [] } }, include: { cameras: { select: cameraSummary } } });
     });
   }
 
   async setAlarmsForGroup(groupId: string, enabled: boolean) {
     await this.ensureExists(groupId);
     const result = await this.prisma.camera.updateMany({
-      where: { groupId, isPrivate: false },
+      where: { groups: { some: { id: groupId } }, isPrivate: false },
       data: { alarmsEnabled: enabled },
     });
     return { groupId, enabled, affected: result.count };
@@ -127,36 +129,45 @@ export class CameraGroupsService {
     return { groupId, retentionDays, affected: seguindo, excecoes };
   }
 
-  async addCamera(groupId: string, cameraId: string, expectedGroupId?: string | null) {
-    const group = await this.prisma.cameraGroup.findUnique({ where: { id: groupId } });
-    if (!group) throw new NotFoundException('Grupo não encontrado.');
-
-    const camera = await this.prisma.camera.findUnique({ where: { id: cameraId } });
-    if (!camera) throw new NotFoundException('Câmera não encontrada.');
-
-    if (!group.isActive) throw new NotFoundException('Grupo não encontrado.');
-    if (camera.isPrivate) throw new ConflictException('Câmeras particulares não podem ser transferidas para grupos.');
-    if (camera.groupId && camera.groupId !== groupId && expectedGroupId !== camera.groupId) {
-      throw new ConflictException('Esta câmera já pertence a outro grupo. Confirme a transferência.');
-    }
-    const changed = await this.prisma.camera.updateMany({ where: { id: cameraId, groupId: camera.groupId }, data: { groupId } });
-    if (changed.count !== 1) throw new ConflictException('O grupo da câmera mudou. Atualize a página e tente novamente.');
-    return this.prisma.cameraGroup.findUnique({ where: { id: groupId }, include: { cameras: { select: cameraSummary } } });
+  async addCamera(groupId: string, cameraId: string, _expectedGroupId?: string | null) {
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "CameraGroup" WHERE "id" = ${groupId} FOR SHARE`;
+      await tx.$queryRaw`SELECT "id" FROM "Camera" WHERE "id" = ${cameraId} FOR UPDATE`;
+      const group = await tx.cameraGroup.findUnique({ where: { id: groupId } });
+      if (!group?.isActive) throw new NotFoundException('Grupo não encontrado.');
+      const camera = await tx.camera.findUnique({ where: { id: cameraId }, include: { groups: { select: { id: true } } } });
+      if (!camera) throw new NotFoundException('Câmera não encontrada.');
+      if (camera.isPrivate) throw new ConflictException('Câmeras particulares não podem ser adicionadas a grupos.');
+      const ids = new Set(camera.groups.map((g) => g.id));
+      if (!ids.has(groupId)) {
+        if (ids.size >= 4) throw new ConflictException('Esta câmera já está em 4 grupos. Remova-a de um grupo antes de adicionar outro.');
+        await tx.camera.update({
+          where: { id: cameraId },
+          data: { groups: { connect: { id: groupId } }, ...(!camera.groupId ? { groupId } : {}) },
+        });
+      }
+      return tx.cameraGroup.findUnique({ where: { id: groupId }, include: { cameras: { select: cameraSummary } } });
+    });
   }
 
   async removeCamera(groupId: string, cameraId: string) {
-    const group = await this.prisma.cameraGroup.findUnique({ where: { id: groupId } });
-    if (!group) throw new NotFoundException('Grupo não encontrado.');
-
-    const camera = await this.prisma.camera.findUnique({ where: { id: cameraId } });
-    if (!camera) throw new NotFoundException('Câmera não encontrada.');
-
-    if (camera.groupId !== groupId) {
-      throw new NotFoundException('Câmera não pertence ao grupo informado.');
-    }
-
-    const changed = await this.prisma.camera.updateMany({ where: { id: cameraId, groupId }, data: { groupId: null } });
-    if (changed.count !== 1) throw new ConflictException('O grupo da câmera mudou. Atualize a página e tente novamente.');
-    return this.prisma.cameraGroup.findUnique({ where: { id: groupId }, include: { cameras: { select: cameraSummary } } });
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "CameraGroup" WHERE "id" = ${groupId} FOR SHARE`;
+      await tx.$queryRaw`SELECT "id" FROM "Camera" WHERE "id" = ${cameraId} FOR UPDATE`;
+      const group = await tx.cameraGroup.findUnique({ where: { id: groupId } });
+      if (!group) throw new NotFoundException('Grupo não encontrado.');
+      const camera = await tx.camera.findUnique({ where: { id: cameraId }, include: { groups: { select: { id: true } } } });
+      if (!camera) throw new NotFoundException('Câmera não encontrada.');
+      if (!camera.groups.some((g) => g.id === groupId)) throw new NotFoundException('Câmera não pertence ao grupo informado.');
+      await tx.camera.update({ where: { id: cameraId }, data: {
+        groups: { disconnect: { id: groupId } },
+        ...(camera.groupId === groupId ? {
+          groupId: camera.groups.filter((g) => g.id !== groupId).map((g) => g.id).sort()[0] ?? null,
+          // Removing an organizational link must not shorten existing recordings.
+          ...(camera.retentionFollowsGroup ? { retentionDays: group.retentionDays, retentionFollowsGroup: false } : {}),
+        } : {}),
+      } });
+      return tx.cameraGroup.findUnique({ where: { id: groupId }, include: { cameras: { select: cameraSummary } } });
+    });
   }
 }

@@ -220,6 +220,8 @@ class DetectorDeTravessia:
         travessias: List[Dict[str, Any]] = []
         for det in deteccoes or []:
             extra = getattr(det, "extra", None) or {}
+            if extra.get("estimated") or extra.get("observedByModel") is False:
+                continue  # Pixel estimates are overlays, not crossing evidence.
             track_id = extra.get("trackId") or extra.get("rawTrackId")
             if track_id is None:
                 continue

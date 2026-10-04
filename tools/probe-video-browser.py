@@ -14,6 +14,7 @@ parser.add_argument('--seconds', type=int, default=20)
 parser.add_argument('--transport', choices=['udp','tcp','tls'])
 parser.add_argument('--readers', type=int, default=1)
 parser.add_argument('--installation', choices=['vibe','ib'], default='vibe')
+parser.add_argument('--ssh-control-path', default='/tmp/drac-ib-control-20261002')
 args = parser.parse_args()
 if not 5 <= args.seconds <= 1800:
     raise SystemExit('seconds must be between 5 and 1800')
@@ -30,17 +31,18 @@ const h={Authorization:'Basic '+Buffer.from(process.env.MEDIAMTX_API_USER+':'+pr
 (async()=>{const r=await fetch('http://mediamtx:9997/v3/paths/list',{headers:h});
 if(!r.ok)throw new Error('paths unavailable');const d=await r.json();
 let p=d.items.find(x=>x.ready&&x.name.endsWith('_grid'));
+if(!p)p=d.items.find(x=>x.ready&&x.name.startsWith('cam_'));
 if(!p){const {PrismaClient}=require('/app/apps/api/node_modules/@prisma/client');const db=new PrismaClient();
 try{const c=await db.camera.findFirst({where:{publicId:100002,enabled:true},select:{id:true}});
 if(c)p={name:'cam_'+c.id.replaceAll('-','')+'_grid'};}finally{await db.$disconnect();}}
 if(!p)throw new Error('No eligible grid');
 process.stdout.write(JSON.stringify({whep:process.env.MEDIAMTX_PUBLIC_WEBRTC_URL.replace(/\/$/,'')+'/'+p.name+'/whep',authorization:h.Authorization}));
-})().catch(()=>process.exit(1));
+})().catch(e=>{process.stderr.write(String(e.message)+'\n');process.exit(1)});
 '''
 command=['docker','exec','vms-api','node','-e',selection]
 if args.installation=='ib':
     import shlex
-    command=['ssh','-S','/tmp/drac-ib-control-20261002','-o','BatchMode=yes','-p','22003',
+    command=['ssh','-S',args.ssh_control_path,'-o','BatchMode=yes','-p','22003',
              'ibtelecom@177.104.156.25',shlex.join(command)]
 config = json.loads(subprocess.check_output(command,timeout=20))
 config.update(username=username, credential=credential, urls=[

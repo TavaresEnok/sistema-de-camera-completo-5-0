@@ -109,6 +109,7 @@ class ModelRegistry:
             self.last_error = None
 
     def status(self) -> dict:
+        """Read-only diagnostic snapshot."""
         detector_status: dict[str, dict] = {}
         for key, det in self._cache.items():
             status_fn = getattr(det, "status", None)
@@ -124,6 +125,14 @@ class ModelRegistry:
             "lastError": self.last_error,
             "detectors": detector_status,
         }
+
+    def release_context(self, context_key, context_owner=None):
+        with self._lock:
+            detectors = list(self._cache.values())
+        for detector in detectors:
+            release = getattr(detector, "release_context", None)
+            if callable(release):
+                release(context_key, context_owner)
 
 
 registry = ModelRegistry()

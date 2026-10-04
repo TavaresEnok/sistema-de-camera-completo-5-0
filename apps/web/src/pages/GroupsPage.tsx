@@ -45,7 +45,7 @@ type AccessGroup = {
   /** Bloqueio comercial: ACTIVE normal · RESTRICTED sem histórico · SUSPENDED sem acesso. */
   accessStatus?: GroupAccessStatus;
   accessMessage?: string | null;
-  cameras: Array<{ id: string; name: string; retentionFollowsGroup?: boolean; retentionDays?: number }>;
+  cameras: Array<{ id: string; name: string; groupId?: string | null; retentionFollowsGroup?: boolean; retentionDays?: number }>;
   _userPermissions?: UserPermission[];
 };
 
@@ -151,7 +151,6 @@ export default function GroupsPage() {
   const [retentionSaving, setRetentionSaving] = useState(false);
   const [cameraBusy, setCameraBusy] = useState(false);
   const [revoking, setRevoking] = useState<string | null>(null);
-  const [transfer, setTransfer] = useState<{ cameraId: string; fromId: string; toId: string } | null>(null);
 
   const selGroup = groups.find((g) => g.id === selGroupId) ?? groups[0] ?? null;
   const groupCamIds = new Set(selGroup?.cameras.map((c) => c.id) ?? []);
@@ -292,21 +291,19 @@ export default function GroupsPage() {
     } finally { setDeleting(false); }
   };
 
-  const toggleCamera = async (cameraId: string, shouldAdd: boolean, confirmedFrom?: string, targetId = selGroup?.id) => {
+  const toggleCamera = async (cameraId: string, shouldAdd: boolean, targetId = selGroup?.id) => {
     if (!targetId || cameraBusy) return;
-    const from = groups.find((g) => g.id !== targetId && g.cameras.some((c) => c.id === cameraId));
-    if (shouldAdd && from && !confirmedFrom) { setTransfer({ cameraId, fromId: from.id, toId: targetId }); return; }
     setCameraBusy(true);
     try {
       if (shouldAdd) {
-        await apiClient(accessToken).post(`/camera-groups/${targetId}/cameras/${cameraId}`, { expectedGroupId: confirmedFrom });
+        await apiClient(accessToken).post(`/camera-groups/${targetId}/cameras/${cameraId}`, {});
       } else {
         await apiClient(accessToken).delete(`/camera-groups/${targetId}/cameras/${cameraId}`);
       }
       await Promise.all([load(), loadData()]);
     } catch (e) {
       toast({ title: 'Não foi possível atualizar', description: clientError(e, 'Não foi possível atualizar o grupo.'), variant: 'destructive' });
-    } finally { setCameraBusy(false); setTransfer(null); }
+    } finally { setCameraBusy(false); }
   };
 
   const grantAccess = async () => {
@@ -484,7 +481,7 @@ export default function GroupsPage() {
                     // pedir, só por ter aberto a janela e confirmado.
                     onClick={() => {
                       setRetentionValue(String(selGroup?.retentionDays ?? 3));
-                      setSeguidores(new Set((selGroup?.cameras ?? []).filter((c) => c.retentionFollowsGroup !== false).map((c) => c.id)));
+                      setSeguidores(new Set((selGroup?.cameras ?? []).filter((c) => c.groupId === selGroup?.id && c.retentionFollowsGroup !== false).map((c) => c.id)));
                       setRetentionOpen(true);
                     }}
                   >
@@ -535,12 +532,13 @@ export default function GroupsPage() {
             {tab === 'cameras' && (
               <div className="space-y-4">
                 <p className="text-[12px] text-muted-foreground">
-                  Escolha as câmeras do grupo. Cada câmera pode pertencer a um único grupo.
+                  Cada câmera pode estar em até 4 grupos. Adicionar aqui não remove dos outros grupos.
                 </p>
                 <Input aria-label="Buscar câmeras do grupo" placeholder="Buscar câmera" value={cameraSearch} onChange={(e) => setCameraSearch(e.target.value)} />
                 <div className="grid gap-2.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))' }}>
                   {cameras.filter((cam) => !cam.isPrivate && cam.name.toLocaleLowerCase('pt-BR').includes(cameraSearch.toLocaleLowerCase('pt-BR'))).map((cam) => {
                     const inGroup = groupCamIds.has(cam.id);
+                    const groupCount = groups.filter((g) => g.cameras.some((c) => c.id === cam.id)).length;
                     return (
                       <div key={cam.id}
                         className={cn(
@@ -550,10 +548,10 @@ export default function GroupsPage() {
                         <div className={cn('w-2 h-2 rounded-full shrink-0', cam.isOnline ? 'bg-[hsl(var(--status-online,152_46%_44%))]' : 'bg-muted-foreground/30')} />
                         <div className="flex-1 min-w-0">
                           <div className="text-[12.5px] font-medium truncate">{cam.name}</div>
-                          <div className="text-xs text-muted-foreground truncate">{cam.zone}{groups.find((g) => g.id !== selGroup.id && g.cameras.some((c) => c.id === cam.id)) ? ' · Em outro grupo' : ''}</div>
+                          <div className="text-xs text-muted-foreground truncate">{cam.zone} · {groupCount}/4 grupos</div>
                         </div>
                         {isAdmin && (
-                          <Switch aria-label={`${inGroup ? 'Remover' : 'Adicionar'} ${cam.name} ${inGroup ? 'do' : 'ao'} grupo`} checked={inGroup} disabled={cameraBusy} onCheckedChange={(v) => void toggleCamera(cam.id, v)} />
+                          <Switch aria-label={`${inGroup ? 'Remover' : 'Adicionar'} ${cam.name} ${inGroup ? 'do' : 'ao'} grupo`} checked={inGroup} disabled={cameraBusy || (!inGroup && groupCount >= 4)} onCheckedChange={(v) => void toggleCamera(cam.id, v)} />
                         )}
                         {!isAdmin && inGroup && <Check className="w-3.5 h-3.5 text-[hsl(var(--primary))]" />}
                       </div>
@@ -645,13 +643,6 @@ export default function GroupsPage() {
       )}
 
       {/* ── Create group dialog ── */}
-      <Dialog open={!!transfer} onOpenChange={(open) => !open && !cameraBusy && setTransfer(null)}>
-        <DialogContent className="max-w-md">
-          <DialogHeader><DialogTitle>Transferir câmera?</DialogTitle></DialogHeader>
-          <p className="text-sm">A câmera sairá de <strong>{groups.find((g) => g.id === transfer?.fromId)?.name}</strong> e passará para <strong>{groups.find((g) => g.id === transfer?.toId)?.name}</strong>. Isso muda os usuários com acesso e pode alterar o prazo das gravações.</p>
-          <div className="flex justify-end gap-2"><Button variant="ghost" disabled={cameraBusy} onClick={() => setTransfer(null)}>Cancelar</Button><Button disabled={cameraBusy} onClick={() => transfer && void toggleCamera(transfer.cameraId, true, transfer.fromId, transfer.toId)}>{cameraBusy ? 'Transferindo...' : 'Transferir câmera'}</Button></div>
-        </DialogContent>
-      </Dialog>
       <Dialog open={createOpen} onOpenChange={(o) => !o && setCreateOpen(false)}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
@@ -803,13 +794,13 @@ export default function GroupsPage() {
                   // O número ANTES de confirmar. "Vale para quem segue o grupo" é regra;
                   // "vale para 4 das 17" é a informação que decide.
                   const total = selGroup?.cameras.length ?? 0;
-                  const seguem = (selGroup?.cameras ?? []).filter((c) => c.retentionFollowsGroup !== false).length;
+                  const seguem = (selGroup?.cameras ?? []).filter((c) => c.groupId === selGroup?.id && c.retentionFollowsGroup !== false).length;
                   const excecoes = total - seguem;
                   return (
                     <>
                       Vale para <strong>{seguem} de {total}</strong> câmera(s) deste grupo — as marcadas como{' '}
                       <strong>seguir a retenção do grupo</strong>.
-                      {excecoes > 0 && <> As outras <strong>{excecoes}</strong> têm prazo próprio e não são tocadas.</>}
+                      {excecoes > 0 && <> As outras <strong>{excecoes}</strong> mantêm o prazo atual.</>}
                     </>
                   );
                 })()}
@@ -826,7 +817,7 @@ export default function GroupsPage() {
                   <span className="text-[12px] font-medium">Câmeras que seguem o grupo</span>
                   <div className="flex gap-1.5">
                     <button type="button" className="rounded border border-border px-2 py-0.5 text-[11px]"
-                      onClick={() => setSeguidores(new Set((selGroup?.cameras ?? []).map((c) => c.id)))}>Todas</button>
+                      onClick={() => setSeguidores(new Set((selGroup?.cameras ?? []).filter((c) => c.groupId === selGroup?.id).map((c) => c.id)))}>Todas</button>
                     <button type="button" className="rounded border border-border px-2 py-0.5 text-[11px]"
                       onClick={() => setSeguidores(new Set())}>Nenhuma</button>
                   </div>
@@ -836,20 +827,21 @@ export default function GroupsPage() {
                     <div className="px-3 py-3 text-[11px] text-muted-foreground">Nenhuma câmera neste grupo.</div>
                   )}
                   {(selGroup?.cameras ?? []).map((c) => {
-                    const segue = seguidores.has(c.id);
+                    const outroPrazo = c.groupId !== selGroup?.id;
+                    const segue = !outroPrazo && seguidores.has(c.id);
                     const dias = Number(retentionValue) || 0;
                     const propria = Number(c.retentionDays) || 0;
                     // Perda só existe ao PASSAR a seguir um prazo menor que o próprio.
                     const perde = segue && c.retentionFollowsGroup === false && propria > dias ? propria - dias : 0;
                     return (
                       <label key={c.id} className="flex cursor-pointer items-center gap-2 border-b border-border/60 px-3 py-2 last:border-b-0 text-[12px]">
-                        <input type="checkbox" checked={segue} onChange={(e) => {
+                        <input type="checkbox" checked={segue} disabled={outroPrazo} onChange={(e) => {
                           const proximo = new Set(seguidores);
                           if (e.target.checked) proximo.add(c.id); else proximo.delete(c.id);
                           setSeguidores(proximo);
                         }} />
                         <span className="min-w-0 flex-1 truncate">{c.name}</span>
-                        {!segue && <span className="shrink-0 text-[11px] text-muted-foreground">{propria || 3} dias próprios</span>}
+                        {outroPrazo ? <span className="shrink-0 text-[11px] text-muted-foreground">Prazo definido em outro grupo</span> : !segue && <span className="shrink-0 text-[11px] text-muted-foreground">{propria || 3} dias próprios</span>}
                         {perde > 0 && (
                           <span className="shrink-0 text-[11px]" style={{ color: 'hsl(var(--status-warning))' }}>−{perde} dias</span>
                         )}

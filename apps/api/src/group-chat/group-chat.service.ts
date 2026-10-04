@@ -116,7 +116,7 @@ export class GroupChatService {
     let camera: { id: string; name: string } | null = null;
     if (entrada.cameraId) {
       camera = await this.prisma.camera.findFirst({
-        where: { id: entrada.cameraId, groupId },
+        where: { id: entrada.cameraId, groups: { some: { id: groupId } } },
         select: { id: true, name: true },
       });
       // Câmera de OUTRO grupo não entra: seria vazar o nome dela para quem não

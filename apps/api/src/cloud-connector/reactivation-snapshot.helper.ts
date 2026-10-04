@@ -10,7 +10,7 @@ const SAFE_FIELDS = {
     'aiObjectClasses', 'aiSensitivity', 'aiConfidence',
     'recordingObjectClasses', 'channel', 'subtype', 'liveChannel', 'liveSubtype',
     'recordingChannel', 'recordingSubtype', 'analyticsChannel', 'analyticsSubtype',
-    'siteId', 'areaId', 'locationAddress', 'latitude', 'longitude', 'groupId', 'recordingEnabled', 'recordingMode', 'retentionDays',
+    'siteId', 'areaId', 'locationAddress', 'latitude', 'longitude', 'groupId', 'groupIds', 'recordingEnabled', 'recordingMode', 'retentionDays',
     'retentionFollowsGroup', 'preferredRtspTransport', 'preferredLiveProtocol', 'sourceMode',
     'streamVideoCodec', 'streamWidth', 'streamHeight', 'streamFps', 'streamBitrateKbps',
     'recordingVideoCodec', 'recordingWidth', 'recordingHeight', 'recordingFps',

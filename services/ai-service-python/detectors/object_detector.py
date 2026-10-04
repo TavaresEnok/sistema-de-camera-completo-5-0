@@ -1,5 +1,7 @@
 import os
 import threading
+import time
+import math
 from queue import Empty, Queue
 
 import cv2
@@ -8,6 +10,7 @@ import supervision as sv
 
 from .base import Detection, Detector
 from .region_proposal import MotionRegionPlanner, RegionConfig
+from .native_roi import NativeRoiConfig, choose_native_roi, project_native_crop, merge_native_crop
 from onnxruntime_session import inference_threading_status
 from runtime_profiles import GENERAL_PROFILE
 from object_policy import filtrar_deteccoes_por_classe, normalizar_classe
@@ -15,6 +18,7 @@ from detectors.escolha_de_modelo import TETO_DE_CPU_PADRAO, escolher_modelo
 from trackers import TrackerBackend, create_tracker, tracker_names
 from trackers.camera_motion import GlobalMotionEstimator
 from trackers.rider_association import RiderAssociator, RiderConfig
+from trackers.visual_bridge import VisualBridgeConfig, VisualTrackBridge
 
 
 PERSON_CLASS_ID = 0
@@ -74,6 +78,14 @@ CLASS_LABELS = {
 CLASS_IDS_BY_NAME = {normalizar_classe(label): cls for cls, label in CLASS_LABELS.items()}
 
 
+class ObjectInference(list):
+    """List-compatible result with unambiguous per-call execution metrics."""
+    def __init__(self, values=(), execution_kind="model", model_calls=1):
+        super().__init__(values)
+        self.execution_kind = execution_kind
+        self.model_calls = model_calls
+
+
 class ObjectDetector(Detector):
     event_type = "OBJECT_DETECTED"
 
@@ -116,6 +128,26 @@ class ObjectDetector(Detector):
         self.openvino_performance_hint = str(GENERAL_PROFILE.get("openvino_performance_hint", "LATENCY") or "LATENCY").strip() or "LATENCY"
         self._runtime_lock = threading.Lock()
         self._runtimes: dict[int, dict] = {}
+        self._global_request_limit = max(1, min(8, int(GENERAL_PROFILE.get("global_infer_requests", 2))))
+        self._global_requests = threading.BoundedSemaphore(self._global_request_limit)
+        self._global_busy_drops = 0
+        self._real_infer_runs = 0
+        self._infer_ms = 0.0
+        self._low_association = bool(GENERAL_PROFILE.get("tracker_low_association", True))
+        self._visual_config = VisualBridgeConfig(
+            enabled=bool(GENERAL_PROFILE.get("visual_tracking", True)),
+            refresh_seconds=max(0.25, min(2.0, float(GENERAL_PROFILE.get("visual_refresh_seconds", 0.75)))),
+            max_skips=max(0, min(4, int(GENERAL_PROFILE.get("visual_max_skips", 2)))),
+        )
+        self._native_config = NativeRoiConfig(
+            enabled=bool(GENERAL_PROFILE.get("native_roi", True)),
+            every_model_frames=max(3, int(GENERAL_PROFILE.get("native_roi_every", 3))),
+            confidence_floor=max(0.30, min(0.90, float(GENERAL_PROFILE.get("native_roi_confidence", 0.40)))),
+        )
+        self._context_lock = threading.Lock()
+        self._contexts = {}
+        self._native_roi_runs = 0
+        self._native_roi_errors = 0
         self._tracker_lock = threading.Lock()
         # GENERAL_TRACKER agora falha ALTO se inválido — antes era lido e
         # ignorado silenciosamente (sv.ByteTrack hardcoded).
@@ -184,7 +216,7 @@ class ObjectDetector(Detector):
 
     def _resolve_model_xml(self, input_size: int) -> tuple[str, str]:
         searched: list[str] = []
-        if self.explicit_model_path:
+        if self.explicit_model_path and input_size == self.input_size:
             searched.append(self.explicit_model_path)
             if os.path.isfile(self.explicit_model_path) and self.explicit_model_path.endswith(".xml"):
                 precision = "int8" if "int8" in self.explicit_model_path.lower() else "fp32"
@@ -216,21 +248,41 @@ class ObjectDetector(Detector):
         model = core.read_model(model_xml)
         properties = {
             "PERFORMANCE_HINT": self.openvino_performance_hint,
-            "NUM_STREAMS": str(max(1, self.inference_workers)),
+            "NUM_STREAMS": str(max(1, min(self.inference_workers, int(GENERAL_PROFILE.get("openvino_streams", 1))))),
             "INFERENCE_NUM_THREADS": self.inference_threads,
         }
+        fallback = None
         try:
             compiled_model = core.compile_model(model, self.openvino_device, properties)
-        except Exception:
+        except Exception as exc:
+            fallback = f"{type(exc).__name__}: {str(exc)[:300]}"
+            print(f"[ObjectDetector] OpenVINO properties rejected; explicit fallback: {fallback}")
             compiled_model = core.compile_model(model, self.openvino_device)
-        worker_count = max(1, self.inference_workers)
+        actual = {}
+        for key in ("INFERENCE_NUM_THREADS", "NUM_STREAMS", "PERFORMANCE_HINT", "EXECUTION_DEVICES"):
+            try:
+                value = compiled_model.get_property(key)
+                actual[key] = value if isinstance(value, (int, float, str, list)) else str(value)
+            except Exception:
+                actual[key] = None
+        convolutions, int8_convolutions = 0, 0
+        try:
+            for node in compiled_model.get_runtime_model().get_ops():
+                info = node.get_rt_info()
+                if "layerType" in info and "convolution" in str(info["layerType"].value).lower():
+                    convolutions += 1
+                    if "runtimePrecision" in info and str(info["runtimePrecision"].value).upper() in {"I8", "U8", "INT8"}:
+                        int8_convolutions += 1
+        except Exception:
+            pass
+        worker_count = min(self._global_request_limit, max(1, int(actual.get("NUM_STREAMS") or properties["NUM_STREAMS"])))
         pool = Queue(maxsize=worker_count)
         for _ in range(worker_count):
             pool.put(compiled_model.create_infer_request())
         print(
             f"[ObjectDetector] Carregado model='{model_xml}' input_size={input_size} requested_precision='{self.requested_precision}' "
             f"active_precision='{loaded_precision}' classes='{GENERAL_PROFILE.get('classes')}' "
-            f"inference_threads={self.inference_threads} infer_workers={worker_count}"
+            f"requested_threads={self.inference_threads} actual={actual} infer_workers={worker_count}"
         )
         return {
             "model": compiled_model,
@@ -240,6 +292,11 @@ class ObjectDetector(Detector):
             "path": model_xml,
             "precision": loaded_precision,
             "input_size": input_size,
+            "requested_properties": properties,
+            "actual_properties": actual,
+            "compile_fallback": fallback,
+            "convolutions": convolutions,
+            "int8_convolutions": int8_convolutions,
         }
 
     def _ensure_runtime(self, input_size: int) -> dict:
@@ -313,12 +370,18 @@ class ObjectDetector(Detector):
                 self._riders[key] = associator
             return associator
 
-    def _track_people(self, detections: list[Detection], context_key: str, frame=None) -> list[Detection]:
+    def _track_people(self, detections: list[Detection], context_key: str, frame=None, timestamp=None) -> list[Detection]:
         # 1) associação de piloto ANTES do tracker: promove pessoa fraca montada
         #    em moto/bicicleta forte e descarta as fracas não promovidas.
+        association_candidates = [d for d in detections if (d.extra or {}).get("associationOnly")]
         detections = self._rider_for(context_key).apply(
             detections, self.class_confidence.get(PERSON_CLASS_ID, self.min_conf)
         )
+        # Rider promotion and low-score association are different decisions.
+        # A weak candidate may associate ONLY to an existing ByteTrack ID.
+        if self._low_association and self.tracker_name == "bytetrack":
+            present = {id(d) for d in detections}
+            detections.extend(d for d in association_candidates if id(d) not in present)
 
         output: list[Detection] = []
         grouped: dict[int, list[Detection]] = {}
@@ -356,6 +419,7 @@ class ObjectDetector(Detector):
                         appearance_veto=float(GENERAL_PROFILE.get("tracker_appearance_veto", 0.10)),
                         min_hits=int(GENERAL_PROFILE.get("tracker_min_hits", 1)),
                         stationary_coast=bool(GENERAL_PROFILE.get("stationary_coast", True)),
+                        legacy_thresholds=bool(GENERAL_PROFILE.get("tracker_legacy_thresholds", False)),
                     )
                     self._trackers[tracker_key] = backend
 
@@ -370,7 +434,10 @@ class ObjectDetector(Detector):
                     confidences = np.zeros((0,), dtype=np.float32)
                 self._pipeline_bump(cls, "to_tracker", len(class_detections))
 
-                tracked_boxes = backend.update(xyxy, confidences, frame=frame)
+                if self.tracker_name == "bytetrack":
+                    tracked_boxes = backend.update(xyxy, confidences, frame=frame, timestamp=timestamp)
+                else:
+                    tracked_boxes = backend.update(xyxy, confidences, frame=frame)
                 self._pipeline_bump(cls, "from_tracker", len(tracked_boxes))
 
                 for tracked in tracked_boxes:
@@ -391,6 +458,10 @@ class ObjectDetector(Detector):
                                 "vehicleProxy": tracked_cls in VEHICLE_CLASS_IDS,
                                 "stationary": bool(tracked.stationary),
                                 "recovered": bool(tracked.recovered),
+                                "observedByModel": True,
+                                "trackingSource": "model",
+                                "estimated": False,
+                                "associationOnly": float(tracked.confidence) < self._confidence_for_class(tracked_cls),
                             },
                         )
                     )
@@ -473,6 +544,11 @@ class ObjectDetector(Detector):
         input_size_hint: int | None = None,
         motion_boxes=None,
         allowed_classes: set[str] | None = None,
+        native_frame=None,
+        native_motion_boxes=None,
+        timestamp: float | None = None,
+        context_owner=None,
+        confirmed_track_ids=None,
         **kwargs,
     ) -> list[Detection]:
         permitted = None if allowed_classes is None else {normalizar_classe(c) for c in allowed_classes}
@@ -480,25 +556,154 @@ class ObjectDetector(Detector):
             CLASS_IDS_BY_NAME[c] for c in permitted if c in CLASS_IDS_BY_NAME
         }
         if allowed_class_ids is not None and not allowed_class_ids:
-            return []
+            if context_key:
+                self.release_context(context_key, context_owner)
+            return ObjectInference((), "blocked", 0)
+        if context_key:
+            state = self._context_for(context_key)
+            with state["lock"]:
+                if context_owner is not None and state.get("owner") != context_owner:
+                    state["bridge"].clear()
+                    state["fingerprint"] = None
+                    state["owner"] = context_owner
+                    with self._tracker_lock:
+                        for key in [k for k in self._trackers if k.startswith(f"{context_key}:class:")]:
+                            self._trackers.pop(key, None)
+                fingerprint = (None if permitted is None else frozenset(permitted), frame.shape[:2], input_size_hint)
+                if state["fingerprint"] != fingerprint:
+                    previous = state["fingerprint"]
+                    if previous is not None and previous[1] != frame.shape[:2]:
+                        oh, ow = previous[1]
+                        nh, nw = frame.shape[:2]
+                        with self._tracker_lock:
+                            for key, backend in self._trackers.items():
+                                if key.startswith(f"{context_key}:class:"):
+                                    rescale = getattr(backend, "rescale_coordinates", None)
+                                    if callable(rescale):
+                                        rescale(nw / ow, nh / oh)
+                                    else:
+                                        backend.apply_global_shift(0, 0, nw / ow)
+                    state["bridge"].clear()
+                    state["fingerprint"] = fingerprint
+                now = time.monotonic() if timestamp is None else float(timestamp)
+                if not math.isfinite(now):
+                    raise ValueError("object timestamp must be finite")
+                state["last_used"] = time.monotonic()
+                temporal = bool(timestamp is not None and GENERAL_PROFILE["persistent_track_id"]
+                                and self.tracker_name == "bytetrack" and not self._region_config.enabled)
+                if temporal:
+                    started = time.perf_counter()
+                    bridge = state["bridge"]
+                    if confirmed_track_ids is not None and any(
+                            d.extra.get("trackId") not in confirmed_track_ids for d in bridge.items):
+                        visual = bridge._fallback("awaiting_event_evidence")
+                    else:
+                        try:
+                            visual = bridge.advance(frame, motion_boxes, now)
+                        except Exception:
+                            # The optional visual shortcut must never blind the
+                            # real detector if OpenCV/feature tracking fails.
+                            visual = bridge._fallback("visual_error")
+                    state["bridge"].stats["visual_ms"] += (time.perf_counter() - started) * 1000
+                    if visual is not None:
+                        return ObjectInference(visual if permitted is None else filtrar_deteccoes_por_classe(visual, permitted), "visual", 0)
+                result, ran = self._infer_model_frame(frame, context_key, input_size_hint, motion_boxes,
+                                                     permitted, allowed_class_ids, native_frame,
+                                                     native_motion_boxes, now, state)
+                if temporal and ran:
+                    try:
+                        state["bridge"].seed(frame, result, now)
+                    except Exception:
+                        state["bridge"].clear()
+                        state["bridge"]._fallback("seed_error")
+                return result
+        result, _ = self._infer_model_frame(frame, None, input_size_hint, motion_boxes, permitted,
+                                            allowed_class_ids, None, None, None, None)
+        return result
+
+    accepts_temporal_context = True
+
+    def _context_for(self, context_key):
+        with self._context_lock:
+            state = self._contexts.get(context_key)
+            if state is None:
+                state = {"lock": threading.RLock(), "bridge": VisualTrackBridge(self._visual_config),
+                         "fingerprint": None, "frames": 0, "last_used": time.monotonic()}
+                self._contexts[context_key] = state
+            return state
+
+    def release_context(self, context_key, context_owner=None):
+        with self._context_lock:
+            state = self._contexts.get(context_key)
+            if state is not None and context_owner is not None and state.get("owner") != context_owner:
+                return
+            state = self._contexts.pop(context_key, None)
+        if state is not None:
+            with state["lock"]:
+                state["bridge"].clear()
+                with self._tracker_lock:
+                    for key in [k for k in self._trackers if k.startswith(f"{context_key}:class:")]:
+                        self._trackers.pop(key, None)
+                    self._motion_estimators.pop(context_key, None)
+                with self._rider_lock:
+                    self._riders.pop(context_key, None)
+                with self._region_registry_lock:
+                    self._region_planners.pop(context_key, None)
+                    self._region_planner_locks.pop(context_key, None)
+
+    def _infer_model_frame(self, frame, context_key, input_size_hint, motion_boxes, permitted,
+                           allowed_class_ids, native_frame, native_motion_boxes, timestamp, state):
         if self.model is None:
             self.load()
         runtime = self._runtime_for_hint(input_size_hint)
+        model_calls = 1
         if self._region_config.enabled and motion_boxes is not None:
             detections = self._infer_by_regions(frame, runtime, motion_boxes, context_key, allowed_class_ids)
+            ran = True  # Legacy region planner owns its execution/cache semantics.
         else:
-            detections, _ran = self._detect_raw(frame, runtime, allowed_class_ids=allowed_class_ids)
+            allow_tracking = bool(context_key and GENERAL_PROFILE["persistent_track_id"]
+                                  and self.tracker_name == "bytetrack" and self._low_association)
+            detections, ran = self._detect_raw(frame, runtime, allowed_class_ids=allowed_class_ids,
+                                               allow_tracking=allow_tracking)
+            if not ran:
+                # No observation happened. Never age IDs as though YOLO saw nothing.
+                return ObjectInference((), "busy", 0), False
+            if state is not None:
+                state["frames"] += 1
+            if (self._native_config.enabled and native_frame is not None and state is not None
+                    and state["frames"] % self._native_config.every_model_frames == 0
+                    and int(runtime["input_size"]) >= 416
+                    and timestamp >= state.get("roi_retry_after", 0)):
+                try:
+                    region = choose_native_roi(native_frame.shape, native_motion_boxes, self._native_config)
+                    if region is not None and self._native_config.input_size in self._available_input_sizes():
+                        roi_runtime = self._ensure_runtime(self._native_config.input_size)
+                        x1, y1, x2, y2 = region
+                        found, roi_ran = self._detect_raw(native_frame[y1:y2, x1:x2], roi_runtime,
+                                                         allowed_class_ids=allowed_class_ids)
+                        if roi_ran:
+                            model_calls += 1
+                            self._native_roi_runs += 1
+                            projected = project_native_crop(found, region, native_frame.shape, frame.shape,
+                                                             confidence_floor=self._native_config.confidence_floor)
+                            detections = merge_native_crop(detections, projected)
+                except Exception as exc:
+                    self._native_roi_errors += 1
+                    state["roi_retry_after"] = timestamp + 30
+                    if self._native_roi_errors == 1 or self._native_roi_errors % 100 == 0:
+                        print(f"[ObjectDetector] Optional native crop failed ({type(exc).__name__}); whole-frame result kept")
         if permitted is not None:
             # Cached regions may belong to an earlier permission set.
             detections = filtrar_deteccoes_por_classe(detections, permitted)
         if GENERAL_PROFILE["persistent_track_id"] and context_key:
-            detections = self._track_people(detections, context_key, frame=frame)
+            detections = self._track_people(detections, context_key, frame=frame, timestamp=timestamp)
         if permitted is not None:
             # Tracking can coast previously allowed objects after revocation.
             detections = filtrar_deteccoes_por_classe(detections, permitted)
-        return detections
+        return ObjectInference(detections, "model", model_calls), ran
 
-    def _detect_raw(self, frame, runtime, allowed_class_ids: set[int] | None = None) -> tuple[list[Detection], bool]:
+    def _detect_raw(self, frame, runtime, allowed_class_ids: set[int] | None = None,
+                    allow_tracking: bool = False) -> tuple[list[Detection], bool]:
         """Inferência + pós-processamento NAS COORDENADAS de `frame`.
 
         `frame` é o quadro inteiro (caminho de hoje) ou o recorte de uma região.
@@ -509,11 +714,15 @@ class ObjectDetector(Detector):
         pool = runtime["pool"]
         if pool is None:
             return [], False
+        if not self._global_requests.acquire(blocking=False):
+            self._global_busy_drops += 1
+            return [], False
         # Latest-frame semantics: if no request is available now, drop this
         # frame and let the next loop consume the newest one from the camera queue.
         try:
             infer_request = pool.get_nowait()
         except Empty:
+            self._global_requests.release()
             self._pool_busy_drops += 1
             self._pool_busy_drops_by_size[selected_size] = self._pool_busy_drops_by_size.get(selected_size, 0) + 1
             return [], False
@@ -521,10 +730,14 @@ class ObjectDetector(Detector):
             # Reserve a worker before allocating/resizing the full image.
             # If all workers are occupied, this frame is skipped anyway.
             blob, scale, pad_x, pad_y, width, height, _ = self._preprocess(frame, selected_size)
+            infer_started = time.perf_counter()
             infer_request.infer({runtime["input"]: blob})
             raw = np.array(infer_request.get_output_tensor(0).data, copy=True)
+            self._real_infer_runs += 1
+            self._infer_ms += (time.perf_counter() - infer_started) * 1000
         finally:
             pool.put(infer_request)
+            self._global_requests.release()
         rows = np.squeeze(raw, axis=0)
 
         detections: list[Detection] = []
@@ -532,6 +745,8 @@ class ObjectDetector(Detector):
             if len(row) < 6:
                 continue
             x1, y1, x2, y2, score, cls_id = row[:6]
+            if not all(np.isfinite(v) for v in (x1, y1, x2, y2, score, cls_id)):
+                continue
             cls = int(cls_id)
             if cls not in self.active_class_ids:
                 continue
@@ -552,7 +767,8 @@ class ObjectDetector(Detector):
                     and cls == PERSON_CLASS_ID
                     and float(score) >= self._rider_config.person_floor
                 )
-                if not keep_for_rider:
+                keep_for_association = allow_tracking and float(score) > max(0.10, float(GENERAL_PROFILE.get("low_conf_floor", 0.10)))
+                if not keep_for_rider and not keep_for_association:
                     continue
             else:
                 self._pipeline_bump(cls, "conf_pass")
@@ -573,6 +789,7 @@ class ObjectDetector(Detector):
                         "riderVehicleProxy": cls in RIDER_VEHICLE_CLASS_IDS,
                         "vehicleProxy": cls in VEHICLE_CLASS_IDS,
                         "belowThreshold": below_threshold,
+                        "associationOnly": bool(below_threshold and allow_tracking),
                     },
                 )
             )
@@ -584,6 +801,11 @@ class ObjectDetector(Detector):
                 "path": runtime["path"],
                 "precision": runtime["precision"],
                 "pool_busy_drops": self._pool_busy_drops_by_size.get(size, 0),
+                "requested_properties": runtime.get("requested_properties", {}),
+                "actual_properties": runtime.get("actual_properties", {}),
+                "compile_fallback": runtime.get("compile_fallback"),
+                "convolutions": runtime.get("convolutions"),
+                "int8_convolutions": runtime.get("int8_convolutions"),
             }
             for size, runtime in sorted(self._runtimes.items(), reverse=True)
         }
@@ -594,6 +816,15 @@ class ObjectDetector(Detector):
             "inference_threads": self.inference_threads,
             "infer_workers": self.inference_workers,
             "pool_busy_drops": self._pool_busy_drops,
+            "global_request_limit": self._global_request_limit,
+            "global_busy_drops": self._global_busy_drops,
+            "real_infer_runs": self._real_infer_runs,
+            "real_infer_avg_ms": round(self._infer_ms / max(1, self._real_infer_runs), 3),
+            "native_roi": {"enabled": self._native_config.enabled, "runs": self._native_roi_runs,
+                           "errors": self._native_roi_errors,
+                           "every_model_frames": self._native_config.every_model_frames,
+                           "confidence_floor": self._native_config.confidence_floor},
+            "visual_tracking": self.temporal_status(),
             "loaded_model_path": self.loaded_model_path,
             "input_size_override_supported": False,
             "fixed_model_switching": True,
@@ -607,6 +838,21 @@ class ObjectDetector(Detector):
             "region_detection": self.region_status(),
             "tracker": self.tracker_status(),
         }
+
+    def temporal_status(self):
+        with self._context_lock:
+            states = list(self._contexts.items())
+        result = {}
+        for key, state in states:
+            if not state["lock"].acquire(blocking=False):
+                result[key] = {"busy": True}
+                continue
+            try:
+                result[key] = state["bridge"].status()
+            finally:
+                state["lock"].release()
+        return {"enabled": self._visual_config.enabled, "per_camera": result,
+                "estimated_boxes_confirm_events": False}
 
     def tracker_status(self) -> dict:
         """Diagnóstico do funil detector→tracker e dos backends por câmera.

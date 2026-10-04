@@ -64,7 +64,7 @@ export class AccessControlService {
     // esconderia a câmera da lista mas deixaria o acesso direto passar.
     const allowedGroupIds = groupIds.length ? await this.filterAllowedGroupIds(groupIds) : [];
     const groupCameras = allowedGroupIds.length
-      ? await this.prisma.camera.findMany({ where: { groupId: { in: allowedGroupIds } }, select: { id: true, isPrivate: true } })
+      ? await this.prisma.camera.findMany({ where: { groups: { some: { id: { in: allowedGroupIds } } } }, select: { id: true, isPrivate: true } })
       : [];
 
     const candidate = Array.from(new Set([
@@ -112,30 +112,31 @@ export class AccessControlService {
    * concedendo — ele limita playback/exportação, não o ao vivo (ver
    * `canPlaybackCamera`).
    */
-  private async filterAllowedGroupIds(groupIds: string[]): Promise<string[]> {
+  private async filterAllowedGroupIds(groupIds: string[], playbackOnly = false): Promise<string[]> {
     if (!groupIds.length) return [];
     const groups = await this.prisma.cameraGroup.findMany({
-      where: { id: { in: groupIds }, isActive: true, accessStatus: { not: 'SUSPENDED' } },
+      where: { id: { in: groupIds }, isActive: true, accessStatus: playbackOnly ? 'ACTIVE' : { not: 'SUSPENDED' } },
       select: { id: true },
     });
     return groups.map((group) => group.id);
   }
 
-  private async getMaxPermissionLevel(userId: string, cameraId: string): Promise<CameraPermissionLevel | null> {
-    const camera = await this.prisma.camera.findUnique({ where: { id: cameraId }, select: { groupId: true } });
+  private async getMaxPermissionLevel(userId: string, cameraId: string, playbackOnly = false): Promise<CameraPermissionLevel | null> {
+    const camera = await this.prisma.camera.findUnique({ where: { id: cameraId }, select: { groupId: true, groups: { select: { id: true } } } });
     if (!camera) return null;
 
     // Mesmo bloqueio da lista: um grupo suspenso não pode conceder permissão por
     // grupo. A permissão DIRETA na câmera continua valendo — ela é um vínculo
     // pessoa↔câmera, não do contrato do grupo.
-    const allowedGroupIds = camera.groupId ? await this.filterAllowedGroupIds([camera.groupId]) : [];
+    const groupIds = camera.groups?.map((g) => g.id) ?? (camera.groupId ? [camera.groupId] : []);
+    const allowedGroupIds = groupIds.length ? await this.filterAllowedGroupIds(groupIds, playbackOnly) : [];
 
     const perms = await this.prisma.cameraPermission.findMany({
       where: {
         userId,
         OR: [
           { cameraId },
-          ...(allowedGroupIds.length ? [{ groupId: allowedGroupIds[0] }] : []),
+          ...(allowedGroupIds.length ? [{ groupId: { in: allowedGroupIds } }] : []),
         ],
       },
       select: { level: true },
@@ -258,13 +259,15 @@ export class AccessControlService {
     if (!(await this.canViewCamera(user, cameraId))) return false;
     if (this.isPrivileged(user)) return true;
 
-    const camera = await this.prisma.camera.findUnique({ where: { id: cameraId }, select: { groupId: true } });
-    if (!camera?.groupId) return true;
-    const group = await this.prisma.cameraGroup.findUnique({
-      where: { id: camera.groupId },
-      select: { accessStatus: true },
-    });
-    return group?.accessStatus !== 'RESTRICTED';
+    const camera = await this.prisma.camera.findUnique({ where: { id: cameraId }, select: { groupId: true, ownerUserId: true } });
+    if (camera?.groupId) {
+      const group = await this.prisma.cameraGroup.findUnique({ where: { id: camera.groupId }, select: { accessStatus: true } });
+      if (group?.accessStatus === 'RESTRICTED') return false;
+    }
+    if (camera?.ownerUserId === user.id) return true;
+    // A secondary group with live-only access must not borrow playback from
+    // another group's contract to which this user has no grant.
+    return (await this.getMaxPermissionLevel(user.id, cameraId, true)) !== null;
   }
 
   async assertCanPlaybackCamera(user: AuthUser, cameraId: string): Promise<void> {
@@ -285,20 +288,25 @@ export class AccessControlService {
 
     const cameras = await this.prisma.camera.findMany({
       where: { id: { in: accessibleIds } },
-      select: { id: true, groupId: true },
+      select: { id: true, groupId: true, ownerUserId: true, groups: { select: { id: true } } },
     });
     const groupIds = Array.from(new Set(
       cameras.map((camera) => camera.groupId).filter((id): id is string => Boolean(id)),
     ));
-    if (!groupIds.length) return cameras.map((camera) => camera.id);
-
     const restrictedGroups = await this.prisma.cameraGroup.findMany({
       where: { id: { in: groupIds }, accessStatus: 'RESTRICTED' },
       select: { id: true },
     });
     const restrictedIds = new Set(restrictedGroups.map((group) => group.id));
+    const memberships = [...new Set(cameras.flatMap((camera) => camera.groups?.map((g) => g.id) ?? (camera.groupId ? [camera.groupId] : [])))];
+    const allowedGroups = new Set(await this.filterAllowedGroupIds(memberships, true));
+    const grants = await this.prisma.cameraPermission.findMany({ where: { userId: user.id }, select: { cameraId: true, groupId: true } });
+    const direct = new Set(grants.map((grant) => grant.cameraId).filter(Boolean));
+    const byGroup = new Set(grants.map((grant) => grant.groupId).filter((id) => id && allowedGroups.has(id)));
     return cameras
       .filter((camera) => !camera.groupId || !restrictedIds.has(camera.groupId))
+      .filter((camera) => camera.ownerUserId === user.id || direct.has(camera.id)
+        || (camera.groups?.map((g) => g.id) ?? (camera.groupId ? [camera.groupId] : [])).some((id) => byGroup.has(id)))
       .map((camera) => camera.id);
   }
 

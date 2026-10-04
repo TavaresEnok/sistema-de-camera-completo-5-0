@@ -77,7 +77,7 @@ export class PushDevicesService {
     }
     const camera = await this.prisma.camera.findUnique({
       where: { id: cameraId },
-      select: { groupId: true, ownerUserId: true },
+      select: { groupId: true, ownerUserId: true, groups: { select: { id: true } } },
     });
 
     const [privileged, perms] = await Promise.all([
@@ -87,7 +87,7 @@ export class PushDevicesService {
       }),
       this.prisma.cameraPermission.findMany({
         where: {
-          OR: [{ cameraId }, ...(camera?.groupId ? [{ groupId: camera.groupId }] : [])],
+          OR: [{ cameraId }, ...((camera?.groups?.length || camera?.groupId) ? [{ groupId: { in: camera.groups?.map((g) => g.id) ?? [camera.groupId!] } }] : [])],
         },
         select: { userId: true },
       }),
