@@ -24,4 +24,10 @@ test('runtime pilot HTTP approval requires confirmation, gate, authentication an
   assert.equal((await post({...body,gate:{}})).status,400);
   assert.equal((await post({...body,commit:'d'.repeat(40)})).status,409);
   const result=await post(body);assert.equal(result.status,200);assert.equal((await result.json()).release.commit,commit);
+  const installer=await fetch(central.base+'/api/admin/installations/pilot/installer',{headers:central.adminHeaders()});
+  assert.equal(installer.status,200);
+  const issued=await installer.json();
+  assert.equal(issued.installerArtifact.id,commit);
+  assert.equal(issued.installerArtifact.compatibility,'signed-runtime');
+  assert.match(issued.installerArtifact.url,/\/api\/security\/bootstrap\//);
 });

@@ -2109,7 +2109,7 @@ async function handleQueueOperation(req, res, db, actor, installationId) {
   if (String(body.confirmation || '') !== action) {
     return json(req, res, 400, { error: 'operation_confirmation_required', message: 'Confirmação da ação não confere.' });
   }
-  const release = releaseAtual(db);
+  const release = releases.approvedForInstallation(releaseAtual(db), installation);
   if (action === 'update' && !release?.commit) {
     return json(req, res, 409, { error: 'no_approved_release', message: 'Não há uma versão aprovada para atualizar.' });
   }
@@ -2227,7 +2227,7 @@ async function handleProvision(req, res, db, actor) {
     // Reprovisionar é uma nova aprovação: captura o artefato configurado agora,
     // persiste o vínculo commit+URL+hash e invalida qualquer comando anterior.
     const installerToken = refreshInstallerGrant(item, {
-      release: releaseAtual(db),
+      release: releases.approvedForInstallation(releaseAtual(db), item),
       forceArtifact: true,
       forceToken: true,
     });
@@ -2268,7 +2268,7 @@ async function handleGetInstallerCommand(req, res, db, actor, installationId) {
     // Comandos novos para registros legados recebem o artefato aprovado atual.
     // Registros já vinculados preservam o mesmo artefato. Cada nova consulta
     // administrativa rotaciona o token, invalidando o comando anterior.
-    const installerToken = refreshInstallerGrant(item, { forceToken: true, release: releaseAtual(db) });
+    const installerToken = refreshInstallerGrant(item, { forceToken: true, release: releases.approvedForInstallation(releaseAtual(db), item) });
     installer = buildInstallerResponse(item, centralUrl, installerToken);
   } catch (error) {
     if (error instanceof InstallerConfigurationError) {
@@ -3650,7 +3650,7 @@ async function prepareRemoteInstall(req, res, db, actor, installationId, body) {
   try {
     // Instalações antigas só podem entrar no caminho SSH depois de receber o
     // mesmo vínculo imutável usado pelos comandos manuais.
-    refreshInstallerGrant(item, { issueToken: false, release: releaseAtual(db) });
+    refreshInstallerGrant(item, { issueToken: false, release: releases.approvedForInstallation(releaseAtual(db), item) });
     // A clean-install pilot must not promote an untested release for the fleet.
     // Explicit immutable candidate applies only to this job, with its own audit.
     let target = item;
@@ -4092,6 +4092,7 @@ async function route(req, res) {
         try { runtimeArtifacts.resolve(checked.release); } catch { return json(req, res, 409, { error: 'runtime_package_unavailable' }); }
         refreshInstallerGrant(item, { forceArtifact: true, forceToken: true, release: checked.release });
         item.runtimeRelease = checked.release;
+        item.requireSignedLicense = true;
         addAuditEvent(db, req, { type: 'installation.runtime_pilot_approved', actor: actor.email, result: 'accepted', installationId: id, commit: checked.release.commit });
         await saveDb(db);
         return json(req, res, 200, { accepted: true, release: releases.releaseParaInstalacao(releaseAtual(db), item) });
