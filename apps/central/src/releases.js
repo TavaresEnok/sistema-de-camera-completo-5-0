@@ -134,6 +134,7 @@ function resumoDaFrota(instalacoes, release) {
  * histórico ou notas: é canal de máquina, não de leitura humana.
  */
 function releaseParaInstalacao(release, instalacao) {
+  release = approvedForInstallation(release, instalacao);
   if (!release?.commit) return null;
   return {
     commit: release.commit,
@@ -142,6 +143,12 @@ function releaseParaInstalacao(release, instalacao) {
     situacao: situacaoDaInstalacao(instalacao, release),
     ...(release.runtimeBundle ? {runtimeBundle:release.runtimeBundle} : {}),
   };
+}
+
+// An explicitly approved pilot is pinned to one installation. It must never
+// cause unrelated tenants to download/update to that candidate release.
+function approvedForInstallation(release, installation) {
+  return installation?.runtimeRelease || release;
 }
 
 /** Guarda a promoção no histórico, mais nova primeiro, sem duplicar seguidas. */
@@ -160,5 +167,6 @@ module.exports = {
   situacaoDaInstalacao,
   resumoDaFrota,
   releaseParaInstalacao,
+  approvedForInstallation,
   registrarNoHistorico,
 };

@@ -4011,7 +4011,7 @@ async function route(req, res) {
       if (licenseResponse(item).restrictions.updates === false) return json(req, res, 403, {error:'artifact_access_denied'});
       try {
         if (req.method === 'POST') {
-          const grant = runtimeArtifacts.claim(item, releaseAtual(db));
+          const grant = runtimeArtifacts.claim(item, releases.approvedForInstallation(releaseAtual(db), item));
           await saveDb(db);
           return json(req, res, 200, grant);
         }
@@ -4080,6 +4080,21 @@ async function route(req, res) {
         return handleProvision(req, res, db, actor);
       }
       const resetDevice = url.pathname.match(/^\/api\/admin\/installations\/([^/]+)\/security\/device-reset$/);
+      const runtimePilot = url.pathname.match(/^\/api\/admin\/installations\/([^/]+)\/runtime-release$/);
+      if (req.method === 'POST' && runtimePilot) {
+        const id = decodeURIComponent(runtimePilot[1]);
+        const item = db.installations[id];
+        if (!item) return json(req, res, 404, { error: 'installation_not_found' });
+        const body = await readBody(req);
+        if (body.confirmInstallationId !== id) return json(req, res, 400, { error: 'pilot_confirmation_required' });
+        const checked = releases.validarPromocao({ ...body, promovidoPor: actor.email });
+        if (!checked.ok || !checked.release.runtimeBundle) return json(req, res, 400, { error: checked.erro || 'runtime_package_required' });
+        try { runtimeArtifacts.resolve(checked.release); } catch { return json(req, res, 409, { error: 'runtime_package_unavailable' }); }
+        item.runtimeRelease = checked.release;
+        addAuditEvent(db, req, { type: 'installation.runtime_pilot_approved', actor: actor.email, result: 'accepted', installationId: id, commit: checked.release.commit });
+        await saveDb(db);
+        return json(req, res, 200, { accepted: true, release: releases.releaseParaInstalacao(releaseAtual(db), item) });
+      }
       if (req.method === 'POST' && resetDevice) {
         const id = decodeURIComponent(resetDevice[1]);
         const item = db.installations[id];

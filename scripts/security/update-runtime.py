@@ -10,6 +10,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import tempfile
@@ -85,14 +86,28 @@ def run(args):
         images=manifest.get('images') or {}
         if any(service not in images for service in services):raise ValueError('Incomplete application images')
         persistent=root/'infra/docker-compose.runtime-images.json'
-        persistent.write_text(json.dumps({'services':{service:{'image':images[service]} for service in services}}));os.chmod(persistent,0o600)
+        service_config={service:{'image':images[service]} for service in services}
+        service_config['api']['environment']={'DRAC_VERSION':commit}
+        persistent.write_text(json.dumps({'services':service_config}));os.chmod(persistent,0o600)
         changed=command if persistent in compose_files else command+['-f',str(persistent)]
         try:
             subprocess.run(changed+['up','-d','--no-build','--pull','never','--no-deps','--wait','--wait-timeout','180',*services],check=True)
         except Exception:
-            persistent.write_text(json.dumps({'services':{service:{'image':before[service]} for service in services}}))
+            rollback_config={service:{'image':before[service]} for service in services}
+            old_env=metadata['Config'].get('Env') or []
+            previous_version=next((x.split('=',1)[1] for x in old_env if x.startswith('DRAC_VERSION=')),state.get('commit','local'))
+            rollback_config['api']['environment']={'DRAC_VERSION':previous_version}
+            persistent.write_text(json.dumps({'services':rollback_config}))
             subprocess.run(changed+['up','-d','--no-build','--pull','never','--no-deps','--wait','--wait-timeout','180',*services],check=True)
             raise ValueError('Update rejected; previous application images restored, license state retained')
+        for source in (stage/'verified/runtime/scripts').rglob('*'):
+            if source.is_file():
+                target=root/'scripts'/source.relative_to(stage/'verified/runtime/scripts')
+                target.parent.mkdir(parents=True,exist_ok=True)
+                temporary_target=target.with_name(target.name+'.signed-update')
+                shutil.copyfile(source,temporary_target)
+                os.chmod(temporary_target,0o755 if target.suffix=='.sh' else 0o644)
+                os.replace(temporary_target,target)
         (root/'.runtime-release.json').write_text(json.dumps(manifest));os.chmod(root/'.runtime-release.json',0o600)
         print('Atualização assinada concluída; dados, credenciais e configuração de vídeo preservados.')
 

@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import shlex
 import subprocess
 import tarfile
 import tempfile
@@ -20,6 +21,7 @@ import yaml
 GLUE=['install-drac.sh','install-ai-models.sh','runtime-watchdog.sh','drac-ops-agent.sh','production-readiness.sh',
       'atualizar-instalacao.sh','security/provision-license.sh','security/runtime-bundle.py','security/update-runtime.py']
 CONFIG=['docker-compose.prod.yml','docker-compose.gateway.yml','docker-compose.license.yml','.env.example',
+        'systemd/drac-ops-agent.service','systemd/drac-ops-agent.timer',
         'model-bundles/yolo26n-int8-20261004.tar.gz']
 
 
@@ -33,12 +35,13 @@ def sha(file):
 def build(args):
     root=args.root.resolve()
     if not re.fullmatch('[a-f0-9]{40}',args.commit):raise ValueError('Immutable commit required')
-    if args.signing_key.stat().st_mode & 0o077:raise ValueError('Release key must be private')
+    if args.signing_key and args.signing_key.stat().st_mode & 0o077:raise ValueError('Release key must be private')
     if not args.distribution_approval.strip():raise ValueError('Distribution licensing approval reference required')
     if args.output.exists():raise ValueError('Output must not exist')
     overrides=json.loads(args.images.read_text())
     if not all(k in overrides for k in ['api','web','ai-service']):raise ValueError('Validated application images required')
-    public=subprocess.run(['openssl','pkey','-in',str(args.signing_key),'-pubout'],check=True,capture_output=True).stdout.decode()
+    signer=shlex.split(args.signer_command) if args.signer_command else None
+    public=subprocess.run(signer+['--public'] if signer else ['openssl','pkey','-in',str(args.signing_key),'-pubout'],check=True,capture_output=True).stdout.decode()
     with tempfile.TemporaryDirectory(prefix='drac-package-build-') as temporary:
         stage=Path(temporary);runtime=stage/'runtime';(runtime/'infra').mkdir(parents=True);(runtime/'scripts').mkdir()
         def copy(relative):
@@ -79,7 +82,9 @@ def build(args):
         raw=json.dumps(manifest,sort_keys=True,separators=(',',':')).encode()
         (stage/'manifest.json').write_bytes(raw)
         message=stage/'message';message.write_bytes(b'drac-runtime-manifest-v1\n'+raw)
-        sig=subprocess.run(['openssl','pkeyutl','-sign','-inkey',str(args.signing_key),'-rawin','-in',str(message)],check=True,capture_output=True).stdout
+        sig=subprocess.run(signer if signer else ['openssl','pkeyutl','-sign','-inkey',str(args.signing_key),'-rawin','-in',str(message)],
+            input=message.read_bytes() if signer else None,check=True,capture_output=True).stdout
+        if len(sig)!=64:raise ValueError('Invalid external release signature')
         message.unlink();(stage/'manifest.sig').write_bytes(sig)
         args.output.mkdir(mode=0o700,parents=True)
         archive=args.output/(args.commit+'.tar.gz')
@@ -97,7 +102,9 @@ def build(args):
 if __name__=='__main__':
     parser=argparse.ArgumentParser()
     parser.add_argument('--root',type=Path,required=True);parser.add_argument('--output',type=Path,required=True)
-    parser.add_argument('--commit',required=True);parser.add_argument('--signing-key',type=Path,required=True)
+    parser.add_argument('--commit',required=True)
+    signing=parser.add_mutually_exclusive_group(required=True)
+    signing.add_argument('--signing-key',type=Path);signing.add_argument('--signer-command')
     parser.add_argument('--license-keys',type=Path,required=True);parser.add_argument('--images',type=Path,required=True)
     parser.add_argument('--distribution-approval',required=True)
     build(parser.parse_args())
