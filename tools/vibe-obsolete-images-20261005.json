@@ -1,0 +1,387 @@
+[
+  {
+    "imageId": "sha256:a9af1bd29ff766d3b41622640da0be12a1395bc7a886e255e9b115717e9fa379",
+    "tags": [
+      "drac-central:20261005-notifications-v2"
+    ]
+  },
+  {
+    "imageId": "sha256:b7c84b00633549de251e78e626cd5f1ef7e94e89c61624a310824ca36e1f6330",
+    "tags": [
+      "drac-security-central:20261005-dguardian-pilot"
+    ]
+  },
+  {
+    "imageId": "sha256:3dc39b76bca9830ad32924051842133cd8c191492c0016afb8acc7889257de58",
+    "tags": [
+      "drac-security-central:20261005-signed-runtime"
+    ]
+  },
+  {
+    "imageId": "sha256:c7e670ce07ad0a9a1aa536b86156ffa9336378134f26e3c89c987f8710b2fc74",
+    "tags": [
+      "drac-security-central:20261005-signed-license"
+    ]
+  },
+  {
+    "imageId": "sha256:2edef1d96c98bae906ec68a8b6e184e4aede869c0e9be7d22e8120af3847f0ff",
+    "tags": [
+      "drac-pipeline-web:20261004-analysis-metrics"
+    ]
+  },
+  {
+    "imageId": "sha256:25101ea1b941492af615cef458b09f627f543ddc55c08ba62960809fda470143",
+    "tags": [
+      "drac-pipeline-ai:20261004-recorded-validation"
+    ]
+  },
+  {
+    "imageId": "sha256:3bfc6d58628403220ffd223ed5df0ce9c3efca1e9f8db65c1ba77634b1b78f1e",
+    "tags": [
+      "drac-pipeline-web:20261003-four-groups"
+    ]
+  },
+  {
+    "imageId": "sha256:1275af6b55d691b403ece4b4120cc11b890faf82e98f3ff593f2851c4a0f43e8",
+    "tags": [
+      "drac-pipeline-api:20261003-four-groups"
+    ]
+  },
+  {
+    "imageId": "sha256:b4dd883549ab0fe08ad8c666d02bfc597fa29e13ee0698a45ac1a339ea231b41",
+    "tags": [
+      "drac-camera-groups-api-builder:20261003"
+    ]
+  },
+  {
+    "imageId": "sha256:65ce2b6c0f8c67cdfa4e6af2494bc2bdb85a56fc0f8c42e94f8541ea79255f74",
+    "tags": [
+      "drac-pipeline-ai:20261003-visual-tracking"
+    ]
+  },
+  {
+    "imageId": "sha256:97663051198ae736bc0b458efa6cd4104b664ef0a34f7cb6361f664085684ca5",
+    "tags": [
+      "drac-pipeline-ai:20261002-object-policy"
+    ]
+  },
+  {
+    "imageId": "sha256:9dfc3f3c7af0108dcf2d96223131e0b1fa0c6477400abb927d191f533a544374",
+    "tags": [
+      "drac-pipeline-ai:20261002-small-motion"
+    ]
+  },
+  {
+    "imageId": "sha256:6f1d6e5a5b67d7363267c38be276484ac7f68517081bdea65ce22be34d526d3b",
+    "tags": [
+      "drac-pipeline-web:20261002-wall-grid-return"
+    ]
+  },
+  {
+    "imageId": "sha256:c6d4fd38db8c8a3988db32febad6b5d8e3383b007fd2a16ef5ebe2f590268463",
+    "tags": [
+      "drac-central-validation:20261002"
+    ]
+  },
+  {
+    "imageId": "sha256:16e0ed4eaa3950750d274cfd3990b0f19d58e47a12e825a57f5b6ed7bf5fe1de",
+    "tags": [
+      "drac-pipeline-api:20261002-live-budget"
+    ]
+  },
+  {
+    "imageId": "sha256:0a438b8a8f7da6e66a418fc666fdd8666f24fb2920057649842ad0c56122536b",
+    "tags": [
+      "drac-pipeline-api:20261002-decoder-budget"
+    ]
+  },
+  {
+    "imageId": "sha256:b8724f5e59290cf30d6f783a3abfa68e6b8f2d824e2104f7da26c99557522a19",
+    "tags": [
+      "drac-pipeline-web:20261002-overlay-fixes"
+    ]
+  },
+  {
+    "imageId": "sha256:8c63ae14ff054f8a55e7e718695731ece18c365e4ba30ee99bec91ad2e32d06d",
+    "tags": [
+      "drac-pipeline-ai:20261002-motion-fixes"
+    ]
+  },
+  {
+    "imageId": "sha256:97c94425f23918996a225eb9bd572f84c1141736b814285d8cbf8c21cbdb5703",
+    "tags": [
+      "drac-pipeline-ai:20261002-deadline"
+    ]
+  },
+  {
+    "imageId": "sha256:e841fcd30d077bcc1b786bc2c662f8ca957ea52c5f00acae631c4b162dca2011",
+    "tags": [
+      "drac-srs-forward:20261002"
+    ]
+  },
+  {
+    "imageId": "sha256:2736cc143123ca5fc3396ebc82d027ace9f2ab7e3ec511469fa5c7681b0fbf1c",
+    "tags": [
+      "drac-srs-build-deps:20261001-stage2"
+    ]
+  },
+  {
+    "imageId": "sha256:67e01233f55486fcd0aa3373f84436a2f764a02c341d21d85bb6e2643c4c80c5",
+    "tags": [
+      "drac-srs-build-deps:20261001"
+    ]
+  },
+  {
+    "imageId": "sha256:22d73bbd7c72f93307fb30cacf505bf49ebe7c661c130b16b7a7a08fc828a5c0",
+    "tags": [
+      "drac-pipeline-ai:20261001-events"
+    ]
+  },
+  {
+    "imageId": "sha256:87653a6936c241c766209563ae1e9d402caefd85da98ad439b3cbbedba69b828",
+    "tags": [
+      "drac-pipeline-web:20261001"
+    ]
+  },
+  {
+    "imageId": "sha256:5c4540aa7db870d4169a9d2ad7d8a6487d3148311c5bc950f19fc96e20931e89",
+    "tags": [
+      "drac-pipeline-api:20261001"
+    ]
+  },
+  {
+    "imageId": "sha256:e43f2ee235684127d2ddf51e749981cba2ac85a9e9748f2097909acaaedbef60",
+    "tags": [
+      "drac-pipeline-ai:20261001"
+    ]
+  },
+  {
+    "imageId": "sha256:a9483e35c34b1d6b0b5098499f804123b70a053a3766267579da0cf3dd8661ad",
+    "tags": [
+      "drac-api-ib-perimeter-builder:latest"
+    ]
+  },
+  {
+    "imageId": "sha256:f562d53e2be9a13993117d7288119501caf8ec34f3465661487dee37634e1e49",
+    "tags": [
+      "drac-web-ib-perimeter-builder:latest"
+    ]
+  },
+  {
+    "imageId": "sha256:6a56556293038750e8e6679ffc011e3e30866baf3520791699b80b281773bbd8",
+    "tags": [
+      "drac-web-perimeter-builder:latest"
+    ]
+  },
+  {
+    "imageId": "sha256:36dd6a8b018c2da386a873508e1106dab043f0f2481e189b03f3407b2e79c039",
+    "tags": [
+      "drac-api-perimeter-builder:latest"
+    ]
+  },
+  {
+    "imageId": "sha256:ffa891c260ad033c79d2d63afb835e3887a8932f7cceb58ce7fef12d1b21bc2e",
+    "tags": [
+      "drac-api-perimeter-check:latest"
+    ]
+  },
+  {
+    "imageId": "sha256:8459fef71c28e84cba20efdee01b58226c5c22d20f2b53d32930757cea440a69",
+    "tags": [
+      "drac-web-perimeter-check:latest"
+    ]
+  },
+  {
+    "imageId": "sha256:1919a1e3a023124ba8a63d3afd4e6ce73530dc3b40536dc93a06b77d32c06998",
+    "tags": [
+      "drac-web-perimeter-typecheck:latest"
+    ]
+  },
+  {
+    "imageId": "sha256:aa3b0b3b5425c0d9830332cea32438b05fc6586e01aa3cb33759246654811bda",
+    "tags": [
+      "drac-ib-camera-preview-hotfix:20260929-final"
+    ]
+  },
+  {
+    "imageId": "sha256:5382bc4af843275fce8b340edfd8e09f169c664fb6d9ae2a0eb8aa7820975ea7",
+    "tags": [
+      "drac-ib-camera-preview-hotfix:20260929"
+    ]
+  },
+  {
+    "imageId": "sha256:42d98b6f7015097e0928ff006a06d3dd698858bc72913f62ac1a07ca8fe0036f",
+    "tags": [
+      "drac-operational-api:20260929"
+    ]
+  },
+  {
+    "imageId": "sha256:16ffed8325ccf6c972e6b102d9fe9671cac179427a9039e71a3a689f45940441",
+    "tags": [
+      "drac-operational-web:20260929"
+    ]
+  },
+  {
+    "imageId": "sha256:0d2d872f58338f50c370039860a46a9db846e3be036f642073d540b1c38bd005",
+    "tags": [
+      "drac-operational-web-check:20260929"
+    ]
+  },
+  {
+    "imageId": "sha256:5996ae01e0da8ab4db00591d6e0368217338d7545715210468df2c1394012ef6",
+    "tags": [
+      "drac-pipeline-rollback-web:20261001",
+      "infra-web:latest",
+      "drac-administration-web:20260928"
+    ]
+  },
+  {
+    "imageId": "sha256:a996ba59e3f5faf00de1ff4781b3abbf02386cb7ececbb4f35f7b9561167236e",
+    "tags": [
+      "infra-api:latest",
+      "drac-administration-api:20260928",
+      "drac-pipeline-rollback-api:20261001"
+    ]
+  },
+  {
+    "imageId": "sha256:3c970fa6268a6ce433eac41b1f0f84e9a587b67dc2a05b26268097cc1a168025",
+    "tags": [
+      "drac-administration-rollback-api:20260929"
+    ]
+  },
+  {
+    "imageId": "sha256:26cc2b5465fa7219880cb634291efc974d82f9db080893d1c82e3be9742df0de",
+    "tags": [
+      "drac-maquina-virgem:ubuntu24"
+    ]
+  },
+  {
+    "imageId": "sha256:ce725ffa22c1a3d1c0e75af8ca57861c6626c2718d563515a880762ca17f9f11",
+    "tags": [
+      "drac-video-stage2-rollback-api:20260928"
+    ]
+  },
+  {
+    "imageId": "sha256:231e872d87dc55074f9139720a9a3f94d4a57d077b4673cd1f64f81dd00c0310",
+    "tags": [
+      "drac-administration-rollback-web:20260929"
+    ]
+  },
+  {
+    "imageId": "sha256:3ced39088a7dc942379a0a18ebc9fb5bef84589ff6b8208bb4c69c4a1cd6e4a1",
+    "tags": [
+      "drac-video-validation-cache:20260928"
+    ]
+  },
+  {
+    "imageId": "sha256:be3f1611c809b52ec99f6f61a917eae8e13d954497cd29f32d8fdc7e48cf321e",
+    "tags": [
+      "drac-live-rollback-web:7081265",
+      "drac-video-rollback-web:20260928"
+    ]
+  },
+  {
+    "imageId": "sha256:055a719177aaf20bdcffac43767c45f33a92f77c9aa928f0b55b5fe098c438c6",
+    "tags": [
+      "drac-live-rollback-api:7081265",
+      "drac-video-rollback-api:20260928"
+    ]
+  },
+  {
+    "imageId": "sha256:88a2facbfc5e217dc082837698b011637f7d363f62fd3427aaebf57f4dc43d98",
+    "tags": [
+      "drac-web-camera-edit-validation:latest"
+    ]
+  },
+  {
+    "imageId": "sha256:4825a6f32fdec3abd1d09033830db6f3af23da81a3954ff3cfe56c51730da6c8",
+    "tags": [
+      "drac-pipeline-rollback-ai:20261001",
+      "infra-ai-service:latest"
+    ]
+  },
+  {
+    "imageId": "sha256:99eaaa13fed4e7b0e0c762d39bab863cebcdbc49e1acf03874b89efe6201d59c",
+    "tags": [
+      "infra-web:before-multimonitor-20260908"
+    ]
+  },
+  {
+    "imageId": "sha256:900c679805d9a3011f3a2c75cde7f0fc9c3390a56a9ed4903abc813b1aba4cca",
+    "tags": [
+      "infra-api:before-discovery-20260908"
+    ]
+  },
+  {
+    "imageId": "sha256:ac4f7f62d2a206d728b6580a9ae11d2f4926338461231b14a4cfc0161a687b7b",
+    "tags": [
+      "infra-api:before-short-url-20260908"
+    ]
+  },
+  {
+    "imageId": "sha256:b7f04fa906fb88a525dfd2b2c732af38cb36833b2a4d0b0a7bfa8ca00c3a9b8a",
+    "tags": [
+      "infra-web:before-discovery-20260908"
+    ]
+  },
+  {
+    "imageId": "sha256:444a75c021c0d6fa95dcd6e8005d59ed9e0bb0d8deb91cbec23582ff83a1f365",
+    "tags": [
+      "infra-drac-central:latest"
+    ]
+  },
+  {
+    "imageId": "sha256:baf0d6e1f1ef8360543c797e33eba17322559fb00ec340c29d98ed670b8dea76",
+    "tags": [
+      "drac-release-web:069c596"
+    ]
+  },
+  {
+    "imageId": "sha256:b64c425e9a19a0a7366d917741d877f8dba665de878666de97465833655524f4",
+    "tags": [
+      "drac-release-web:d49f3e6"
+    ]
+  },
+  {
+    "imageId": "sha256:7f221f8d4561c4eced45dc2fbb9da1ac2d9910d71de51d17c17bbe107be0bd40",
+    "tags": [
+      "drac-release-api:d49f3e6"
+    ]
+  },
+  {
+    "imageId": "sha256:9a5025f402299ba7b0f6be2cce4bd00d42f4ed677baf62c6a5abd65bb7fdc628",
+    "tags": [
+      "drac-release-api:421fbb9"
+    ]
+  },
+  {
+    "imageId": "sha256:ded854844c0281fed312a6c704114a48e664496193e8c6ec9c4b9f91099c4b3d",
+    "tags": [
+      "drac-release-web:298adde"
+    ]
+  },
+  {
+    "imageId": "sha256:9ddef9ecf62a7b76b3acc4f3bd8f1618c8661e891975ff09ac9eee468a76e58d",
+    "tags": [
+      "drac-release-web:ee5b883"
+    ]
+  },
+  {
+    "imageId": "sha256:d6efadf684190c6abe6a2361071d5c3eec6dc65ad17401e7434a0e00513af581",
+    "tags": [
+      "drac-release-api:ee5b883"
+    ]
+  },
+  {
+    "imageId": "sha256:987b90676ee9cb11be0f741327934bee16bdfd9d559f713219dc8ea64b58e9cb",
+    "tags": [
+      "<none>:<none>"
+    ]
+  },
+  {
+    "imageId": "sha256:9a395aa2aa71ce8bcc04a2855a4d5b546f6f2bc852c6ea69c2fa319843b12746",
+    "tags": [
+      "<none>:<none>"
+    ]
+  }
+]

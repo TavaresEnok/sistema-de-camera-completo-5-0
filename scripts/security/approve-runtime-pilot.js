@@ -6,11 +6,14 @@ const fs=require('node:fs');const crypto=require('node:crypto');
   const report=JSON.parse(input.reportText);
   if(!report.freshIsolatedRuntime||!report.realDockerServices||!report.signatureVerified||!report.databaseSchemaVerified||!report.sourceFreeAI
     ||!report.readiness?.ready||report.bootstrapLogin?.status!==201||report.hls?.status!==200
-    ||report.commit!==input.metadata.commit||input.installationId!=='dguardian')throw new Error('pilot_evidence_invalid');
+    ||report.commit!==input.metadata.commit||!['dguardian','vibe'].includes(input.installationId)
+    ||(input.installationId==='vibe'&&input.activeCameraMigrationReviewed!==true))throw new Error('pilot_evidence_invalid');
   const request={...input.metadata,confirmInstallationId:input.installationId,
     gate:{runtimeFresh:true,signatureVerified:true,dataPreservationReviewed:true,
       reportSha256:crypto.createHash('sha256').update(input.reportText).digest('hex'),em:new Date().toISOString()},
-    notas:'First local runtime pilot: fresh isolated Docker + synthetic RTSP/capture/motion/recording/HLS; not physical customer-camera or ICE validation.'};
+    notas:input.installationId==='vibe'
+      ?'Vibe package migration reviewed: 34 cameras, same schema, existing capacity/media/license configuration preserved; shared package validated in fresh isolated Docker. No physical customer ICE claim.'
+      :'First local runtime pilot: fresh isolated Docker + synthetic RTSP/capture/motion/recording/HLS; not physical customer-camera or ICE validation.'};
   const response=await fetch('http://127.0.0.1:9765/api/admin/installations/'+input.installationId+'/runtime-release',
     {method:'POST',headers:{authorization:'Bearer '+process.env.DRAC_CENTRAL_ADMIN_TOKEN,'Content-Type':'application/json'},body:JSON.stringify(request)});
   if(!response.ok)throw new Error('pilot_approval_failed_'+response.status);

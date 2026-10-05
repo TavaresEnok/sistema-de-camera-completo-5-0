@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Migrate an existing, empty-camera pilot without changing media services.
+"""Migrate an existing runtime without changing media services.
 
 Run as root after transferring an approved package and its separately trusted
 public key. Cleanup is a separate phase after the operator validates the pilot.
@@ -24,6 +24,11 @@ def command(args,**kwargs):
 
 def inspect(name):return json.loads(command(['docker','inspect',name],capture_output=True,text=True).stdout)[0]
 
+def reviewed_camera_count(count, expected):
+    if expected < 0 or not count.isdigit() or int(count) != expected:
+        raise ValueError('Camera count differs from the explicitly reviewed migration')
+    return int(count)
+
 def apply(args):
     root=args.root.resolve()
     if root!=Path('/opt/drac') or root.is_symlink():raise ValueError('This pilot supports only the verified /opt/drac installation')
@@ -44,13 +49,14 @@ def apply(args):
     raw=json.loads(command(original+['config','--no-interpolate','--format','json'],capture_output=True,text=True).stdout)
     count=command(['docker','exec','vms-api','node','-e',
         'const {PrismaClient}=require("/app/apps/api/node_modules/@prisma/client");const p=new PrismaClient();p.camera.count().then(n=>{console.log(n);return p.$disconnect()})'],capture_output=True,text=True).stdout.strip()
-    if count!='0':raise ValueError('Pilot now has cameras; schedule a reviewed active-camera migration instead')
+    expected=getattr(args,'expected_cameras',0)
+    reviewed_camera_count(count,expected)
     with tempfile.TemporaryDirectory(prefix='drac-pilot-verified-') as directory:
         verified=Path(directory)/'verified'
         manifest=verifier.extract_verified(args.bundle,args.public_key,verified,args.commit)
         if not manifest.get('databaseSchemaHash') or not all(name in manifest.get('images',{}) for name in ['api','web','ai-service']):raise ValueError('Incomplete pilot package')
         existing_schema=command(['docker','exec','vms-api','node','-e',
-            'const fs=require("fs"),path=require("path"),crypto=require("crypto");const root="/app/apps/api/prisma";let files=[];function walk(d){for(const x of fs.readdirSync(d)){const p=path.join(d,x);if(fs.statSync(p).isDirectory())walk(p);else if(x==="schema.prisma"||x.endsWith(".sql"))files.push(p)}}walk(root);const h=crypto.createHash("sha256");for(const p of files.sort()){h.update(path.relative(root,p));h.update(fs.readFileSync(p))}console.log(h.digest("hex"))'],capture_output=True,text=True).stdout.strip()
+            'const fs=require("fs"),path=require("path"),crypto=require("crypto");const root="/app/apps/api/prisma";let files=[path.join(root,"schema.prisma")];function walk(d){for(const x of fs.readdirSync(d)){const p=path.join(d,x);if(fs.statSync(p).isDirectory())walk(p);else if(x.endsWith(".sql"))files.push(p)}}walk(path.join(root,"migrations"));const h=crypto.createHash("sha256");for(const p of files.sort()){h.update(path.relative(root,p));h.update(fs.readFileSync(p))}console.log(h.digest("hex"))'],capture_output=True,text=True).stdout.strip()
         if existing_schema!=manifest['databaseSchemaHash']:raise ValueError('Database schema differs; explicit migration approval required')
         backup=root/'infra/backups'/('package-migration-'+time.strftime('%Y%m%dT%H%M%SZ',time.gmtime()))
         backup.mkdir(mode=0o700,parents=True)
@@ -71,7 +77,7 @@ def apply(args):
             service.pop('build',None)
             service['image']=manifest['images'][name]
         base.write_text(json.dumps(raw,indent=2));os.chmod(base,0o644)
-        lines=env.read_text().splitlines();updates={'DRAC_WEBRTC_HOST_NAT':'true','DRAC_VERSION':manifest['commit'],'MOTION_DETECTION_FPS':'7.0'}
+        lines=env.read_text().splitlines();updates={'DRAC_VERSION':manifest['commit'],'MOTION_DETECTION_FPS':'7.0'}
         lines=[line for line in lines if line.split('=',1)[0] not in updates]
         env.write_text('\n'.join(lines+[key+'='+value for key,value in updates.items()])+'\n');os.chmod(env,0o600)
         runtime_images=root/'infra/docker-compose.runtime-images.json'
@@ -97,10 +103,11 @@ def apply(args):
                 if not target.exists():target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(source,target)
         shutil.copyfile(args.public_key,root/'infra/release-public.pem')
         (root/'.runtime-release.json').write_text(json.dumps(manifest));os.chmod(root/'.runtime-release.json',0o600)
-        print(json.dumps({'migrated':True,'commit':manifest['commit'],'signatureVerified':True,'databaseBackupVerified':True,'mediaServicesRecreated':False,'cleanupPerformed':False}))
+        print(json.dumps({'migrated':True,'cameras':int(count),'commit':manifest['commit'],'signatureVerified':True,'databaseBackupVerified':True,'mediaServicesRecreated':False,'cleanupPerformed':False}))
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser();parser.add_argument('--root',type=Path,default=Path('/opt/drac'))
     parser.add_argument('--bundle',type=Path,required=True);parser.add_argument('--public-key',type=Path,required=True);parser.add_argument('--commit',required=True)
+    parser.add_argument('--expected-cameras',type=int,default=0,help='Explicitly reviewed active-camera count; defaults to empty pilot')
     try:apply(parser.parse_args())
     except Exception as error:raise SystemExit('Pilot migration refused: '+str(error))
