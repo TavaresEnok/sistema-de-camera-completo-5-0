@@ -97,7 +97,9 @@ function configuredInstallerArtifact(env = process.env, now = new Date(), releas
   const commit = fullGitCommit(release?.commit || env.DRAC_CENTRAL_INSTALLER_COMMIT);
   const sha256 = fullSha256(release?.installerSha256 || env.DRAC_CENTRAL_INSTALLER_SHA256);
   const template = String(
-    env.DRAC_CENTRAL_INSTALLER_URL_TEMPLATE || DEFAULT_INSTALLER_URL_TEMPLATE,
+    release?.runtimeBundle
+      ? `${String(env.DRAC_CENTRAL_PUBLIC_URL || '').replace(/\/$/,'')}/api/security/bootstrap/{commit}`
+      : env.DRAC_CENTRAL_INSTALLER_URL_TEMPLATE || DEFAULT_INSTALLER_URL_TEMPLATE,
   ).trim();
   if (!template.includes('{commit}')) {
     throw new InstallerConfigurationError(
@@ -123,7 +125,7 @@ function configuredInstallerArtifact(env = process.env, now = new Date(), releas
     url: parsed.href,
     repositoryUrl,
     sha256,
-    compatibility: 'exact-commit',
+    compatibility: release?.runtimeBundle ? 'signed-runtime' : 'exact-commit',
     approvedAt: now.toISOString(),
   };
 }

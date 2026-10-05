@@ -3,6 +3,8 @@ const fsSync = require('node:fs');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { LicenseAuthority } = require('./license-authority');
+const { RuntimeArtifacts } = require('./runtime-artifacts');
 const { resolveConfig, createDatastore } = require('./datastore');
 const {
   TECHNICAL_DOCUMENTATION,
@@ -72,6 +74,11 @@ function loadEnvFile() {
 }
 
 loadEnvFile();
+
+const licenseAuthority = new LicenseAuthority({
+  privateKeyFile: process.env.DRAC_CENTRAL_LICENSE_SIGNING_KEY_FILE,
+});
+const runtimeArtifacts = new RuntimeArtifacts(process.env.DRAC_CENTRAL_RUNTIME_DIR);
 
 const HOST = process.env.DRAC_CENTRAL_HOST || '0.0.0.0';
 const PORT = Number(process.env.DRAC_CENTRAL_PORT || 9765);
@@ -1102,6 +1109,15 @@ function publicInstallation(item, release = null) {
     licenseStatus: item.licenseStatus || LICENSE_ACTIVE,
     licenseMessage: item.licenseMessage || null,
     licensePlan: normalizePlan(item.licensePlan),
+    security: {
+      profile: 'standard',
+      signedLicense: Boolean(item.licenseDevice),
+      signerAvailable: licenseAuthority.enabled,
+      deviceFingerprint: item.licenseDevice?.fingerprint || null,
+      generation: item.licenseGeneration || null,
+      lastIssuedAt: item.licenseLastIssuedAt || null,
+      hardwareProtected: false,
+    },
     resourceLimits: limitsFor(item),
     resourceUsage: usageFor(item),
     maxCameras: tetoParaHeartbeat(item.maxCameras),
@@ -1800,6 +1816,18 @@ async function handleHeartbeat(req, res) {
     return json(req, res, 403, { error: 'invalid_license_key' });
   }
 
+  let signedLicense;
+  if (body.licenseProof || existing.licenseDevice || existing.requireSignedLicense) {
+    if (!licenseAuthority.enabled) return json(req, res, 503, { error: 'license_signer_unavailable' });
+    if (!body.licenseProof) return json(req, res, 403, { error: 'license_device_proof_required' });
+    try {
+      signedLicense = licenseAuthority.issue(existing, licenseResponse(existing), body.licenseProof);
+    } catch (error) {
+      const code = String(error.message || 'license_proof_invalid');
+      return json(req, res, code === 'license_proof_rate_limited' ? 429 : 403, { error: code });
+    }
+  }
+
   const now = new Date().toISOString();
   const metrics = body.summary || body.metrics || {};
 
@@ -1935,6 +1963,7 @@ async function handleHeartbeat(req, res) {
   return json(req, res, 200, {
     accepted: true,
     serverTime: now,
+    ...(signedLicense ? { signedLicense } : {}),
     ...licenseResponse(item),
     // A versão aprovada desce pelo canal que JÁ existe. Abrir porta na
     // instalação para empurrar atualização funcionaria mal atrás de NAT, que é
@@ -2210,6 +2239,7 @@ async function handleProvision(req, res, db, actor) {
     throw error;
   }
   item.lastInstallerCommandHash = crypto.createHash('sha256').update(installer.installCommand).digest('hex');
+  if (item.installerArtifact.compatibility === 'signed-runtime') item.requireSignedLicense = true;
   db.installations[installationId] = item;
   addAuditEvent(db, req, {
     type: existing ? 'installation.provision_regenerated' : 'installation.provision_created',
@@ -3853,6 +3883,21 @@ async function route(req, res) {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
 
   try {
+    const bootstrapMatch = url.pathname.match(/^\/api\/security\/bootstrap\/([a-f0-9]{40})$/);
+    if (req.method === 'GET' && bootstrapMatch) {
+      if (!runtimeArtifacts.directory) return json(req, res, 404, {error:'bootstrap_unavailable'});
+      const file = path.join(runtimeArtifacts.directory, bootstrapMatch[1] + '.bootstrap.sh');
+      try {
+        const info = fsSync.lstatSync(file);
+        if (!info.isFile() || info.isSymbolicLink() || info.size > 512*1024) throw new Error('invalid_bootstrap');
+        return text(req, res, 200, fsSync.readFileSync(file, 'utf8'), 'text/x-shellscript');
+      } catch { return json(req, res, 404, {error:'bootstrap_unavailable'}); }
+    }
+    if (req.method === 'GET' && url.pathname === '/api/security/license-keys') {
+      return json(req, res, licenseAuthority.enabled ? 200 : 503, {
+        keys: licenseAuthority.publicKeys(),
+      });
+    }
     if (req.method === 'GET' && url.pathname === '/api/health') {
       // `build` é a data de modificação do arquivo servido ao navegador.
       //
@@ -3938,6 +3983,52 @@ async function route(req, res) {
     if (req.method === 'POST' && url.pathname === '/api/agent/heartbeat') {
       return handleHeartbeat(req, res);
     }
+    if (req.method === 'POST' && url.pathname === '/api/agent/security/license') {
+      const db = await loadDb();
+      const id = String(req.headers['x-drac-installation-id'] || '');
+      const item = db.installations[id];
+      if (!item?.licenseKey || !timingSafeTextEquals(item.licenseKey, String(req.headers['x-drac-license-key'] || ''))) {
+        return json(req, res, 403, {error:'license_access_denied'});
+      }
+      const body = await readBody(req);
+      if (!licenseAuthority.enabled) return json(req, res, 503, {error:'license_signer_unavailable'});
+      try {
+        const token = licenseAuthority.issue(item, licenseResponse(item), body.licenseProof);
+        await saveDb(db);
+        return json(req, res, 200, {signedLicense:token});
+      } catch {
+        return json(req, res, 403, {error:'license_device_proof_rejected'});
+      }
+    }
+    if ((req.method === 'POST' && url.pathname === '/api/agent/artifacts/claim')
+      || (req.method === 'GET' && url.pathname === '/api/agent/artifacts/download')) {
+      const db = await loadDb();
+      const id = String(req.headers['x-drac-installation-id'] || '');
+      const item = db.installations[id];
+      if (!item?.licenseKey || !timingSafeTextEquals(item.licenseKey, String(req.headers['x-drac-license-key'] || ''))) {
+        return json(req, res, 403, {error:'artifact_access_denied'});
+      }
+      if (licenseResponse(item).restrictions.updates === false) return json(req, res, 403, {error:'artifact_access_denied'});
+      try {
+        if (req.method === 'POST') {
+          const grant = runtimeArtifacts.claim(item, releaseAtual(db));
+          await saveDb(db);
+          return json(req, res, 200, grant);
+        }
+        const grant = String(req.headers['x-drac-artifact-grant'] || '');
+        const bundle = runtimeArtifacts.consume(item, grant);
+        await saveDb(db);
+        res.writeHead(200, {...securityHeaders(req),'Content-Type':'application/gzip','Content-Length':bundle.size,'Cache-Control':'no-store'});
+        const stream = fsSync.createReadStream(bundle.file);
+        stream.on('error',()=>res.destroy());
+        res.on('close',()=>stream.destroy());
+        // Do not hold the serialized database queue for a gigabyte download.
+        stream.pipe(res);
+        return;
+      } catch {
+        return json(req, res, 404, {error:'runtime_artifact_unavailable'});
+      }
+    }
     if (req.method === 'POST' && url.pathname === '/api/agent/push/fcm') {
       return handleFcmPush(req, res);
     }
@@ -3987,6 +4078,29 @@ async function route(req, res) {
       }
       if (req.method === 'POST' && url.pathname === '/api/admin/provision') {
         return handleProvision(req, res, db, actor);
+      }
+      const resetDevice = url.pathname.match(/^\/api\/admin\/installations\/([^/]+)\/security\/device-reset$/);
+      if (req.method === 'POST' && resetDevice) {
+        const id = decodeURIComponent(resetDevice[1]);
+        const item = db.installations[id];
+        if (!item) return json(req, res, 404, { error: 'installation_not_found' });
+        const body = await readBody(req);
+        if (body.confirmInstallationId !== id || typeof body.reason !== 'string' || !body.reason.trim()) {
+          return json(req, res, 400, { error: 'device_reset_confirmation_required' });
+        }
+        const generation = Number(item.licenseGeneration || 1);
+        if (!Number.isSafeInteger(generation) || generation >= Number.MAX_SAFE_INTEGER - 1) {
+          return json(req, res, 409, { error: 'license_generation_exhausted' });
+        }
+        item.licenseGeneration = generation + 1;
+        item.licenseSequence = 0;
+        item.licenseDevice = null;
+        item.licenseProofNonces = [];
+        item.requireSignedLicense = true;
+        addAuditEvent(db, req, { type: 'license.device_reset', actor: actor.email || actor.id,
+          installationId: id, reason: body.reason.trim().slice(0, 500) });
+        await saveDb(db);
+        return json(req, res, 200, { ok: true, generation: item.licenseGeneration });
       }
 
       // ── Versão aprovada da frota ──────────────────────────────────────────

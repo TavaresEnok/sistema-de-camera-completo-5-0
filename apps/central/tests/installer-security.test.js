@@ -110,6 +110,23 @@ test('instalador usa o novo repositório preservando commit e hash aprovados', (
   assert.equal(artifact.sha256, sha256(STUB_INSTALLER));
 });
 
+test('pacote assinado usa o bootstrap da Central e nunca o código no GitHub', () => {
+  const artifact = configuredInstallerArtifact({
+    DRAC_CENTRAL_PUBLIC_URL: 'https://central.example.test/',
+  }, new Date('2026-10-05T00:00:00Z'), {
+    commit: TEST_INSTALLER_COMMIT,
+    installerSha256: sha256(STUB_INSTALLER),
+    runtimeBundle: { sha256: 'a'.repeat(64), size: 100, securityVersion: 1 },
+  });
+  assert.equal(artifact.url, `https://central.example.test/api/security/bootstrap/${TEST_INSTALLER_COMMIT}`);
+  assert.equal(artifact.compatibility, 'signed-runtime');
+  assert.throws(() => configuredInstallerArtifact({}, new Date(), {
+    commit: TEST_INSTALLER_COMMIT,
+    installerSha256: sha256(STUB_INSTALLER),
+    runtimeBundle: { sha256: 'a'.repeat(64), size: 100, securityVersion: 1 },
+  }), /URL/);
+});
+
 test('configuração exige commit completo, SHA-256 completo e URL vinculada ao commit', () => {
   const base = {
     DRAC_CENTRAL_INSTALLER_COMMIT: TEST_INSTALLER_COMMIT,

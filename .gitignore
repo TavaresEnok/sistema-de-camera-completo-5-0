@@ -94,3 +94,9 @@ __pycache__/
 
 # Relatorios gerados na maquina, nao sao fonte.
 /relatorio_*.png
+# Production signing and device identities must never enter a commit.
+infra/license/
+infra/secrets/
+issuer.pem
+device.pem
+release-signing.pem

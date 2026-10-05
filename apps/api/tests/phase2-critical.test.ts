@@ -274,6 +274,7 @@ function makeAccessControlService() {
         if (Array.isArray(where.OR)) {
           rows = rows.filter((permission) => where.OR.some((condition: any) => {
             if (condition.cameraId) return permission.cameraId === condition.cameraId;
+            if (condition.groupId?.in) return condition.groupId.in.includes(permission.groupId);
             if (condition.groupId) return permission.groupId === condition.groupId;
             return false;
           }));

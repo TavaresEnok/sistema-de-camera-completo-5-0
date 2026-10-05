@@ -1,0 +1,9 @@
+# Opt-in migration overlay. Never mount the Central's signing key on a tenant.
+services:
+  api:
+    environment:
+      CLOUD_LICENSE_VERIFICATION: required
+      CLOUD_DEVICE_KEY_FILE: /run/drac-license/device.pem
+      CLOUD_LICENSE_KEYS_FILE: /run/drac-license/trusted-keys.json
+    volumes:
+      - ${DRAC_LICENSE_DIR:?Configure a protected per-installation directory}:/run/drac-license:ro

@@ -3941,7 +3941,10 @@
               <section class="panel">
                 <div class="panel-head"><div><div class="panel-title">Recursos permitidos</div><div class="panel-subtitle">Efeito real da política atual</div></div>
                   <span class="badge ${contractClasses[item.licenseStatus] || 'ok'}">${contractLabels[item.licenseStatus] || 'Regular'}</span></div>
-                <div class="detail-body">${renderCommercialQuotas(item)}${renderResources(item.licenseStatus || 'ACTIVE', item)}</div>
+                <div class="detail-body">${renderCommercialQuotas(item)}${renderResources(item.licenseStatus || 'ACTIVE', item)}
+                  <p>Licença assinada: ${item.security?.signedLicense ? 'ativa' : 'aguardando atualização'}.</p>
+                  <p>Proteção do servidor: padrão. Proteção por hardware ainda não ativada.</p>
+                </div>
               </section>
               <section class="panel">
                 <div class="panel-head"><div><div class="panel-title">Alterar contrato</div><div class="panel-subtitle">Aplicado na próxima sincronização</div></div></div>

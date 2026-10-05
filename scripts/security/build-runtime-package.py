@@ -1,0 +1,103 @@
+#!/usr/bin/env python3
+"""Vendor-side packaging. Requires a separate protected release-signing key.
+
+Never run this with a Central private key on a customer's machine. Legal
+distribution approval and a clean-install gate remain release prerequisites.
+"""
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import tarfile
+import tempfile
+import time
+import yaml
+
+GLUE=['install-drac.sh','install-ai-models.sh','runtime-watchdog.sh','drac-ops-agent.sh','production-readiness.sh',
+      'atualizar-instalacao.sh','security/provision-license.sh','security/runtime-bundle.py','security/update-runtime.py']
+CONFIG=['docker-compose.prod.yml','docker-compose.gateway.yml','docker-compose.license.yml','.env.example',
+        'model-bundles/yolo26n-int8-20261004.tar.gz']
+
+
+def sha(file):
+    value=hashlib.sha256()
+    with file.open('rb') as stream:
+        while chunk:=stream.read(1024*1024):value.update(chunk)
+    return value.hexdigest()
+
+
+def build(args):
+    root=args.root.resolve()
+    if not re.fullmatch('[a-f0-9]{40}',args.commit):raise ValueError('Immutable commit required')
+    if args.signing_key.stat().st_mode & 0o077:raise ValueError('Release key must be private')
+    if not args.distribution_approval.strip():raise ValueError('Distribution licensing approval reference required')
+    if args.output.exists():raise ValueError('Output must not exist')
+    overrides=json.loads(args.images.read_text())
+    if not all(k in overrides for k in ['api','web','ai-service']):raise ValueError('Validated application images required')
+    public=subprocess.run(['openssl','pkey','-in',str(args.signing_key),'-pubout'],check=True,capture_output=True).stdout.decode()
+    with tempfile.TemporaryDirectory(prefix='drac-package-build-') as temporary:
+        stage=Path(temporary);runtime=stage/'runtime';(runtime/'infra').mkdir(parents=True);(runtime/'scripts').mkdir()
+        def copy(relative):
+            source=root/relative
+            if not source.is_file() or source.is_symlink():raise ValueError('Missing runtime file: '+relative)
+            destination=runtime/relative;destination.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(source,destination)
+        for name in GLUE:copy('scripts/'+name)
+        for name in CONFIG:copy('infra/'+name)
+        shutil.copyfile(args.license_keys,runtime/'infra/trusted-license-keys.json')
+        compose=yaml.safe_load((root/'infra/docker-compose.yml').read_text())
+        services=compose['services'];images=set();image_ids={}
+        for name in list(services):
+            service=services[name]
+            if service.get('profiles'):
+                del services[name];continue
+            reference=overrides.get(name,service.get('image'))
+            if not reference:raise ValueError('No prebuilt image for '+name)
+            identity=subprocess.run(['docker','image','inspect',reference,'--format','{{.Id}}'],check=True,capture_output=True,text=True).stdout.strip()
+            if not re.fullmatch('sha256:[a-f0-9]{64}',identity):raise ValueError('Image not immutable')
+            service.pop('build',None);service['image']=identity;images.add(identity);image_ids[name]=identity
+            for volume in service.get('volumes',[]):
+                if isinstance(volume,str) and volume.startswith('./'):
+                    relative=volume.split(':',1)[0][2:]
+                    if (root/'infra'/relative).is_file():copy('infra/'+relative)
+        (runtime/'infra/docker-compose.yml').write_text(yaml.safe_dump(compose,sort_keys=False))
+        subprocess.run(['docker','image','save','-o',str(stage/'images.tar'),*sorted(images)],check=True)
+        subprocess.run(['python3',str(root/'scripts/security/audit-image.py'),str(stage/'images.tar')],check=True)
+        files={}
+        for file in sorted(stage.rglob('*')):
+            if file.is_file():files[file.relative_to(stage).as_posix()]={'size':file.stat().st_size,'sha256':sha(file)}
+        now=int(time.time())
+        schema=hashlib.sha256()
+        for file in sorted((root/'apps/api/prisma').rglob('*')):
+            if file.is_file() and (file.name=='schema.prisma' or file.suffix=='.sql'):
+                schema.update(file.relative_to(root/'apps/api/prisma').as_posix().encode());schema.update(file.read_bytes())
+        manifest={'v':1,'commit':args.commit,'securityVersion':1,'protection':'standard','issuedAt':now,'expiresAt':now+30*86400,
+                  'databaseSchemaHash':schema.hexdigest(),'distributionApproval':args.distribution_approval,'images':image_ids,'files':files}
+        raw=json.dumps(manifest,sort_keys=True,separators=(',',':')).encode()
+        (stage/'manifest.json').write_bytes(raw)
+        message=stage/'message';message.write_bytes(b'drac-runtime-manifest-v1\n'+raw)
+        sig=subprocess.run(['openssl','pkeyutl','-sign','-inkey',str(args.signing_key),'-rawin','-in',str(message)],check=True,capture_output=True).stdout
+        message.unlink();(stage/'manifest.sig').write_bytes(sig)
+        args.output.mkdir(mode=0o700,parents=True)
+        archive=args.output/(args.commit+'.tar.gz')
+        with tarfile.open(archive,'w:gz') as target:
+            for file in sorted(stage.rglob('*')):
+                if file.is_file():target.add(file,arcname=file.relative_to(stage).as_posix(),recursive=False)
+        verifier=(root/'scripts/security/runtime-bundle.py').read_text().split("\nif __name__ == '__main__':")[0]
+        bootstrap=(root/'scripts/security/bootstrap-runtime.py').read_text()
+        script="#!/usr/bin/env bash\nset +x\nset -Eeuo pipefail\npython3 - <<'DRAC_SIGNED_RUNTIME_BOOTSTRAP'\n"+verifier+'\nPUBLIC_RELEASE_KEY='+repr(public)+'\n'+bootstrap+'\nDRAC_SIGNED_RUNTIME_BOOTSTRAP\n'
+        installer=args.output/(args.commit+'.bootstrap.sh');installer.write_text(script);os.chmod(installer,0o700)
+        metadata={'commit':args.commit,'installerSha256':sha(installer),'runtimeBundle':{'sha256':sha(archive),'size':archive.stat().st_size,'securityVersion':1}}
+        (args.output/(args.commit+'.metadata.json')).write_text(json.dumps(metadata,indent=2))
+        print(json.dumps(metadata))
+
+if __name__=='__main__':
+    parser=argparse.ArgumentParser()
+    parser.add_argument('--root',type=Path,required=True);parser.add_argument('--output',type=Path,required=True)
+    parser.add_argument('--commit',required=True);parser.add_argument('--signing-key',type=Path,required=True)
+    parser.add_argument('--license-keys',type=Path,required=True);parser.add_argument('--images',type=Path,required=True)
+    parser.add_argument('--distribution-approval',required=True)
+    build(parser.parse_args())

@@ -9,6 +9,14 @@ infra/storage
 infra/backups
 infra/ai-models
 secrets
+**/.env
+**/.env.local
+**/.env.production
+**/.env.development
+infra/license
+**/secrets
+**/issuer.pem
+**/device.pem
 diagnostics
 concorrente
 concorrentes

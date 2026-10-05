@@ -9,6 +9,7 @@ set -Eeuo pipefail
 DRAC_EXPLICIT_ENV_KEYS=' '
 for drac_key in \
   DRAC_REPO_URL DRAC_INSTALLER_COMMIT DRAC_INSTALL_DIR DRAC_OPERATING_USER \
+  DRAC_VERIFIED_RUNTIME_DIR \
   DRAC_CENTRAL_URL DRAC_ENVIRONMENT DRAC_AUTO_YES \
   DRAC_WATCHDOG_ENABLED DRAC_WATCHDOG_INTERVAL_MINUTES DRAC_BUILD_AGENT_EXPECTED DRAC_ENROLLMENT_TOKEN \
   DRAC_CAMERA_ALLOWED_CIDRS DRAC_CUSTOMER_NAME DRAC_INSTALLATION_ID \
@@ -29,6 +30,7 @@ unset drac_key
 # para que os commits aprovados continuem disponíveis para instalação.
 DRAC_REPO_URL="${DRAC_REPO_URL:-https://github.com/TavaresEnok/sistema-de-camera-completo-5-0.git}"
 DRAC_INSTALLER_COMMIT="${DRAC_INSTALLER_COMMIT:-}"
+DRAC_VERIFIED_RUNTIME_DIR="${DRAC_VERIFIED_RUNTIME_DIR:-}"
 # Padrões de PRODUTO, não da máquina de desenvolvimento.
 #
 # Até 07/08/2026 estes eram `/home/flashnet/Drac` e `flashnet` — o diretório e
@@ -182,6 +184,7 @@ prompt() {
 # este trabalho está eliminando.
 DRAC_CHAVES_VALIDAS="
 DRAC_REPO_URL DRAC_INSTALLER_COMMIT DRAC_INSTALL_DIR DRAC_OPERATING_USER
+DRAC_VERIFIED_RUNTIME_DIR
 DRAC_CENTRAL_URL DRAC_ENVIRONMENT DRAC_AUTO_YES
 DRAC_WATCHDOG_ENABLED DRAC_WATCHDOG_INTERVAL_MINUTES DRAC_BUILD_AGENT_EXPECTED DRAC_ENROLLMENT_TOKEN
 DRAC_CAMERA_ALLOWED_CIDRS DRAC_CUSTOMER_NAME DRAC_INSTALLATION_ID
@@ -514,6 +517,21 @@ ensure_docker_running() {
 }
 
 sync_repository() {
+  if [ -n "$DRAC_VERIFIED_RUNTIME_DIR" ]; then
+    [ -f "$DRAC_VERIFIED_RUNTIME_DIR/verified-manifest.json" ] || fail "Pacote sem verificacao de assinatura."
+    [ -f "$DRAC_VERIFIED_RUNTIME_DIR/runtime/infra/docker-compose.yml" ] || fail "Pacote incompleto."
+    [ -f "$DRAC_VERIFIED_RUNTIME_DIR/images.tar" ] || fail "Imagens do pacote ausentes."
+    if [ -e "$DRAC_INSTALL_DIR" ] && [ -n "$(find "$DRAC_INSTALL_DIR" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+      fail "Instalacao por pacote exige destino vazio; migracoes preservam a instalacao existente."
+    fi
+    run_as_user "$DRAC_OPERATING_USER" mkdir -p "$DRAC_INSTALL_DIR"
+    run_sudo cp -a "$DRAC_VERIFIED_RUNTIME_DIR/runtime/." "$DRAC_INSTALL_DIR/"
+    run_sudo cp "$DRAC_VERIFIED_RUNTIME_DIR/verified-manifest.json" "$DRAC_INSTALL_DIR/.runtime-release.json"
+    run_sudo chown -R "$DRAC_OPERATING_USER:$DRAC_OPERATING_USER" "$DRAC_INSTALL_DIR"
+    run_sudo docker load -i "$DRAC_VERIFIED_RUNTIME_DIR/images.tar" >/dev/null
+    log "Runtime pre-compilado instalado sem checkout Git ou build local."
+    return
+  fi
   local parent_dir fetched_commit current_origin untracked
   parent_dir="$(dirname "$DRAC_INSTALL_DIR")"
   run_sudo mkdir -p "$parent_dir"
@@ -599,7 +617,7 @@ env_set_secret() {
 # As chaves que configuram uma máquina a SER um painel Central. Um cliente
 # nunca é central; estas linhas não têm o que fazer no .env dele. `CLOUD_*`
 # NÃO entra aqui — é o canal do cliente REPORTANDO à central, e é legítimo.
-CENTRAL_ONLY_ENV_KEYS="CENTRAL_DATA_DIR CENTRAL_BACKUP_INTERVAL_SECONDS CENTRAL_BACKUP_RETENTION_DAYS DRAC_CENTRAL_ADMIN_EMAIL DRAC_CENTRAL_ADMIN_PASSWORD_HASH DRAC_CENTRAL_ADMIN_TOKEN DRAC_CENTRAL_ALLOWED_ORIGINS DRAC_CENTRAL_ARCHIVE_DIR DRAC_CENTRAL_ARCHIVE_KEY DRAC_CENTRAL_ARCHIVE_RETENTION_MONTHS DRAC_CENTRAL_COOKIE_SECURE DRAC_CENTRAL_INSTALLER_COMMIT DRAC_CENTRAL_INSTALLER_SHA256 DRAC_CENTRAL_INSTALLER_TOKEN_MAX_DOWNLOADS DRAC_CENTRAL_INSTALLER_TOKEN_TTL_SECONDS DRAC_CENTRAL_INSTALLER_URL_TEMPLATE DRAC_CENTRAL_PUBLIC_URL DRAC_CENTRAL_REPOSITORY_URL DRAC_CENTRAL_STORE_MODE DRAC_CENTRAL_TRUSTED_PROXIES"
+CENTRAL_ONLY_ENV_KEYS="DRAC_CENTRAL_SIGNING_DIR DRAC_CENTRAL_LICENSE_SIGNING_KEY_FILE DRAC_CENTRAL_RUNTIME_DIR CENTRAL_DATA_DIR CENTRAL_BACKUP_INTERVAL_SECONDS CENTRAL_BACKUP_RETENTION_DAYS DRAC_CENTRAL_ADMIN_EMAIL DRAC_CENTRAL_ADMIN_PASSWORD_HASH DRAC_CENTRAL_ADMIN_TOKEN DRAC_CENTRAL_ALLOWED_ORIGINS DRAC_CENTRAL_ARCHIVE_DIR DRAC_CENTRAL_ARCHIVE_KEY DRAC_CENTRAL_ARCHIVE_RETENTION_MONTHS DRAC_CENTRAL_COOKIE_SECURE DRAC_CENTRAL_INSTALLER_COMMIT DRAC_CENTRAL_INSTALLER_SHA256 DRAC_CENTRAL_INSTALLER_TOKEN_MAX_DOWNLOADS DRAC_CENTRAL_INSTALLER_TOKEN_TTL_SECONDS DRAC_CENTRAL_INSTALLER_URL_TEMPLATE DRAC_CENTRAL_PUBLIC_URL DRAC_CENTRAL_REPOSITORY_URL DRAC_CENTRAL_STORE_MODE DRAC_CENTRAL_TRUSTED_PROXIES"
 
 # Remove do arquivo dado as linhas `CHAVE=...` das chaves de central. Idempotente:
 # rodar de novo num arquivo já limpo não muda nada.
@@ -788,6 +806,9 @@ compose_files() {
   if [ "$DRAC_GATEWAY_MODE" = "true" ] || [ -n "$DRAC_TURN_URL" ]; then
     files="$files -f infra/docker-compose.gateway.yml"
   fi
+  if [ -n "$DRAC_VERIFIED_RUNTIME_DIR" ]; then
+    files="$files -f infra/docker-compose.license.yml"
+  fi
   printf '%s' "$files"
 }
 
@@ -796,7 +817,9 @@ start_stack() {
   files="$(compose_files)"
   log "Subindo containers DRAC"
   # shellcheck disable=SC2086
-  run_as_user "$DRAC_OPERATING_USER" bash -lc "cd '$DRAC_INSTALL_DIR' && docker compose --env-file infra/.env $files up -d --build"
+  local build_flags='--build'
+  if [ -n "$DRAC_VERIFIED_RUNTIME_DIR" ]; then build_flags='--no-build --pull never'; fi
+  run_as_user "$DRAC_OPERATING_USER" bash -lc "cd '$DRAC_INSTALL_DIR' && docker compose --env-file infra/.env $files up -d $build_flags"
 }
 
 run_migrations() {
@@ -853,7 +876,9 @@ seed_admin() {
     "$(json_escape "$DRAC_ADMIN_USERNAME")" "$(json_escape "$DRAC_ADMIN_EMAIL")" \
     "$(json_escape "$DRAC_ADMIN_PASSWORD")" "$(json_escape "$DRAC_ADMIN_NAME")")"
   # shellcheck disable=SC2086
-  if ! printf '%s' "$seed_payload" | run_as_user "$DRAC_OPERATING_USER" bash -lc "cd '$DRAC_INSTALL_DIR' && docker compose --env-file infra/.env $files exec -T -e ADMIN_STDIN_JSON=true -w /app/apps/api api npx tsx prisma/seed.ts"; then
+  local seed_command='npx tsx prisma/seed.ts'
+  if [ -n "$DRAC_VERIFIED_RUNTIME_DIR" ]; then seed_command='node dist/bootstrap-admin.js'; fi
+  if ! printf '%s' "$seed_payload" | run_as_user "$DRAC_OPERATING_USER" bash -lc "cd '$DRAC_INSTALL_DIR' && docker compose --env-file infra/.env $files exec -T -e ADMIN_STDIN_JSON=true -w /app/apps/api api $seed_command"; then
     fail "O seed do administrador falhou. A instalacao NAO esta utilizavel: ninguem consegue entrar. Veja 'docker logs vms-api'."
   fi
   seed_payload=''
@@ -1283,6 +1308,10 @@ main() {
   sync_repository
   prepare_env
   prepare_runtime_directories
+  if [ -n "$DRAC_VERIFIED_RUNTIME_DIR" ]; then
+    run_sudo bash "$DRAC_INSTALL_DIR/scripts/security/provision-license.sh" "$DRAC_INSTALL_DIR/infra/license" "$DRAC_INSTALL_DIR/infra/trusted-license-keys.json"
+    env_set "$DRAC_INSTALL_DIR/infra/.env" DRAC_LICENSE_DIR "$DRAC_INSTALL_DIR/infra/license"
+  fi
   log "Instalando o modelo de objetos validado (sem downloads adicionais)"
   run_sudo bash "$DRAC_INSTALL_DIR/scripts/install-ai-models.sh" "$DRAC_INSTALL_DIR/infra/ai-models"
   start_stack

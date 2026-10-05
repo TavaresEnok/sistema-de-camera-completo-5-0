@@ -4,6 +4,7 @@ import { PrismaService } from '../common/prisma/prisma.service';
 import { type AuthUser } from '../common/types/auth-user.type';
 import { decidirLicenca } from './helpers/vencimento-de-licenca.helper';
 import { explicarTeto, podeCadastrarCamera } from './helpers/teto-de-cameras.helper';
+import { deviceIdentity, trustedLicenseKeys, verifyLicense, licenseVerificationRequired, type LicenseDocument } from '../common/licensing/signed-license';
 
 // `aiAdvanced` = OBJETO/FACE (pesadas). `aiMotion` = detecção de MOVIMENTO
 // (MOG2), que arma a gravação por movimento e é tratada à parte de propósito:
@@ -51,6 +52,9 @@ const STATUS_DEFAULTS: Record<CommercialLicenseStatus, RestrictionMap> = {
     localRecording: false,
     addCameras: false,
     aiAdvanced: false,
+    aiMotion: false,
+    aiObject: false,
+    aiFace: false,
     cloudSupport: false,
     updates: false,
   },
@@ -70,6 +74,8 @@ const GENERIC_FEATURE_MESSAGES: Record<CommercialFeature, string> = {
 
 @Injectable()
 export class CommercialPolicyService {
+  private signatureRequired = false;
+  private verifiedDocument?: { token: string; installationId: string; document: LicenseDocument };
   constructor(private readonly prisma: PrismaService) {}
 
   async getPolicy() {
@@ -78,9 +84,10 @@ export class CommercialPolicyService {
         key: {
           in: [
             'cloud.licenseStatus', 'cloud.licenseMessage', 'cloud.restrictions',
+            'cloud.signedLicense', 'cloud.licenseVerificationRequired',
             'cloud.lastSyncAt', 'cloud.lastError',
-            // Marca do maior instante já observado: é o que impede atrasar o
-            // relógio da máquina para ganhar dias de licença.
+            // Mitigates ordinary clock rollback, not a hostile root restoring
+            // both database and clock from a snapshot.
             'cloud.maiorInstanteVisto',
             // Teto de câmeras contratado, definido na Central.
             'cloud.maxCameras',
@@ -90,8 +97,32 @@ export class CommercialPolicyService {
       },
     });
     const settings = Object.fromEntries(rows.map((row) => [row.key, row.value]));
-    const statusDaCentral = this.normalizeStatus(settings['cloud.licenseStatus']);
-    const centralRestrictions = this.parseRestrictions(settings['cloud.restrictions']);
+    this.signatureRequired ||= licenseVerificationRequired(settings['cloud.signedLicense'], settings['cloud.licenseVerificationRequired']);
+    const signedRequired = this.signatureRequired;
+    const now = Math.max(Date.now(), this.paraMs(settings['cloud.maiorInstanteVisto']) || 0);
+    let document: LicenseDocument | undefined;
+    let verificationError: string | null = null;
+    if (signedRequired) {
+      try {
+        const token = settings['cloud.signedLicense'];
+        const installationId = process.env.CLOUD_INSTALLATION_ID || '';
+        if (!installationId || !token) throw new Error('license_document_missing');
+        if (this.verifiedDocument?.token === token && this.verifiedDocument.installationId === installationId) {
+          document = this.verifiedDocument.document;
+          const seconds = Math.floor(now / 1000);
+          if (seconds < document.nbf || seconds >= document.exp) throw new Error('license_expired_or_not_yet_valid');
+        } else {
+          document = verifyLicense(token, { keys: trustedLicenseKeys(), installationId, device: deviceIdentity().fingerprint, now,
+            previous: this.verifiedDocument?.document });
+          this.verifiedDocument = { token, installationId, document };
+        }
+      } catch (error) {
+        document = undefined;
+        verificationError = error instanceof Error ? error.message : 'license_verification_failed';
+      }
+    }
+    const statusDaCentral = signedRequired ? document?.status || 'SUSPENDED' : this.normalizeStatus(settings['cloud.licenseStatus']);
+    const centralRestrictions = signedRequired ? document?.restrictions || {} : this.parseRestrictions(settings['cloud.restrictions']);
 
     // ── A LICENÇA VENCE SOZINHA ────────────────────────────────────────────
     //
@@ -103,17 +134,20 @@ export class CommercialPolicyService {
     // estado MAIS SEVERO entre o que a Central disse e o que o silêncio impõe.
     const decisao = decidirLicenca({
       estadoDaCentral: statusDaCentral,
-      ultimoContatoMs: this.paraMs(settings['cloud.lastSyncAt']),
-      agoraMs: Date.now(),
+      ultimoContatoMs: signedRequired ? (document ? document.iat * 1000 : null) : this.paraMs(settings['cloud.lastSyncAt']),
+      agoraMs: now,
       maiorInstanteVistoMs: this.paraMs(settings['cloud.maiorInstanteVisto']),
     });
     const licenseStatus = decisao.estado;
 
-    const mergedRestrictions = {
+    const mergedRestrictions: RestrictionMap = {
       ...DEFAULT_RESTRICTIONS,
       ...centralRestrictions,
       ...this.statusCaps(licenseStatus),
     };
+    if (document && now >= document.restrictAt * 1000) {
+      Object.assign(mergedRestrictions, this.statusCaps('RESTRICTED'));
+    }
 
     return {
       licenseStatus,
@@ -125,9 +159,13 @@ export class CommercialPolicyService {
       avisarSobreContato: decisao.avisar,
       motivoDaLicenca: decisao.motivo,
       /** Teto de câmeras contratado. null = sem teto definido pela Central. */
-      maxCameras: this.paraInteiro(settings['cloud.maxCameras']),
-      maxUsers: this.paraInteiro(settings['cloud.maxUsers']),
-      maxRetentionDays: this.paraInteiro(settings['cloud.maxRetentionDays']),
+      maxCameras: signedRequired ? document?.limits.cameras ?? null : this.paraInteiro(settings['cloud.maxCameras']),
+      maxUsers: signedRequired ? document?.limits.users ?? null : this.paraInteiro(settings['cloud.maxUsers']),
+      maxRetentionDays: signedRequired ? document?.limits.retentionDays ?? null : this.paraInteiro(settings['cloud.maxRetentionDays']),
+      licenseVerification: signedRequired ? verificationError ? 'invalid' : 'verified' : 'legacy',
+      licenseVerificationError: verificationError,
+      securityProfile: 'standard',
+      hardwareProtected: false,
       licenseMessage: settings['cloud.licenseMessage'] || null,
       lastSyncAt: settings['cloud.lastSyncAt'] || null,
       lastError: settings['cloud.lastError'] || null,
@@ -138,7 +176,7 @@ export class CommercialPolicyService {
       // detecção, complementando o "se" que vive em `aiObject`.
       aiObjectClasses: mergedRestrictions.aiObject === false
         ? []
-        : this.parseObjectClasses(settings['cloud.restrictions']),
+        : signedRequired ? document?.objectClasses || [] : this.parseObjectClasses(settings['cloud.restrictions']),
     };
   }
 
@@ -278,8 +316,11 @@ export class CommercialPolicyService {
   }
 
   private statusCaps(status: CommercialLicenseStatus): Partial<RestrictionMap> {
-    if (status === 'SUSPENDED') return STATUS_DEFAULTS.SUSPENDED;
-    if (status === 'RESTRICTED') return STATUS_DEFAULTS.RESTRICTED;
+    // A status is a ceiling: its `true` defaults must not overwrite a feature
+    // explicitly disabled by the signed contract.
+    if (status === 'SUSPENDED' || status === 'RESTRICTED') {
+      return Object.fromEntries(Object.entries(STATUS_DEFAULTS[status]).filter(([, allowed]) => !allowed));
+    }
     return {};
   }
 

@@ -20,6 +20,14 @@
 set -uo pipefail
 
 RAIZ="${DRAC_INSTALL_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+if [ -f "$RAIZ/.runtime-release.json" ]; then
+  exec python3 "$RAIZ/scripts/security/update-runtime.py" "$RAIZ" "$@"
+fi
+if [ -f "$RAIZ/infra/docker-compose.license-security.yml" ]; then
+  printf 'Esta instalação exige uma atualização por pacote assinado; Git não será usado.\n' >&2
+  if [ "${1:-}" = '--conferir' ]; then exit 0; fi
+  exit 1
+fi
 CONFERIR=false
 SEM_VOLTA=false
 

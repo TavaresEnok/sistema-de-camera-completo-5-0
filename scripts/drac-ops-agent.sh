@@ -59,6 +59,14 @@ run_action() {
       # O atualizador já confere a release aprovada, preserva overlays,
       # cria backup e executa rollback caso a validação reprove.
       [ -n "$target_commit" ] || { echo 'Atualização recusada: release alvo ausente.'; return 2; }
+      if [ -f "$DRAC_OPS_ROOT_DIR/.runtime-release.json" ]; then
+        python3 "$DRAC_OPS_ROOT_DIR/scripts/security/update-runtime.py" "$DRAC_OPS_ROOT_DIR" --commit "$target_commit"
+        return $?
+      fi
+      if [ -f "$DRAC_OPS_ROOT_DIR/infra/docker-compose.license-security.yml" ]; then
+        echo 'Atualização recusada: esta instalação exige um pacote assinado aprovado.'
+        return 65
+      fi
       # O timer roda como root, mas /opt/drac pertence ao usuário operador.
       # Git 2.35+ recusa isso por segurança ("dubious ownership") e a
       # atualização morria ANTES do fetch. A exceção é deliberadamente o

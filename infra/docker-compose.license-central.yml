@@ -1,0 +1,6 @@
+services:
+  drac-central:
+    environment:
+      DRAC_CENTRAL_LICENSE_SIGNING_KEY_FILE: /run/drac-central-signing/issuer.pem
+    volumes:
+      - ${DRAC_CENTRAL_SIGNING_DIR:?Configure the Central-only protected signing directory}:/run/drac-central-signing:ro

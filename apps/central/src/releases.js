@@ -27,6 +27,7 @@
 // que fez a primeira instalação de cliente virar uma sequência de consertos.
 
 const COMMIT_RE = /^[0-9a-f]{40}$/;
+const {bundleMetadata}=require('./runtime-artifacts');
 
 /** Commit em forma canônica (minúsculo, 40 hex) ou null se não for um. */
 function normalizarCommit(valor) {
@@ -71,6 +72,11 @@ function validarPromocao(pedido, { historico = [], agora = new Date(), permitirS
   }
 
   const repositoryUrl = String(pedido?.repositoryUrl ?? '').trim();
+  let runtimeBundle;
+  if (pedido?.runtimeBundle != null) {
+    try { runtimeBundle = bundleMetadata(pedido.runtimeBundle); }
+    catch { return {ok:false,erro:'runtime_bundle_invalid'}; }
+  }
   if (repositoryUrl && !/^https:\/\/[A-Za-z0-9.-]+(:\d+)?\/[A-Za-z0-9._~/-]+$/.test(repositoryUrl)) {
     return { ok: false, erro: 'repositorio_invalido' };
   }
@@ -85,6 +91,7 @@ function validarPromocao(pedido, { historico = [], agora = new Date(), permitirS
       // artefato teria de voltar a confiar no ambiente, que é o que separava
       // "promover" de "instalar" (19/08/2026).
       installerSha256: String(pedido?.installerSha256 ?? '').trim().toLowerCase() || null,
+      ...(runtimeBundle ? {runtimeBundle} : {}),
       notas: String(pedido?.notas ?? '').trim().slice(0, 2000) || null,
       gate: pedido?.gate ?? null,
       rollback: Boolean(permitirSemGate && jaFoiAprovado),
@@ -133,6 +140,7 @@ function releaseParaInstalacao(release, instalacao) {
     repositoryUrl: release.repositoryUrl || null,
     promovidoEm: release.promovidoEm || null,
     situacao: situacaoDaInstalacao(instalacao, release),
+    ...(release.runtimeBundle ? {runtimeBundle:release.runtimeBundle} : {}),
   };
 }
 

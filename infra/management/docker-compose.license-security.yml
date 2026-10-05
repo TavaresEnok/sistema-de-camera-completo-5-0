@@ -1,0 +1,10 @@
+# Vendor Management only. Previous image is retained for controlled rollback.
+services:
+  central:
+    image: drac-security-central:20261005-signed-runtime
+    environment:
+      DRAC_CENTRAL_LICENSE_SIGNING_KEY_FILE: /run/drac-central-signing/issuer.pem
+      DRAC_CENTRAL_RUNTIME_DIR: /app/runtime-artifacts
+    volumes:
+      - /opt/ajustcam-management/secrets/licensing:/run/drac-central-signing:ro
+      - /opt/ajustcam-management/runtime-artifacts:/app/runtime-artifacts:ro

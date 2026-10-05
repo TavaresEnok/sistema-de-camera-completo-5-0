@@ -2,6 +2,13 @@
 set -Eeuo pipefail
 
 ROOT_DIR="${DRAC_ROOT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+if [ -f "$ROOT_DIR/.runtime-release.json" ]; then
+  exec python3 "$ROOT_DIR/scripts/security/update-runtime.py" "$ROOT_DIR"
+fi
+if [ -f "$ROOT_DIR/infra/docker-compose.license-security.yml" ]; then
+  printf '[DRAC update] Atualização Git recusada: esta instalação exige um pacote assinado aprovado.\n' >&2
+  exit 1
+fi
 ENV_FILE="${DRAC_ENV_FILE:-$ROOT_DIR/infra/.env}"
 BRANCH="${DRAC_UPDATE_BRANCH:-main}"
 COMPOSE_MODE="${DRAC_COMPOSE_MODE:-prod}"

@@ -24,6 +24,8 @@ import {
 import { buildReactivationSnapshot, type ReactivationSnapshot } from './reactivation-snapshot.helper';
 import { SettingsService } from '../settings/settings.service';
 import { decidirSobreVpn, type PerfilDeVpn } from './helpers/perfil-de-vpn.helper';
+import { deviceIdentity, deviceProof, trustedLicenseKeys, verifyLicense, licenseVerificationRequired } from '../common/licensing/signed-license';
+import { CommercialPolicyService } from '../commercial-policy/commercial-policy.service';
 
 type LicenseStatus = 'UNKNOWN' | 'ACTIVE' | 'GRACE' | 'RESTRICTED' | 'SUSPENDED';
 
@@ -59,6 +61,10 @@ export type CloudStorageConfig = {
 };
 
 const SETTING_KEYS = [
+  'cloud.signedLicense',
+  'cloud.licenseVerificationRequired',
+  'cloud.licenseGeneration',
+  'cloud.licenseSequence',
   'cloud.lastSyncAt',
   'cloud.lastError',
   'cloud.licenseStatus',
@@ -98,6 +104,7 @@ export class CloudConnectorService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(CloudConnectorService.name);
   private timer: NodeJS.Timeout | null = null;
   private syncing = false;
+  private signatureRequired = false;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -105,13 +112,19 @@ export class CloudConnectorService implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   onModuleInit() {
-    if (!this.isEnabled()) return;
+    if (!this.isEnabled() && process.env.CLOUD_LICENSE_VERIFICATION !== 'required') return;
 
     const intervalMs = this.getIntervalMs();
-    this.timer = setInterval(() => void this.syncHeartbeat(), intervalMs);
+    const tick = async () => {
+      // Expiration must apply even when Central is unreachable. Re-check the
+      // cached signature/local deadline outside all per-frame hot paths.
+      try { await this.syncHeartbeat(); await this.enforceLocalLicense(); }
+      catch { this.logger.warn('Não foi possível conferir a licença local.'); }
+    };
+    this.timer = setInterval(() => void tick(), intervalMs);
     if (typeof this.timer.unref === 'function') this.timer.unref();
 
-    const firstRun = setTimeout(() => void this.syncHeartbeat(), 5000);
+    const firstRun = setTimeout(() => void tick(), 5000);
     if (typeof firstRun.unref === 'function') firstRun.unref();
   }
 
@@ -144,14 +157,40 @@ export class CloudConnectorService implements OnModuleInit, OnModuleDestroy {
 
     this.syncing = true;
     try {
+      const previousSettings = await this.readSettings();
+      this.signatureRequired ||= licenseVerificationRequired(previousSettings['cloud.signedLicense'], previousSettings['cloud.licenseVerificationRequired']);
+      const requireSignature = this.signatureRequired;
+      const proof = requireSignature || process.env.CLOUD_DEVICE_KEY_FILE ? deviceProof(config.installationId) : null;
       const payload = await this.collectPayload();
-      const response = await axios.post(`${config.apiUrl}/api/agent/heartbeat`, payload, {
+      const response = await axios.post(`${config.apiUrl}/api/agent/heartbeat`, { ...payload, ...(proof ? { licenseProof: proof } : {}) }, {
         timeout: config.timeoutMs,
         headers: {
           'x-drac-installation-id': config.installationId,
           'x-drac-license-key': config.licenseKey,
         },
       });
+
+      let document;
+      if (response.data?.signedLicense || requireSignature || proof) {
+        if (!proof) throw new Error('license_device_proof_missing');
+        document = verifyLicense(response.data?.signedLicense, {
+          keys: trustedLicenseKeys(), installationId: config.installationId,
+          device: deviceIdentity().fingerprint, nonce: proof.nonce,
+          previous: { generation: Number(previousSettings['cloud.licenseGeneration'] || 0), sequence: Number(previousSettings['cloud.licenseSequence'] || 0) },
+        });
+        this.signatureRequired = true;
+        // Make the signed document authoritative before applying ancillary
+        // configuration. A partial write must never authorize unsigned limits.
+        await this.prisma.$transaction([
+          this.settingUpsert('cloud.signedLicense', response.data.signedLicense),
+          this.settingUpsert('cloud.licenseVerificationRequired', 'true'),
+          this.settingUpsert('cloud.licenseGeneration', String(document.generation)),
+          this.settingUpsert('cloud.licenseSequence', String(document.sequence)),
+        ]);
+        response.data = { ...response.data, licenseStatus: document.status,
+          restrictions: { ...document.restrictions, aiObjectClasses: document.objectClasses },
+          maxCameras: document.limits.cameras, maxUsers: document.limits.users, maxRetentionDays: document.limits.retentionDays };
+      }
 
       const licenseStatus = this.normalizeLicenseStatus(response.data?.licenseStatus);
       const restrictions = this.applyStatusCaps(licenseStatus, response.data?.restrictions ?? {});
@@ -501,6 +540,9 @@ export class CloudConnectorService implements OnModuleInit, OnModuleDestroy {
       apiUrl: config.apiUrl || null,
       installationId: config.installationId || null,
       heartbeatIntervalSeconds: Math.round(this.getIntervalMs() / 1000),
+      licenseVerification: process.env.CLOUD_LICENSE_VERIFICATION === 'required' ? 'required' : 'migration',
+      securityProfile: 'standard',
+      hardwareProtected: false,
       customerName: process.env.CLOUD_CUSTOMER_NAME || null,
     };
   }
@@ -1115,12 +1157,16 @@ export class CloudConnectorService implements OnModuleInit, OnModuleDestroy {
     return Object.fromEntries(rows.map((row) => [row.key, row.value]));
   }
 
-  private async writeSetting(key: string, value: string) {
-    await this.prisma.systemSetting.upsert({
+  private settingUpsert(key: string, value: string) {
+    return this.prisma.systemSetting.upsert({
       where: { key },
       create: { key, value },
       update: { value },
     });
+  }
+
+  private async writeSetting(key: string, value: string) {
+    await this.settingUpsert(key, value);
   }
 
   /**
@@ -1410,6 +1456,15 @@ export class CloudConnectorService implements OnModuleInit, OnModuleDestroy {
     await this.enforceAiRestrictions(restrictions);
   }
 
+  private async enforceLocalLicense() {
+    const policy = this.moduleRef.get(CommercialPolicyService, { strict: false });
+    if (!policy) return;
+    const current = await policy.getPolicy();
+    if (current.licenseVerification !== 'legacy') {
+      await this.enforceRuntimeRestrictions(current.restrictions);
+    }
+  }
+
   /**
    * Aplica a política de IA vinda da Central.
    *
@@ -1482,6 +1537,9 @@ export class CloudConnectorService implements OnModuleInit, OnModuleDestroy {
         localRecording: false,
         addCameras: false,
         aiAdvanced: false,
+        aiMotion: false,
+        aiObject: false,
+        aiFace: false,
         cloudSupport: false,
         updates: false,
       };

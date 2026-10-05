@@ -1,0 +1,9 @@
+services:
+  api:
+    image: drac-security-api:20261005-signed-license
+    environment:
+      CLOUD_LICENSE_VERIFICATION: required
+      CLOUD_DEVICE_KEY_FILE: /run/drac-license/device.pem
+      CLOUD_LICENSE_KEYS_FILE: /run/drac-license/trusted-keys.json
+    volumes:
+      - /opt/drac-license-dguardian-20261005:/run/drac-license:ro
