@@ -32,3 +32,5 @@ Compilação e retirada das fontes não impedem engenharia reversa ou adulteraç
 - Atualizador assinado: `Runtime já está na versão aprovada.` Preservado conjunto completo de overlays, threads, FPS, tracking, TURN, configurações e volumes.
 - Arquivo de cópias de desenvolvimento transferido e conferido na Management: SHA256 `8eeadfe489b89b8ee323698073f2ca6e74db63873aef2995bf113514cc63e37a`.
 - Limpeza proposta/escopo exato em `scripts/security/clean-vibe-package-source.py` e 63 imagens identificadas em `tools/vibe-obsolete-images-20261005.json`. Nenhuma remoção de volume, câmera, gravação ou container de produção de vídeo/banco.
+- Backup das 63 imagens históricas, antes da limpeza: SHA256 `f22955e238a3e2bd1da18f84ec3af489ebf10b998502f8ecc743e41e33f4eeb8`, aproximadamente 2,5 GB comprimidos. Imagens atuais e API compilada de recuperação excluídas da remoção.
+- A execução da limpeza grava o resultado real em `/opt/drac/infra/backups/vibe-package-20261005/cleanup-report.json`; não assumir sucesso apenas pela preparação deste documento. Código de manutenção/desenvolvimento também é arquivado externamente antes de retirar os checkouts do servidor do cliente.
