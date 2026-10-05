@@ -32,14 +32,24 @@ def main():
           'drac-operational-lab-web','drac-mobile-audit-final','vms-central','drac-srs-pilot-forward','drac-srs-forward-build-3','drac-srs-forward-build-2'}
  removals=[]
  for c in containers:
-  image=run(['docker','image','inspect',c['Image'],'--format','{{.Id}}'],capture_output=True,text=True).stdout.strip()
+  result=subprocess.run(['docker','image','inspect',c['Image'],'--format','{{.Id}}'],capture_output=True,text=True)
+  if result.returncode:
+   name=c['Name'].lstrip('/')
+   if name not in {'drac-mobile-audit-final','vms-central'} or c['State']['Running']:raise ValueError('Unresolved container image: '+name)
+   # These stopped legacy containers predate the image manifest migration.
+   # Their complete filesystems are exported and verified separately below.
+   removals.append(name)
+   continue
+  image=result.stdout.strip()
   if image in targets:
    name=c['Name'].lstrip('/')
    if name not in allowed or (name=='vms-central' and c['State']['Running']):raise ValueError('Unexpected container depends on obsolete image: '+name)
    removals.append(name)
  for name,remote_name in [('source-stable.before.tar.gz','source.before.tar.gz'),('application-images.before.tar.gz','application-images.before.tar.gz'),
                          ('development-copies.before.tar.gz','development-copies.before.tar.gz'),('obsolete-images.before.tar.gz','obsolete-images.before.tar.gz'),
-                         ('vendor-source.before.tar.gz','vendor-source.before.tar.gz')]:
+                         ('vendor-source.before.tar.gz','vendor-source.before.tar.gz'),
+                         ('legacy-central.before.tar.gz','legacy-central.before.tar.gz'),
+                         ('legacy-mobile.before.tar.gz','legacy-mobile.before.tar.gz')]:
   expected=digest(BACKUP/name)
   actual=run(['ssh','-o','BatchMode=yes','-o','ControlPath=/tmp/drac-package-management-20261005','-p','22002','management@177.104.156.25',
               'sha256sum '+REMOTE+remote_name],capture_output=True,text=True).stdout.split()[0]
