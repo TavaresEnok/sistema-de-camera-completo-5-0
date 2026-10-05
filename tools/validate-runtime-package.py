@@ -74,14 +74,27 @@ def validate(args):
             if login['status']!=201 or not login['tokenPresent']:raise ValueError('Fresh bootstrap/login failed')
             web=node('fetch("http://web:8080/").then(r=>console.log(JSON.stringify({status:r.status})))')
             publisher=subprocess.Popen(['docker','run','--rm','--name',project+'-publisher','--network',project+'_vms-net','--cpus','1',manifest['images']['api'],
-                'ffmpeg','-hide_banner','-loglevel','error','-re','-f','lavfi','-i','testsrc2=size=640x360:rate=15','-c:v','libx264','-threads','1','-preset','ultrafast','-g','15','-t','90','-rtsp_transport','tcp','-f','rtsp','rtsp://mediamtx:8554/synthetic'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+                'ffmpeg','-hide_banner','-loglevel','error','-re','-f','lavfi','-i','testsrc2=size=640x360:rate=15','-c:v','libx264','-threads','1','-preset','ultrafast','-g','15','-t','150','-rtsp_transport','tcp','-f','rtsp','rtsp://mediamtx:8554/synthetic'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
             time.sleep(3)
             started=node('fetch("http://ai-service:8000/analyze/start",{method:"POST",headers:{"Content-Type":"application/json","X-Service-Token":process.env.INTERNAL_SERVICE_TOKEN},body:JSON.stringify({camera_id:"synthetic-package-lab",rtsp_url:"rtsp://mediamtx:8554/synthetic",analysis_type:"motion",source_info:{simulationOnly:true}})}).then(async r=>console.log(JSON.stringify({status:r.status})))')
             if started['status']!=200:raise ValueError('Native analysis failed to start')
+            lease=node('fetch("http://ai-service:8000/live-view/start/synthetic-package-lab",{method:"POST",headers:{"Content-Type":"application/json","X-Service-Token":process.env.INTERNAL_SERVICE_TOKEN},body:JSON.stringify({session_id:"package-lab",ttl_seconds:120,view_mode:"selected",simulation_mode:"motion"})}).then(async r=>console.log(JSON.stringify({status:r.status})))')
+            if lease['status']!=200:raise ValueError('Simulation live-view lease failed')
+            deadline=time.monotonic()+75
+            while True:
+                health=node('fetch("http://ai-service:8000/health").then(r=>r.json()).then(r=>console.log(JSON.stringify(r)))')
+                processor=health['processors']['synthetic-package-lab']
+                if processor['readiness']['ready'] and processor['capture_frames_enqueued']>=20:break
+                if time.monotonic()>=deadline:
+                    print(json.dumps({'captureReadiness':processor['readiness'],'receivedFrames':processor['capture_frames_enqueued']}),flush=True)
+                    raise ValueError('Native capture did not receive synthetic frames within startup deadline')
+                time.sleep(2)
+            # Measure after capture is warm; startup waiting must not masquerade
+            # as the effective steady-state analysis cadence.
             time.sleep(10)
             health=node('fetch("http://ai-service:8000/health").then(r=>r.json()).then(r=>console.log(JSON.stringify(r)))')
             processor=health['processors']['synthetic-package-lab']
-            if not processor['readiness']['ready'] or processor['capture_frames_enqueued']<20:raise ValueError('Native capture did not receive synthetic frames')
+            if not processor['readiness']['ready']:raise ValueError('Native capture lost readiness after warmup')
             run(['docker','exec',project+'-api','ffmpeg','-hide_banner','-loglevel','error','-rtsp_transport','tcp','-i','rtsp://mediamtx:8554/synthetic','-t','2','-c','copy','-y','/tmp/package-lab.mp4'])
             recorded=json.loads(run(['docker','exec',project+'-api','ffprobe','-v','error','-show_entries','stream=codec_name,width,height','-of','json','/tmp/package-lab.mp4']).stdout)
             hls=node('fetch("http://mediamtx:8888/synthetic/index.m3u8").then(async r=>console.log(JSON.stringify({status:r.status,playlist:(await r.text()).startsWith("#EXTM3U")})))')
