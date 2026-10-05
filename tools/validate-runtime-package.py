@@ -68,6 +68,9 @@ def validate(args):
             run(compose+['up','-d','--no-build','--pull','never','--wait','--wait-timeout','180'])
             ready=node('fetch("http://127.0.0.1:3000/health/ready").then(r=>r.json()).then(x=>console.log(JSON.stringify(x)))')
             if not ready.get('ready'):raise ValueError('Fresh package readiness failed')
+            actual_schema=run(['docker','exec',project+'-api','node','-e',
+                'const fs=require("fs"),path=require("path"),crypto=require("crypto");const root="/app/apps/api/prisma";let files=[];function walk(d){for(const x of fs.readdirSync(d)){const p=path.join(d,x);if(fs.statSync(p).isDirectory())walk(p);else if(x==="schema.prisma"||x.endsWith(".sql"))files.push(p)}}walk(root);const h=crypto.createHash("sha256");for(const p of files.sort()){h.update(path.relative(root,p));h.update(fs.readFileSync(p))}console.log(h.digest("hex"))']).stdout.strip()
+            if actual_schema!=manifest['databaseSchemaHash']:raise ValueError('Signed schema hash does not match the runtime image')
             admin={'username':'fixtureadmin','email':'fixture@lab.invalid','name':'Fixture','password':'Fixture-only-'+uuid.uuid4().hex}
             run(['docker','exec','-i','-e','ADMIN_STDIN_JSON=true','-w','/app/apps/api',project+'-api','node','dist/bootstrap-admin.js'],input=json.dumps(admin))
             login=node('fetch("http://127.0.0.1:3000/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},body:'+json.dumps(json.dumps({'username':admin['username'],'password':admin['password']}))+'}).then(async r=>console.log(JSON.stringify({status:r.status,tokenPresent:!!(await r.json()).accessToken})))')
@@ -102,7 +105,7 @@ def validate(args):
             native=run(['docker','exec',project+'-ai-service','python','-c','import main,pathlib;assert main.__file__.endswith(".so");assert not list(pathlib.Path("/app").rglob("*.py"));print("native")']).stdout.strip()=='native'
             if web['status']!=200 or hls['status']!=200 or not hls['playlist'] or not native:raise ValueError('Runtime delivery validation failed')
             report={'commit':manifest['commit'],'freshIsolatedRuntime':True,'realDockerServices':True,'syntheticVideo':True,
-                'productionModified':False,'signatureVerified':True,'sourceFreeAI':native,'readiness':ready,'bootstrapLogin':login,
+                'productionModified':False,'signatureVerified':True,'databaseSchemaVerified':True,'sourceFreeAI':native,'readiness':ready,'bootstrapLogin':login,
                 'web':web,'motion':{'configuredFps':processor['process_fps'],'receivedFrames':processor['capture_frames_enqueued'],'performance':processor['performance']},
                 'recordedStreams':recorded['streams'],'hls':hls,'whepSignaling':whep,'physicalCameraOrCustomerICEValidated':False}
             args.report.write_text(json.dumps(report,indent=2));print(json.dumps(report))

@@ -32,6 +32,17 @@ def sha(file):
     return value.hexdigest()
 
 
+def database_schema_hash(prisma):
+    # Match exactly what the API image ships: schema + applied migrations.
+    # Optional SQL tools (e.g. rls/) are not runtime schema or migrations.
+    digest=hashlib.sha256()
+    files=[prisma/'schema.prisma',*(prisma/'migrations').rglob('*.sql')]
+    for file in sorted(files):
+        digest.update(file.relative_to(prisma).as_posix().encode())
+        digest.update(file.read_bytes())
+    return digest.hexdigest()
+
+
 def build(args):
     root=args.root.resolve()
     if not re.fullmatch('[a-f0-9]{40}',args.commit):raise ValueError('Immutable commit required')
@@ -73,12 +84,8 @@ def build(args):
         for file in sorted(stage.rglob('*')):
             if file.is_file():files[file.relative_to(stage).as_posix()]={'size':file.stat().st_size,'sha256':sha(file)}
         now=int(time.time())
-        schema=hashlib.sha256()
-        for file in sorted((root/'apps/api/prisma').rglob('*')):
-            if file.is_file() and (file.name=='schema.prisma' or file.suffix=='.sql'):
-                schema.update(file.relative_to(root/'apps/api/prisma').as_posix().encode());schema.update(file.read_bytes())
         manifest={'v':1,'commit':args.commit,'securityVersion':1,'protection':'standard','issuedAt':now,'expiresAt':now+30*86400,
-                  'databaseSchemaHash':schema.hexdigest(),'distributionApproval':args.distribution_approval,'images':image_ids,'files':files}
+                  'databaseSchemaHash':database_schema_hash(root/'apps/api/prisma'),'distributionApproval':args.distribution_approval,'images':image_ids,'files':files}
         raw=json.dumps(manifest,sort_keys=True,separators=(',',':')).encode()
         (stage/'manifest.json').write_bytes(raw)
         message=stage/'message';message.write_bytes(b'drac-runtime-manifest-v1\n'+raw)
@@ -88,7 +95,7 @@ def build(args):
         message.unlink();(stage/'manifest.sig').write_bytes(sig)
         args.output.mkdir(mode=0o700,parents=True)
         archive=args.output/(args.commit+'.tar.gz')
-        with tarfile.open(archive,'w:gz') as target:
+        with tarfile.open(archive,'w:gz',compresslevel=3) as target:
             for file in sorted(stage.rglob('*')):
                 if file.is_file():target.add(file,arcname=file.relative_to(stage).as_posix(),recursive=False)
         verifier=(root/'scripts/security/runtime-bundle.py').read_text().split("\nif __name__ == '__main__':")[0]

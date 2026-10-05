@@ -4,7 +4,7 @@ const fs=require('node:fs');const crypto=require('node:crypto');
 (async()=>{
   const input=JSON.parse(fs.readFileSync(0,'utf8'));
   const report=JSON.parse(input.reportText);
-  if(!report.freshIsolatedRuntime||!report.realDockerServices||!report.signatureVerified||!report.sourceFreeAI
+  if(!report.freshIsolatedRuntime||!report.realDockerServices||!report.signatureVerified||!report.databaseSchemaVerified||!report.sourceFreeAI
     ||!report.readiness?.ready||report.bootstrapLogin?.status!==201||report.hls?.status!==200
     ||report.commit!==input.metadata.commit||input.installationId!=='dguardian')throw new Error('pilot_evidence_invalid');
   const request={...input.metadata,confirmInstallationId:input.installationId,
