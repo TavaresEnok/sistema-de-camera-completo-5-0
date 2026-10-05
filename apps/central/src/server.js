@@ -4087,9 +4087,10 @@ async function route(req, res) {
         if (!item) return json(req, res, 404, { error: 'installation_not_found' });
         const body = await readBody(req);
         if (body.confirmInstallationId !== id) return json(req, res, 400, { error: 'pilot_confirmation_required' });
-        const checked = releases.validarPromocao({ ...body, promovidoPor: actor.email });
+        const checked = releases.validarRuntimePilot({ ...body, promovidoPor: actor.email });
         if (!checked.ok || !checked.release.runtimeBundle) return json(req, res, 400, { error: checked.erro || 'runtime_package_required' });
         try { runtimeArtifacts.resolve(checked.release); } catch { return json(req, res, 409, { error: 'runtime_package_unavailable' }); }
+        refreshInstallerGrant(item, { forceArtifact: true, forceToken: true, release: checked.release });
         item.runtimeRelease = checked.release;
         addAuditEvent(db, req, { type: 'installation.runtime_pilot_approved', actor: actor.email, result: 'accepted', installationId: id, commit: checked.release.commit });
         await saveDb(db);

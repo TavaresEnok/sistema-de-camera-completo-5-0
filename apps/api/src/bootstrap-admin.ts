@@ -2,7 +2,18 @@
 // existing account and never accepts a password on the command line.
 import { PrismaClient, UserRole } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
-import { readSync } from 'node:fs';
+
+export async function readInitialAdminInput(input: AsyncIterable<Buffer | string>) {
+  const chunks: Buffer[] = [];
+  let length = 0;
+  for await (const chunk of input) {
+    const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    length += data.length;
+    if (length > 8192) throw new Error('initial_admin_input_invalid');
+    chunks.push(data);
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
 
 export function parseInitialAdmin(input: string) {
   if (Buffer.byteLength(input) > 8192) throw new Error('initial_admin_input_invalid');
@@ -20,19 +31,14 @@ export function parseInitialAdmin(input: string) {
 
 async function main() {
   if (process.env.ADMIN_STDIN_JSON !== 'true') throw new Error('initial_admin_stdin_required');
-  const buffer = Buffer.alloc(8193);
-  let length = 0;
-  while (length < buffer.length) {
-    const count = readSync(0, buffer, length, buffer.length - length, null);
-    if (!count) break;
-    length += count;
-  }
-  const admin = parseInitialAdmin(buffer.subarray(0, length).toString('utf8'));
+  const admin = parseInitialAdmin(await readInitialAdminInput(process.stdin));
   const prisma = new PrismaClient();
   try {
     const passwordHash = await bcrypt.hash(admin.password, 10);
     const created = await prisma.$transaction(async tx => {
-      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext('drac.bootstrap-admin'))`;
+      // pg_advisory_xact_lock returns PostgreSQL void. Prisma $queryRaw cannot
+      // deserialize that result; $executeRaw keeps the lock without decoding.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('drac.bootstrap-admin'))`;
       if (await tx.user.count()) return false;
       await tx.user.create({data:{username:admin.username,email:admin.email,name:admin.name,passwordHash,role:UserRole.SUPER_ADMIN,isActive:true}});
       return true;

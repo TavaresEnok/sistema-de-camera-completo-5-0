@@ -151,6 +151,22 @@ function approvedForInstallation(release, installation) {
   return installation?.runtimeRelease || release;
 }
 
+function validarRuntimePilot(pedido, agora = new Date()) {
+  const commit = normalizarCommit(pedido?.commit);
+  if (!commit) return {ok:false,erro:'commit_invalido'};
+  let runtimeBundle;
+  try { runtimeBundle = bundleMetadata(pedido.runtimeBundle); }
+  catch { return {ok:false,erro:'runtime_bundle_invalid'}; }
+  const gate=pedido?.gate;
+  if (!gate || gate.runtimeFresh!==true || gate.signatureVerified!==true || gate.dataPreservationReviewed!==true
+      || !/^[a-f0-9]{64}$/.test(String(gate.reportSha256||'')) || !gate.em || Number.isNaN(Date.parse(gate.em))) {
+    return {ok:false,erro:'runtime_pilot_evidence_required'};
+  }
+  if (!/^[a-f0-9]{64}$/.test(String(pedido.installerSha256||''))) return {ok:false,erro:'installer_hash_required'};
+  return {ok:true,release:{commit,runtimeBundle,installerSha256:pedido.installerSha256,gate,
+    scope:'installation-only',notas:String(pedido.notas||'').slice(0,2000),promovidoEm:agora.toISOString(),promovidoPor:pedido.promovidoPor||null}};
+}
+
 /** Guarda a promoção no histórico, mais nova primeiro, sem duplicar seguidas. */
 function registrarNoHistorico(historico, release, { maximo = 50 } = {}) {
   const anterior = Array.isArray(historico) ? historico : [];
@@ -168,5 +184,6 @@ module.exports = {
   resumoDaFrota,
   releaseParaInstalacao,
   approvedForInstallation,
+  validarRuntimePilot,
   registrarNoHistorico,
 };

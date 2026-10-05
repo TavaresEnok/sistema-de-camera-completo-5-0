@@ -1,0 +1,5 @@
+services:
+  central:
+    image: drac-security-central:20261005-dguardian-pilot
+    volumes:
+      - /opt/ajustcam-management/secrets/releases:/run/drac-central-releases:ro

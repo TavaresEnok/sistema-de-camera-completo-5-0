@@ -13,11 +13,11 @@ test('pilot release is scoped: unrelated installations stay on global release',(
 test('runtime pilot HTTP approval requires confirmation, gate, authentication and available package',async t=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'drac-pilot-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
   const commit='b'.repeat(40);fs.writeFileSync(path.join(dir,commit+'.tar.gz'),'abc');
-  const central=await startCentral({DRAC_CENTRAL_RUNTIME_DIR:dir});t.after(()=>central.stop());
+  const central=await startCentral({DRAC_CENTRAL_RUNTIME_DIR:dir,DRAC_CENTRAL_PUBLIC_URL:'https://central.example.test'});t.after(()=>central.stop());
   const create=await fetch(central.base+'/api/admin/provision',{method:'POST',headers:central.adminHeaders(),body:JSON.stringify({installationId:'pilot',customerName:'Pilot',cameraAllowedCidrs:'192.168.1.0/24'})});
   assert.equal(create.status,201);
   const url=central.base+'/api/admin/installations/pilot/runtime-release';
-  const body={confirmInstallationId:'pilot',commit,installerSha256:'c'.repeat(64),runtimeBundle:{sha256:'c'.repeat(64),size:3,securityVersion:1},gate:{instalacaoLimpa:true,verificadaNaMatriz:true,em:new Date().toISOString()}};
+  const body={confirmInstallationId:'pilot',commit,installerSha256:'c'.repeat(64),runtimeBundle:{sha256:'c'.repeat(64),size:3,securityVersion:1},gate:{runtimeFresh:true,signatureVerified:true,dataPreservationReviewed:true,reportSha256:'a'.repeat(64),em:new Date().toISOString()}};
   const post=(data,headers=central.adminHeaders())=>fetch(url,{method:'POST',headers,body:JSON.stringify(data)});
   assert.equal((await post(body,{'content-type':'application/json'})).status,401);
   assert.equal((await post({...body,confirmInstallationId:'other'})).status,400);
