@@ -8,6 +8,8 @@ test('pilot release is scoped: unrelated installations stay on global release',(
   const global={commit:'a'.repeat(40)};const pilot={commit:'b'.repeat(40),runtimeBundle:{sha256:'c'.repeat(64),size:3,securityVersion:1}};
   assert.equal(releases.releaseParaInstalacao(global,{version:global.commit}).commit,global.commit);
   assert.equal(releases.releaseParaInstalacao(global,{version:pilot.commit,runtimeRelease:pilot}).situacao,'atualizada');
+  assert.equal(releases.situacaoDaInstalacao({version:pilot.commit,runtimeRelease:pilot},global),'atualizada');
+  assert.equal(releases.resumoDaFrota([{version:pilot.commit,runtimeRelease:pilot}],global).atualizada,1);
 });
 
 test('runtime pilot HTTP approval requires confirmation, gate, authentication and available package',async t=>{

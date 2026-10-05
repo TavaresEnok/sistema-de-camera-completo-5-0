@@ -109,6 +109,7 @@ function validarPromocao(pedido, { historico = [], agora = new Date(), permitirS
  * empurrada às cegas — o operador precisa ver que não se sabe.
  */
 function situacaoDaInstalacao(instalacao, release) {
+  release = approvedForInstallation(release, instalacao);
   const atual = normalizarCommit(instalacao?.version);
   const aprovado = release ? normalizarCommit(release.commit) : null;
   if (!aprovado) return 'sem-release';
