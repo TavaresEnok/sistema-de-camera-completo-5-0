@@ -1,0 +1,12 @@
+FROM drac-web-ib-perimeter-builder:latest AS build
+COPY apps/web /app/apps/web
+WORKDIR /app
+RUN pnpm --filter web build
+
+FROM nginx:alpine
+COPY --from=build /app/apps/web/dist /usr/share/nginx/html
+COPY apps/web/nginx.conf /etc/nginx/conf.d/default.conf
+RUN chown -R nginx:nginx /var/cache/nginx /var/run /etc/nginx/conf.d
+USER nginx
+EXPOSE 8080
+CMD ["nginx", "-g", "daemon off;"]

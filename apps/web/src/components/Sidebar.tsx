@@ -182,10 +182,10 @@ export function Sidebar({
       style={{ minWidth: isExpanded ? 240 : 56 }}
     >
       {/* ── Brand header ── */}
-      <div className="sidebar-brand flex items-center justify-center h-14 px-3 shrink-0">
+      <div className={`sidebar-brand flex items-center justify-center px-3 shrink-0 ${logoDataUrl && isExpanded ? 'h-24' : 'h-14'}`}>
         <div className="flex items-center justify-center min-w-0 flex-1">
-          <div className={`sidebar-mark shrink-0 h-8 rounded-xl flex items-center justify-center overflow-hidden ${logoDataUrl ? 'w-fit min-w-8 max-w-[108px]' : 'w-8'}`}>
-            {logoDataUrl ? <img src={logoDataUrl} alt={facilityName} className="h-full w-auto max-w-[108px] object-contain" /> : <Shield className="w-3.5 h-3.5 text-[hsl(var(--primary))]" />}
+          <div className={`sidebar-mark shrink-0 rounded-xl flex items-center justify-center overflow-hidden ${logoDataUrl && isExpanded ? 'h-20 w-full max-w-[196px]' : 'h-8 w-8'}`}>
+            {logoDataUrl ? <img src={logoDataUrl} alt={facilityName} className="h-full w-full object-contain" /> : <Shield className="w-3.5 h-3.5 text-[hsl(var(--primary))]" />}
           </div>
         </div>
       </div>

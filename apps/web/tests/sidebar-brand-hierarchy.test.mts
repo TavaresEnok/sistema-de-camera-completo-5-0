@@ -9,7 +9,11 @@ const login = fs.readFileSync(path.join(root, 'src/pages/LoginPage.tsx'), 'utf8'
 const css = fs.readFileSync(path.join(root, 'src/index.css'), 'utf8');
 
 test('logo da instalação preserva proporção e aceita formato horizontal', () => {
-  assert.match(sidebar, /h-full w-auto max-w-\[108px\] object-contain/);
+  assert.match(sidebar, /logoDataUrl && isExpanded/);
+  assert.match(sidebar, /h-20 w-full max-w-\[196px\]/);
+  assert.match(sidebar, /'h-24' : 'h-14'/);
+  assert.match(sidebar, /h-8 w-8/);
+  assert.match(sidebar, /h-full w-full object-contain/);
   assert.match(login, /max-h-\[44px\].*w-auto max-w-\[210px\] object-contain/);
   assert.doesNotMatch(login, /h-\[30px\] w-\[30px\] object-contain/);
 });

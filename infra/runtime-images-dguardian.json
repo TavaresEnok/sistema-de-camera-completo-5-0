@@ -1,5 +1,5 @@
 {
   "api": "drac-security-api:20261005-package",
-  "web": "drac-pipeline-web:20261004-analysis-metrics",
+  "web": "drac-web:20261005-larger-logo",
   "ai-service": "drac-security-ai:20261005-native"
 }
