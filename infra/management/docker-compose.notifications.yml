@@ -1,0 +1,7 @@
+services:
+  central:
+    image: drac-central:20261005-notifications-v2
+    environment:
+      # Optional shared bot, provisioned only in protected vendor production
+      # configuration. Each installation still has its own selected chat.
+      CENTRAL_TELEGRAM_BOT_TOKEN: ${CENTRAL_TELEGRAM_BOT_TOKEN:-}

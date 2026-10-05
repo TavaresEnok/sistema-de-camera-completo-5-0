@@ -4058,16 +4058,28 @@
                       ${item.alertas?.emailDisponivel ? '' : 'disabled'}>${escapeHtml((item.alertas?.emails || []).join('\n'))}</textarea>
                     ${item.alertas?.emailDisponivel
                       ? '<div class="subtext">Até 5 endereços.</div>'
-                      : '<div class="subtext" style="color:var(--amber)">Indisponível: a Central ainda não tem uma conta de e-mail configurada no servidor. O Telegram continua funcionando.</div>'}
+                      : '<div class="subtext" style="color:var(--amber)">O e-mail ainda não está configurado na Central. Você pode cadastrar o Telegram abaixo.</div>'}
                   </div>
 
                   <div class="field" style="margin-top:12px">
-                    <label for="alertas-chat">ID do chat no Telegram</label>
+                    <label for="alertas-audience">Tipo de aviso</label>
+                    <select id="alertas-audience">
+                      <option value="customer" ${item.alertas?.audience !== 'technical' ? 'selected' : ''}>Para o cliente — mensagens simples</option>
+                      <option value="technical" ${item.alertas?.audience === 'technical' ? 'selected' : ''}>Para a equipe de suporte — detalhes internos</option>
+                    </select>
+                    <div class="subtext">Cada instalação envia somente para os destinos cadastrados aqui.</div>
+                  </div>
+                  <div class="field" style="margin-top:12px">
+                    <label for="alertas-chat">Destino no Telegram (número do grupo ou conversa)</label>
                     <input id="alertas-chat" type="text" placeholder="-1001234567890"
                       value="${escapeHtml(item.alertas?.telegramChatId || '')}">
                   </div>
+                  <label class="field" style="display:flex;flex-direction:row;align-items:center;gap:8px">
+                    <input id="alertas-central-bot" type="checkbox" ${item.alertas?.botSource === 'central' ? 'checked' : ''} ${item.alertas?.centralBotAvailable ? '' : 'disabled'}>
+                    <span>Usar o bot da Central ${item.alertas?.centralBotAvailable ? '' : '(ainda não cadastrado)'}</span>
+                  </label>
                   <div class="field">
-                    <label for="alertas-token">Token do bot</label>
+                    <label for="alertas-token">Chave de acesso do bot (token)</label>
                     <input id="alertas-token" type="password" autocomplete="off"
                       placeholder="${item.alertas?.telegramTokenConfigurado ? 'Token guardado — preencha só para trocar' : '123456789:AAH...'}">
                     <div class="subtext">${item.alertas?.telegramTokenConfigurado
@@ -4075,7 +4087,16 @@
                       : 'Obtido com o @BotFather — veja a ajuda ao lado.'}</div>
                   </div>
 
-                  <label class="field" style="flex-direction:row;align-items:center;gap:8px;margin-top:6px">
+                  <div class="grid-2" style="margin-top:12px">
+                    <div class="field"><label for="alertas-camera-delay">Câmera sem comunicação: avisar após (minutos)</label>
+                      <input id="alertas-camera-delay" type="number" min="1" max="1440" value="${Number(item.alertas?.cameraDelayMinutes || 10)}"></div>
+                    <div class="field"><label for="alertas-server-delay">Servidor sem comunicação: avisar após (minutos)</label>
+                      <input id="alertas-server-delay" type="number" min="1" max="1440" value="${Number(item.alertas?.serverDelayMinutes || 10)}"></div>
+                  </div>
+                  <div class="subtext" style="margin-top:8px">Avisos para o cliente:</div>
+                  ${[['camera','Câmeras sem comunicação'],['server','Servidor sem comunicação'],['disk','Espaço para gravações'],['recording','Problemas de gravação']].map(([key,label])=>`<label class="field" style="display:flex;flex-direction:row;align-items:center;gap:8px;margin-top:6px"><input type="checkbox" data-alert-category="${key}" ${(item.alertas?.categories || ['camera','server','disk','recording']).includes(key) ? 'checked' : ''}>${label}</label>`).join('')}
+
+                  <label class="field" style="display:flex;flex-direction:row;align-items:center;gap:8px;margin-top:6px">
                     <input id="alertas-recuperacao" type="checkbox" ${item.alertas?.avisarRecuperacao !== false ? 'checked' : ''}>
                     <span>Avisar também quando o problema for resolvido</span>
                   </label>
@@ -4089,6 +4110,9 @@
                     Último teste: ${escapeHtml(item.alertas.ultimoTesteMensagem || (item.alertas.ultimoTesteOk ? 'OK' : 'falhou'))}
                   </div>` : ''}
                   <div id="alertas-feedback" class="subtext" style="margin-top:8px"></div>
+                  <div class="subtext" style="margin-top:8px">Envios aguardando: ${Number(item.alertas?.delivery?.pending || 0)}. Envios que precisam de atenção: ${Number(item.alertas?.delivery?.failed || 0)}.</div>
+                  ${item.alertas?.delivery?.lastDelivery ? `<div class="subtext">Última tentativa: ${escapeHtml(item.alertas.delivery.lastDelivery.status === 'sent' ? 'Envio confirmado pelo serviço de mensagens.' : item.alertas.delivery.lastDelivery.error || 'Envio aguardando confirmação.')}</div>` : '<div class="subtext">Nenhum envio automático registrado ainda. Cadastre um destino e use Enviar teste.</div>'}
+                  ${item.alertas?.delivery?.queueError ? `<div class="subtext" style="color:var(--red)">${escapeHtml(item.alertas.delivery.queueError)}</div>` : ''}
                 </div>
               </section>
 
@@ -4136,11 +4160,12 @@
                   <details class="ajuda-bloco">
                     <summary><span class="ajuda-marca">?</span> Quando o aviso é disparado</summary>
                     <div class="ajuda-corpo">
-                      <p>Quando um problema operacional <b>aparece</b> — por exemplo, câmera sem
+                      <p>Os avisos de câmera e servidor sem comunicação aguardam <b>10 minutos por padrão</b>, para evitar alertas por quedas rápidas. Você pode ajustar esse tempo acima. Quando um problema operacional <b>aparece</b> — por exemplo, câmera sem
                          comunicação, gravação interrompida, pouco espaço em disco, atraso na
                          nuvem ou instalação desconectada — e, se você quiser, também quando ele
                          <b>passa</b>. Alerta que continua ativo não é reenviado: você recebe
-                         uma vez quando o problema começa, não a cada minuto enquanto dura.</p>
+                         uma vez quando o problema é confirmado, não a cada minuto enquanto dura. Se o serviço de mensagens não responder, o envio será tentado novamente, até 8 tentativas. Um destino inválido exige corrigir o cadastro.</p>
+                      <p class="ajuda-nota">Servidor sem comunicação não confirma que as gravações locais pararam. Se faltarem informações de uma câmera, o sistema não informa uma recuperação sem confirmação.</p>
                       <p class="ajuda-nota">Esta configuração não envia alarmes de movimento,
                          invasão ou análise de vídeo. Ela avisa sobre a saúde do sistema.</p>
                       <p class="ajuda-nota">Um alerta que já tinha sido resolvido e volta a
@@ -4178,9 +4203,14 @@
             emails,
             emailEnabled: emails.length > 0,
             telegramChatId: chatId,
+            botSource: els.detail.querySelector('#alertas-central-bot')?.checked ? 'central' : 'installation',
+            audience: els.detail.querySelector('#alertas-audience')?.value || 'customer',
+            cameraDelayMinutes: Number(els.detail.querySelector('#alertas-camera-delay')?.value),
+            serverDelayMinutes: Number(els.detail.querySelector('#alertas-server-delay')?.value),
+            categories: Array.from(els.detail.querySelectorAll('[data-alert-category]:checked')).map(el=>el.dataset.alertCategory),
             // Só liga o Telegram se HÁ como mandar: chat mais token (novo ou já
             // guardado). Sem isto o painel diria "ativo" sobre um canal mudo.
-            telegramEnabled: Boolean(chatId) && (Boolean(token) || Boolean(item.alertas?.telegramTokenConfigurado)),
+            telegramEnabled: Boolean(chatId) && (Boolean(token) || Boolean(item.alertas?.telegramTokenConfigurado) || Boolean(els.detail.querySelector('#alertas-central-bot')?.checked && item.alertas?.centralBotAvailable)),
             avisarRecuperacao: Boolean(els.detail.querySelector('#alertas-recuperacao')?.checked),
             ...(token ? { telegramBotToken: token } : {}),
           };
@@ -4202,11 +4232,11 @@
               return false;
             }
             if (!res.ok || resposta?.error) {
-              feedbackAlertas(`Não foi possível salvar: ${resposta?.error || `erro ${res.status}`}`, 'var(--red)');
+              feedbackAlertas(resposta?.message || 'Não foi possível salvar. Confira os campos e tente novamente.', 'var(--red)');
               return false;
             }
-            feedbackAlertas('Destinos salvos.', 'var(--green)');
             await load();
+            feedbackAlertas('Destinos salvos.', 'var(--green)');
             return true;
           } catch (erro) {
             feedbackAlertas(`Falha ao salvar: ${erro?.message || erro}`, 'var(--red)');
@@ -4227,9 +4257,9 @@
               method: 'POST', credentials: 'include',
             });
             const r = await res.json().catch(() => ({}));
-            if (r?.ok) feedbackAlertas('Teste enviado — confira o Telegram e a caixa de e-mail.', 'var(--green)');
-            else feedbackAlertas(`Teste falhou: ${(r?.resultados || []).filter((x) => !x.ok).map((x) => `${x.canal}: ${x.erro}`).join(' | ') || r?.error || 'sem detalhe'}`, 'var(--red)');
             await load();
+            if (r?.ok) feedbackAlertas('Teste enviado — confira o Telegram e a caixa de e-mail.', 'var(--green)');
+            else feedbackAlertas(r?.message || (r?.error === 'nenhum_canal_configurado' ? 'Cadastre um destino antes de enviar o teste.' : `Não foi possível enviar o teste. ${(r?.resultados || []).filter((x) => !x.ok).map((x) => x.erro).join(' ') || 'Confira o cadastro e tente novamente.'}`), 'var(--red)');
           } catch (erro) {
             feedbackAlertas(`Teste falhou: ${erro?.message || erro}`, 'var(--red)');
           }

@@ -37,6 +37,11 @@ const CONFIG_PADRAO = Object.freeze({
   telegramEnabled: false,
   telegramChatId: '',
   telegramBotTokenEncrypted: '',
+  botSource: 'installation',
+  audience: 'customer',
+  cameraDelayMinutes: 10,
+  serverDelayMinutes: 10,
+  categories: ['camera', 'server', 'disk', 'recording'],
   // Alerta de recuperação avisa que voltou ao normal. Nasce LIGADO: sem ele o
   // operador fica sem saber se o problema passou, e continua acordado.
   avisarRecuperacao: true,
@@ -107,9 +112,14 @@ function normalizarAlertas(entrada) {
     telegramEnabled:
       lerBool(fonte.telegramEnabled, CONFIG_PADRAO.telegramEnabled)
       && Boolean(String(fonte.telegramChatId ?? '').trim())
-      && Boolean(String(fonte.telegramBotTokenEncrypted ?? '').trim()),
+      && Boolean(fonte.botSource === 'central' ? process.env.CENTRAL_TELEGRAM_BOT_TOKEN : String(fonte.telegramBotTokenEncrypted ?? '').trim()),
     telegramChatId: String(fonte.telegramChatId ?? '').trim().slice(0, 64),
     telegramBotTokenEncrypted: String(fonte.telegramBotTokenEncrypted ?? ''),
+    botSource: fonte.botSource === 'central' ? 'central' : 'installation',
+    audience: fonte.audience === 'technical' ? 'technical' : 'customer',
+    cameraDelayMinutes: delayMinutes(fonte.cameraDelayMinutes),
+    serverDelayMinutes: delayMinutes(fonte.serverDelayMinutes),
+    categories: Array.isArray(fonte.categories) ? [...new Set(fonte.categories.filter(x => ['camera','server','disk','recording'].includes(x)))] : CONFIG_PADRAO.categories.slice(),
     avisarRecuperacao: lerBool(fonte.avisarRecuperacao, CONFIG_PADRAO.avisarRecuperacao),
     updatedAt: fonte.updatedAt ?? null,
     // O selo do teste é emitido pelo SERVIDOR, nunca aceito do corpo — mesma
@@ -121,6 +131,11 @@ function normalizarAlertas(entrada) {
   };
 }
 
+function delayMinutes(value) {
+  const n = Number(value);
+  return Number.isInteger(n) && n >= 1 && n <= 1440 ? n : 10;
+}
+
 /** O que pode ir para o navegador: token JAMAIS sai, nem cifrado. */
 function alertasPublicos(config) {
   const c = normalizarAlertas(config);
@@ -130,6 +145,12 @@ function alertasPublicos(config) {
     telegramEnabled: c.telegramEnabled,
     telegramChatId: c.telegramChatId,
     telegramTokenConfigurado: Boolean(c.telegramBotTokenEncrypted),
+    centralBotAvailable: Boolean(process.env.CENTRAL_TELEGRAM_BOT_TOKEN),
+    botSource: c.botSource,
+    audience: c.audience,
+    cameraDelayMinutes: c.cameraDelayMinutes,
+    serverDelayMinutes: c.serverDelayMinutes,
+    categories: c.categories,
     avisarRecuperacao: c.avisarRecuperacao,
     updatedAt: c.updatedAt,
     ultimoTesteAt: c.ultimoTesteAt,
@@ -159,6 +180,7 @@ function mesclarAlertas(atual, patch) {
     ...(p.telegramChatId !== undefined ? { telegramChatId: p.telegramChatId } : {}),
     ...(p.telegramEnabled !== undefined ? { telegramEnabled: p.telegramEnabled } : {}),
     ...(p.avisarRecuperacao !== undefined ? { avisarRecuperacao: p.avisarRecuperacao } : {}),
+    ...Object.fromEntries(['botSource','audience','cameraDelayMinutes','serverDelayMinutes','categories'].filter(k => p[k] !== undefined).map(k => [k,p[k]])),
     ...(tokenNovo ? { telegramBotTokenEncrypted: cifrar(tokenNovo) } : {}),
     // Apagar o token é uma ação EXPLÍCITA, não um efeito de salvar vazio.
     ...(p.limparTelegramToken === true ? { telegramBotTokenEncrypted: '' } : {}),
@@ -169,8 +191,10 @@ function mesclarAlertas(atual, patch) {
 // ── Envio: Telegram ─────────────────────────────────────────────────────────
 
 async function enviarTelegram(config, texto) {
-  const token = decifrar(config.telegramBotTokenEncrypted);
-  if (!token || !config.telegramChatId) return { ok: false, erro: 'Telegram não configurado.' };
+  let token;
+  try { token = config.botSource === 'central' ? process.env.CENTRAL_TELEGRAM_BOT_TOKEN : decifrar(config.telegramBotTokenEncrypted); }
+  catch { return { ok: false, permanent: true, erro: 'Não foi possível acessar a configuração do bot. Cadastre o token novamente.' }; }
+  if (!token || !config.telegramChatId) return { ok: false, permanent: true, erro: 'Telegram não configurado.' };
 
   const controle = new AbortController();
   const corte = setTimeout(() => controle.abort(), TEMPO_LIMITE_MS);
@@ -181,18 +205,21 @@ async function enviarTelegram(config, texto) {
       body: JSON.stringify({ chat_id: config.telegramChatId, text: texto, parse_mode: 'HTML' }),
       signal: controle.signal,
     });
-    if (resposta.ok) return { ok: true };
+    const corpo = await resposta.json().catch(() => null);
+    if (resposta.ok && corpo?.ok === true) return { ok: true };
     // A resposta do Telegram diz o que houve ("chat not found", "bot was
     // blocked") — é a informação que resolve o problema do operador. Mas ela
     // pode ecoar o corpo enviado, então o token nunca entra na URL de log.
-    let detalhe = `HTTP ${resposta.status}`;
-    try {
-      const corpo = await resposta.json();
-      if (corpo && corpo.description) detalhe = String(corpo.description).slice(0, 200);
-    } catch { /* corpo não-JSON: fica o status */ }
-    return { ok: false, erro: detalhe };
+    const code = Number(corpo?.error_code || resposta.status);
+    const retryAfter = Number(corpo?.parameters?.retry_after);
+    const detalhe = code === 401 ? 'O token do bot não é válido. Confira o cadastro.'
+      : code === 403 ? 'O bot não tem permissão para enviar ao destino. Confira o grupo ou desbloqueie o bot.'
+      : code === 400 ? 'Confira o destino e se o bot foi adicionado ao grupo.'
+      : code === 429 ? 'O Telegram pediu uma pausa. O envio será tentado novamente.'
+      : 'O Telegram não confirmou o envio. O sistema tentará novamente.';
+    return { ok: false, permanent: [400,401,403,404].includes(code), retryAfterSeconds: Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(86400,retryAfter) : undefined, erro: detalhe };
   } catch (erro) {
-    return { ok: false, erro: erro?.name === 'AbortError' ? 'Telegram não respondeu a tempo.' : String(erro?.message || erro) };
+    return { ok: false, erro: erro?.name === 'AbortError' ? 'Telegram não respondeu a tempo.' : 'Não foi possível acessar o Telegram. O envio será tentado novamente.' };
   } finally {
     clearTimeout(corte);
   }
@@ -236,20 +263,26 @@ function configSmtp() {
  * fila. Falhou, reporta e o alerta segue pelo Telegram.
  */
 function falarSmtp(socket, comando, esperado) {
+  if(socket.destroyed)return Promise.reject(new Error('SMTP_CONNECTION_CLOSED'));
   return new Promise((resolve, reject) => {
     let buffer = '';
+    const cleanup=()=>{clearTimeout(timer);socket.removeListener('data',aoReceber);socket.removeListener('error',failed);socket.removeListener('close',closed);};
+    const failed=()=>{cleanup();reject(new Error('SMTP_CONNECTION_FAILED'));};
+    const closed=()=>{cleanup();reject(new Error('SMTP_CONNECTION_CLOSED'));};
+    const timer=setTimeout(()=>{cleanup();socket.destroy();reject(new Error('SMTP_TIMEOUT'));},TEMPO_LIMITE_MS);
     const aoReceber = (chunk) => {
       buffer += chunk.toString('utf8');
       // Resposta SMTP termina em "NNN <espaço>"; com hífen ("NNN-") ainda vem mais.
       const linhas = buffer.split('\r\n').filter(Boolean);
       const ultima = linhas[linhas.length - 1];
       if (!ultima || !/^\d{3} /.test(ultima)) return;
-      socket.removeListener('data', aoReceber);
+      cleanup();
       const codigo = Number(ultima.slice(0, 3));
       if (esperado.includes(codigo)) resolve(buffer);
-      else reject(new Error(`SMTP respondeu ${codigo}: ${ultima.slice(4, 120)}`));
+      else reject(new Error(`SMTP_${codigo}`));
     };
     socket.on('data', aoReceber);
+    socket.once('error',failed);socket.once('close',closed);
     if (comando !== null) socket.write(`${comando}\r\n`);
   });
 }
@@ -266,6 +299,7 @@ async function enviarEmail(destinatarios, assunto, corpo) {
   const cfg = configSmtp();
   const assuntoSeguro = String(assunto ?? '').replace(/[\r\n]+/g, ' ').trim().slice(0, 180);
   let socket;
+  const deadline=setTimeout(()=>socket?.destroy(),30000);
   try {
     socket = await new Promise((resolve, reject) => {
       const conectar = cfg.secure ? tls.connect : net.connect;
@@ -282,8 +316,9 @@ async function enviarEmail(destinatarios, assunto, corpo) {
       // credencial iria em claro pela rede.
       await falarSmtp(socket, 'STARTTLS', [220]);
       socket = await new Promise((resolve, reject) => {
-        const seguro = tls.connect({ socket, servername: cfg.host }, () => resolve(seguro));
-        seguro.once('error', reject);
+        const timer=setTimeout(()=>{seguro.destroy();reject(new Error('SMTP_TIMEOUT'));},TEMPO_LIMITE_MS);
+        const seguro = tls.connect({ socket, servername: cfg.host }, () => {clearTimeout(timer);resolve(seguro);});
+        seguro.once('error', error=>{clearTimeout(timer);reject(error);});
       });
       await falarSmtp(socket, 'EHLO ajustcam-central', [250]);
     }
@@ -317,7 +352,10 @@ async function enviarEmail(destinatarios, assunto, corpo) {
     return { ok: true };
   } catch (erro) {
     try { socket?.destroy(); } catch { /* já morto */ }
-    return { ok: false, erro: String(erro?.message || erro).slice(0, 200) };
+    const permanent = /^SMTP_5\d\d$/.test(String(erro?.message));
+    return { ok: false, permanent, erro: permanent ? 'O envio por e-mail foi recusado. Confira a conta e os destinatários cadastrados.' : 'Não foi possível confirmar o envio por e-mail. O sistema tentará novamente.' };
+  } finally {
+    clearTimeout(deadline);
   }
 }
 
@@ -479,18 +517,18 @@ function normalizarAlertaOperacional(entrada) {
  * Monta a mensagem. Curta de propósito: chega no celular de alguém que talvez
  * esteja dormindo, e precisa responder "onde, o quê, quando" sem abrir nada.
  */
-function montarMensagem({ instalacao, alertas, recuperado = false }) {
-  const nome = instalacao?.name || instalacao?.customerName || instalacao?.id || 'Instalação';
-  const normalizados = alertas.map(normalizarAlertaOperacional);
+function montarMensagem({ instalacao, alertas, recuperado = false, teste = false }) {
+  const nome = String(instalacao?.customerName || instalacao?.name || instalacao?.id || 'Instalação').replace(/[\r\n\x00-\x1f]/g,' ').slice(0,120);
+  const normalizados = alertas.map(a => ({ ...normalizarAlertaOperacional(a), recoveryMessage: a.recoveryMessage }));
   const temCritico = normalizados.some((alerta) => alerta.level === 'critical');
-  const titulo = recuperado
+  const titulo = teste ? `📩 Teste de avisos — ${nome}` : recuperado
     ? `✅ Problema resolvido — ${nome}`
     : temCritico
       ? `🚨 Problema crítico — ${nome}`
       : `⚠️ Atenção necessária — ${nome}`;
-  const linhas = normalizados.slice(0, 8).map((a) => `• ${a.message}`);
+  const linhas = normalizados.slice(0, 8).map((a) => `• ${String(recuperado ? mensagemRecuperacao(a) : a.message).slice(0,320)}`);
   if (alertas.length > 8) linhas.push(`• …e mais ${alertas.length - 8}`);
-  const quando = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+  const quando = new Date().toLocaleString('pt-BR', { timeZone: 'America/Fortaleza' });
 
   return {
     assunto: titulo,
@@ -503,6 +541,15 @@ function montarMensagem({ instalacao, alertas, recuperado = false }) {
       `<i>Em ${escaparTelegram(quando)}</i>`,
     ].join('\n'),
   };
+}
+
+function mensagemRecuperacao(alerta) {
+  if (alerta.recoveryMessage) return alerta.recoveryMessage;
+  if (alerta.code === 'installation_offline') return 'O servidor voltou a se comunicar com a Central.';
+  if (alerta.code.startsWith('disk_usage')) return 'O uso do armazenamento voltou a um nível seguro.';
+  if (['cameras_unavailable','no_online_cameras','camera_offline'].includes(alerta.code)) return 'A comunicação com as câmeras foi restabelecida.';
+  if (alerta.code.startsWith('recording') || alerta.code === 'cameras_stalled') return 'O aviso sobre gravações foi encerrado após a atualização das informações do sistema.';
+  return 'O sistema deixou de informar o problema anterior.';
 }
 
 /** Dispara nos canais LIGADOS. Um canal quebrado não impede o outro. */

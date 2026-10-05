@@ -28,6 +28,7 @@ const {
   decryptSecret: decryptStorageSecret,
 } = require('./cloud-storage');
 const alertas = require('./alertas');
+const notifications = require('./notification-engine');
 const releases = require('./releases');
 const {launchCommand, deliverInstaller, secretLog} = require('./remote-install-runtime');
 const operations = require('./operations');
@@ -900,43 +901,45 @@ function alertLevelRank(level) {
  * `novos` cobre os dois casos que merecem aviso: alerta inédito e alerta que
  * tinha sido resolvido e VOLTOU (reincidência é informação, não repetição).
  */
-/**
- * Manda os avisos dos alertas que MUDARAM de estado neste heartbeat.
- *
- * Best-effort por contrato: nada aqui pode derrubar o processamento do
- * heartbeat, que é o que mantém a frota visível. Falha de canal vira log e
- * segue — e um canal quebrado não impede o outro (ver despacharAlerta).
- */
-function despacharAlertasDaInstalacao(item, novos, resolvidos) {
-  const config = alertas.normalizarAlertas(item.alertChannels);
-  if (!config.telegramEnabled && !config.emailEnabled) return;
-
-  void (async () => {
+function startNotificationWorker() {
+  let running=false,cursor=0;
+  const tick=async()=>{
+    if(running)return;running=true;
     try {
-      if (novos.length) {
-        const resultados = await alertas.despacharAlerta(config, alertas.montarMensagem({ instalacao: item, alertas: novos }));
-        registrarFalhasDeEntrega(item, resultados);
-      }
-      if (resolvidos.length && config.avisarRecuperacao) {
-        const resultados = await alertas.despacharAlerta(
-          config,
-          alertas.montarMensagem({ instalacao: item, alertas: resolvidos, recuperado: true }),
-        );
-        registrarFalhasDeEntrega(item, resultados);
-      }
-    } catch (erro) {
-      console.error(`[alertas] falha ao avisar instalacao=${item.id}: ${erro?.message || erro}`);
-    }
-  })();
-}
-
-function registrarFalhasDeEntrega(item, resultados) {
-  for (const resultado of Array.isArray(resultados) ? resultados : []) {
-    if (resultado?.ok) continue;
-    const canal = resultado?.canal === 'email' ? 'e-mail' : 'Telegram';
-    const motivo = String(resultado?.erro || 'falha sem detalhe').replace(/[\r\n]+/g, ' ').slice(0, 240);
-    console.error(`[alertas] ${canal} não entregue instalacao=${item.id}: ${motivo}`);
-  }
+      const claims=await runSerialized(async()=>{
+        const db=await loadDb(),claims=[];let changed=false;
+        const items=Object.values(db.installations||{});
+        const ordered=items.slice(cursor).concat(items.slice(0,cursor));
+        for(const item of ordered) {
+          const before=JSON.stringify(item.notifications);
+          notifications.observe(item,item.notificationCameraSnapshot??null);
+          if(claims.length<4){const claim=notifications.claimBatch(item);if(claim)claims.push(claim);}
+          changed ||= before!==JSON.stringify(item.notifications);
+        }
+        cursor=items.length?(cursor+Math.max(1,claims.length))%items.length:0;
+        if(changed)await saveDb(db);
+        return claims;
+      });
+      await Promise.all(claims.map(async claimed=>{
+        let result;
+        try {result=claimed.job.channel==='telegram'
+          ? await alertas.enviarTelegram(claimed.config,claimed.message.html)
+          : await alertas.enviarEmail(claimed.config.emails,claimed.message.assunto,claimed.message.texto);}
+        catch {result={ok:false,erro:'Não foi possível confirmar o envio. O sistema tentará novamente.'};}
+        await runSerialized(async()=>{
+          const db=await loadDb(),item=db.installations[claimed.installationId];
+          if(!item)return;
+          for(const job of claimed.jobs)notifications.finish(item,job,result);
+          await saveDb(db);
+        });
+      }));
+    } catch {console.error('[alertas] O serviço de envio encontrou uma falha; verificará novamente no próximo ciclo.');}
+    finally {running=false;}
+  };
+  const interval=Math.max(1000,Math.min(60000,Number(process.env.DRAC_CENTRAL_NOTIFICATION_INTERVAL_MS||15000)||15000));
+  const timer=setInterval(()=>void tick(),interval);timer.unref();
+  void tick();
+  return timer;
 }
 
 function updateAlertHistory(existing, alerts, now) {
@@ -1048,21 +1051,16 @@ function startConnectivityMonitor() {
   const run = () => {
     void runSerialized(async () => {
       const db = await loadDb();
-      const notifications = [];
       let changed = false;
       const now = new Date();
       for (const item of Object.values(db.installations || {})) {
         const result = updateConnectivityAlert(item, now);
         if (!result.changed) continue;
         item.alertHistory = result.history;
-        notifications.push({ item, alerts: result.novos });
         changed = true;
       }
       if (!changed) return;
       await saveDb(db);
-      for (const notification of notifications) {
-        despacharAlertasDaInstalacao(notification.item, notification.alerts, []);
-      }
     }).catch((error) => {
       console.error(`[alertas] falha ao verificar comunicação das instalações: ${error?.message || error}`);
     });
@@ -1159,7 +1157,7 @@ function publicInstallation(item, release = null) {
     // segredo e devolve só `hasSecret`. O painel nunca precisa da chave; quem
     // precisa dela é a instalação, e ela a recebe pelo heartbeat.
     // `alertasPublicos` NUNCA devolve o token do bot, nem cifrado.
-    alertas: alertas.alertasPublicos(item.alertChannels),
+    alertas: { ...alertas.alertasPublicos(item.alertChannels), delivery: notifications.publicStatus(item) },
     cloudStorage: describeCloudStorage(item.cloudStorage),
     reactivationArchive: item.reactivationArchive ? { ...item.reactivationArchive } : null,
     reactivationRestore: item.reactivationRestore ? { ...item.reactivationRestore } : null,
@@ -1898,7 +1896,7 @@ async function handleHeartbeat(req, res) {
     activeUsers: Number(metrics.activeUsers || 0),
   });
   while (heartbeatHistory.length > HEARTBEAT_HISTORY_LIMIT) heartbeatHistory.shift();
-  const { history: alertHistory, novos: alertasNovos, resolvidos: alertasResolvidos } = updateAlertHistory(existing, alerts, now);
+  const { history: alertHistory } = updateAlertHistory(existing, alerts, now);
   const item = {
     ...existing,
     id: installationId,
@@ -1927,19 +1925,13 @@ async function handleHeartbeat(req, res) {
     licenseMessage: existing.licenseMessage || null,
   };
   db.installations[installationId] = item;
+  const notificationCameras=heartbeatCameraRaw(body);
+  item.notificationCameraSnapshot=notificationCameras===null?null:{items:timeseries.parseCameraHealth(notificationCameras).slice(0,1000).map(c=>({cameraId:c.cameraId,name:c.name,enabled:c.enabled,status:c.status}))};
+  notifications.observe(item,item.notificationCameraSnapshot,new Date(now).getTime());
   await saveDb(db);
 
-  // ── AVISAR QUEM PRECISA SABER ─────────────────────────────────────────────
-  //
-  // Até aqui o alerta virava histórico e parava na tela. Quem não estivesse
-  // com o painel aberto não ficava sabendo — e o painel não fica aberto de
-  // madrugada, que é quando a maioria das quedas acontece.
-  //
-  // DEPOIS do saveDb e SEM await: o heartbeat responde em milissegundos e o
-  // envio (SMTP e HTTPS externos) corre por fora. Segurar a resposta faria a
-  // instalação achar que a Central caiu por causa de um servidor de e-mail
-  // lento — trocaria um problema de aviso por um de monitoramento.
-  despacharAlertasDaInstalacao(item, alertasNovos, alertasResolvidos);
+  // The durable worker sends outside the DB gate. A slow messaging service
+  // cannot delay heartbeats or replace concurrent changes in the datastore.
 
   // Série temporal: o JSON continua guardando só as últimas ~100 amostras (o
   // arquivo não aguenta mais que isso); o histórico LONGO vai para o Postgres,
@@ -3265,6 +3257,12 @@ async function handlePatchAlertas(req, res, db, actor, installationId) {
     return json(req, res, 400, { error: 'alertas_payload_invalido' });
   }
 
+  if (['cameraDelayMinutes','serverDelayMinutes'].some(k=>payload[k]!==undefined&&(!Number.isInteger(payload[k])||payload[k]<1||payload[k]>1440))) {
+    return json(req,res,400,{error:'tempo_invalido',message:'Use um tempo entre 1 e 1440 minutos.'});
+  }
+  if (payload.audience!==undefined&&!['customer','technical'].includes(payload.audience))return json(req,res,400,{error:'tipo_de_aviso_invalido'});
+  if (payload.botSource==='central'&&!process.env.CENTRAL_TELEGRAM_BOT_TOKEN)return json(req,res,400,{error:'bot_da_central_nao_cadastrado',message:'O bot da Central ainda não foi cadastrado.'});
+
   // Endereço inválido é RECUSADO com a lista do que caiu, em vez de aceito e
   // descartado em silêncio: salvar "ok" e o alerta nunca chegar é o pior
   // resultado possível numa tela de alerta.
@@ -3289,7 +3287,13 @@ async function handlePatchAlertas(req, res, db, actor, installationId) {
     return json(req, res, 500, { error: 'segredo_indisponivel', message: String(erro?.message || erro) });
   }
 
+  const previous=alertas.normalizarAlertas(item.alertChannels);
+  const relevant=c=>Object.fromEntries(['emailEnabled','emails','telegramEnabled','telegramChatId','telegramBotTokenEncrypted','botSource','audience','cameraDelayMinutes','serverDelayMinutes','categories','avisarRecuperacao'].map(k=>[k,c[k]]));
+  const changed=JSON.stringify(relevant(previous))!==JSON.stringify(relevant(config));
   item.alertChannels = config;
+  // A destination/profile change starts a fresh observation. Never reuse
+  // queued messages for a previous recipient, or forge a recovery for it.
+  if(changed&&item.notifications){for(const job of item.notifications.jobs||[])if(['pending','sending','failed'].includes(job.status))job.status='cancelled';item.notifications.incidents={};}
   item.updatedAt = new Date().toISOString();
   addAuditEvent(db, req, {
     type: 'alertas.updated',
@@ -3303,7 +3307,13 @@ async function handlePatchAlertas(req, res, db, actor, installationId) {
 }
 
 async function handleTestarAlertas(req, res, db, actor, installationId) {
-  const item = db.installations[installationId];
+  const fresh=await runSerialized(async()=>{
+    const current=await loadDb();
+    if(!getAuthenticatedUser(req,current))return {unauthorized:true};
+    return {item:current.installations[installationId]};
+  });
+  if(fresh.unauthorized)return json(req,res,401,{error:'unauthorized'});
+  const item = fresh.item;
   if (!item) return json(req, res, 404, { error: 'installation_not_found' });
 
   const config = alertas.normalizarAlertas(item.alertChannels);
@@ -3313,6 +3323,7 @@ async function handleTestarAlertas(req, res, db, actor, installationId) {
 
   const mensagem = alertas.montarMensagem({
     instalacao: item,
+    teste: true,
     alertas: [{ message: 'Mensagem de teste enviada pelo painel da Central. Se você recebeu isto, o canal está funcionando.' }],
   });
   const resultados = await alertas.despacharAlerta(config, mensagem);
@@ -3320,7 +3331,11 @@ async function handleTestarAlertas(req, res, db, actor, installationId) {
 
   // O selo é escrito pelo SERVIDOR a partir do resultado REAL — nunca aceito
   // do corpo. Mesma lição do teste de storage.
-  item.alertChannels = {
+  return runSerialized(async()=>{
+  const current=await loadDb(),live=current.installations[installationId];
+  if(!live)return json(req,res,404,{error:'installation_not_found'});
+  if(JSON.stringify(alertas.normalizarAlertas(live.alertChannels))!==JSON.stringify(config))return json(req,res,409,{error:'cadastro_alterado_durante_teste',message:'O destino mudou durante o teste. Faça um novo teste.'});
+  live.alertChannels = {
     ...config,
     ultimoTesteAt: new Date().toISOString(),
     ultimoTesteOk: ok,
@@ -3328,14 +3343,16 @@ async function handleTestarAlertas(req, res, db, actor, installationId) {
       ? `Enviado com sucesso (${resultados.map((r) => r.canal).join(', ')}).`
       : resultados.filter((r) => !r.ok).map((r) => `${r.canal}: ${r.erro}`).join(' | ').slice(0, 300),
   };
-  addAuditEvent(db, req, {
+  for(const result of resultados)if(result.ok)notifications.retryConfirmedChannel(live,result.canal);
+  addAuditEvent(current, req, {
     type: 'alertas.test',
     actor: actor.email,
     result: ok ? 'accepted' : 'denied',
     installationId,
   });
-  await saveDb(db);
-  return json(req, res, ok ? 200 : 502, { ok, resultados, alertas: alertas.alertasPublicos(item.alertChannels) });
+  await saveDb(current);
+  return json(req, res, ok ? 200 : 502, { ok, resultados, alertas: alertas.alertasPublicos(live.alertChannels) });
+  });
 }
 
 async function handleTestCloudStorage(req, res, db, actor, installationId) {
@@ -4754,7 +4771,7 @@ function startServer() {
   // Elas passam a rodar FORA do portão; a parte que toca o banco (o evento de
   // auditoria + saveDb) continua serializada dentro do próprio handler, que é
   // o único trecho onde a corrida existe de verdade.
-  const rotaLonga = /^\/api\/admin\/installations\/[^/]+\/(cloud-storage\/performance|remote-install)/.test(url);
+  const rotaLonga = /^\/api\/admin\/installations\/[^/]+\/(cloud-storage\/performance|remote-install|alertas\/test)/.test(url);
   const touchesDb =
     !rotaLonga
     && ((url.startsWith('/api/') && !['/api/health', '/api/ready'].includes(url)) || url.startsWith('/install/'));
@@ -4785,6 +4802,7 @@ function startServer() {
   startArquivoRetentionSweep();
       startReactivationArchiveMaintenance();
       startConnectivityMonitor();
+      startNotificationWorker();
       server.listen(PORT, HOST, () => {
         console.log(`DRAC Central ouvindo em http://${HOST}:${PORT}`);
       });
