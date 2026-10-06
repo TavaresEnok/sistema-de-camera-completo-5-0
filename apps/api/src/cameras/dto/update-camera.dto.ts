@@ -185,6 +185,11 @@ export class UpdateCameraDto {
   recordingMode?: string;
 
   @IsOptional()
+  @IsString()
+  @IsIn(['baixa', 'media', 'alta'])
+  motionSensitivity?: 'baixa' | 'media' | 'alta';
+
+  @IsOptional()
   @IsInt()
   @Min(1)
   retentionDays?: number;

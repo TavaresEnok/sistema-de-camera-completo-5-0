@@ -75,6 +75,20 @@ def validate(args):
             run(['docker','exec','-i','-e','ADMIN_STDIN_JSON=true','-w','/app/apps/api',project+'-api','node','dist/bootstrap-admin.js'],input=json.dumps(admin))
             login=node('fetch("http://127.0.0.1:3000/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},body:'+json.dumps(json.dumps({'username':admin['username'],'password':admin['password']}))+'}).then(async r=>console.log(JSON.stringify({status:r.status,tokenPresent:!!(await r.json()).accessToken})))')
             if login['status']!=201 or not login['tokenPresent']:raise ValueError('Fresh bootstrap/login failed')
+            sensitivity=node('''(async()=>{
+                const {PrismaClient}=require("@prisma/client");const p=new PrismaClient();
+                const camera=await p.camera.create({data:{name:"Sensitivity fixture",ip:"192.0.2.1",username:"fixture",passwordEncrypted:"",enabled:false}});
+                const response=await fetch("http://127.0.0.1:3000/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},body:''' + json.dumps(json.dumps({'username':admin['username'],'password':admin['password']})) + '''});
+                const token=(await response.json()).accessToken;
+                const headers={"Content-Type":"application/json",Authorization:"Bearer "+token};
+                const update=await fetch("http://127.0.0.1:3000/cameras/"+camera.id,{method:"PATCH",headers,body:JSON.stringify({motionSensitivity:"alta"})});
+                const invalid=await fetch("http://127.0.0.1:3000/cameras/"+camera.id,{method:"PATCH",headers,body:JSON.stringify({motionSensitivity:"invalid"})});
+                const after=await p.camera.findUnique({where:{id:camera.id}});
+                await p.camera.delete({where:{id:camera.id}});await p.$disconnect();
+                console.log(JSON.stringify({defaultLevel:camera.motionSensitivity,updatedLevel:after.motionSensitivity,confidencePreserved:after.aiConfidence===camera.aiConfidence,updateStatus:update.status,invalidStatus:invalid.status}));
+            })().catch(()=>process.exit(1))''')
+            if sensitivity['defaultLevel']!='media' or sensitivity['updatedLevel']!='alta' or sensitivity['updateStatus']!=200 or sensitivity['invalidStatus']!=400 or not sensitivity['confidencePreserved']:
+                raise ValueError('Camera sensitivity/default/validation/preservation gate failed')
             web=node('fetch("http://web:8080/").then(r=>console.log(JSON.stringify({status:r.status})))')
             publisher=subprocess.Popen(['docker','run','--rm','--name',project+'-publisher','--network',project+'_vms-net','--cpus','1',manifest['images']['api'],
                 'ffmpeg','-hide_banner','-loglevel','error','-re','-f','lavfi','-i','testsrc2=size=640x360:rate=15','-c:v','libx264','-threads','1','-preset','ultrafast','-g','15','-t','150','-rtsp_transport','tcp','-f','rtsp','rtsp://mediamtx:8554/synthetic'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
@@ -107,6 +121,7 @@ def validate(args):
             report={'commit':manifest['commit'],'freshIsolatedRuntime':True,'realDockerServices':True,'syntheticVideo':True,
                 'productionModified':False,'signatureVerified':True,'databaseSchemaVerified':True,'sourceFreeAI':native,'readiness':ready,'bootstrapLogin':login,
                 'web':web,'motion':{'configuredFps':processor['process_fps'],'receivedFrames':processor['capture_frames_enqueued'],'performance':processor['performance']},
+                'cameraSensitivity':sensitivity,
                 'recordedStreams':recorded['streams'],'hls':hls,'whepSignaling':whep,'physicalCameraOrCustomerICEValidated':False}
             args.report.write_text(json.dumps(report,indent=2));print(json.dumps(report))
         finally:

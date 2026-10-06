@@ -354,6 +354,10 @@ export function LiveStreamPlayer({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const hlsRef = useRef<HlsController | null>(null);
   const webrtcPcRef = useRef<RTCPeerConnection | null>(null);
+  const receiverQualityRef = useRef<{
+    pc: RTCPeerConnection; at: number; presented: number;
+    sample: ReturnType<typeof summarizeVideoReceiver>;
+  } | null>(null);
   const webrtcSessionUrlRef = useRef<string | null>(null);
   const webrtcStreamRef = useRef<MediaStream | null>(null);
   const webrtcAbortControllerRef = useRef<AbortController | null>(null);
@@ -2319,6 +2323,33 @@ export function LiveStreamPlayer({
         window.dispatchEvent(new CustomEvent('s2cam:live-receiver-sample', {
           detail: { cameraId, sampledAt: Date.now(), ...summarizeVideoReceiver(stats) },
         }));
+        // Reuse this existing stats poll. At most one small report / 16 seconds
+        // per visible camera, with counters only and no persistent DB logging.
+        const quality = summarizeVideoReceiver(stats);
+        const qualityAt = performance.now();
+        const previousQuality = receiverQualityRef.current;
+        if (!previousQuality || previousQuality.pc !== pc || quality.framesDecoded < previousQuality.sample.framesDecoded) {
+          receiverQualityRef.current = { pc, at: qualityAt, sample: quality, presented: lastRenderedFrameRef.current.presentedFrames };
+        } else if (qualityAt - previousQuality.at >= 16000) {
+          const seconds = (qualityAt - previousQuality.at) / 1000;
+          const delta = (key: keyof typeof quality) => Math.max(0, Number(quality[key]) - Number(previousQuality.sample[key]));
+          const decoded = delta('framesDecoded');
+          const emitted = delta('jitterBufferEmittedCount');
+          const metrics = {
+            receivedFps: delta('framesReceived') / seconds,
+            decodedFps: decoded / seconds,
+            presentedFps: Math.max(0, lastRenderedFrameRef.current.presentedFrames - previousQuality.presented) / seconds,
+            droppedFrames: delta('framesDropped'), lostPackets: delta('packetsLost'),
+            ...(decoded > 0 ? { decodeMsPerFrame: delta('totalDecodeTimeSeconds') * 1000 / decoded } : {}),
+            ...(emitted > 0 ? { bufferMsPerFrame: delta('jitterBufferDelaySeconds') * 1000 / emitted } : {}),
+            ...(quality.rttSeconds != null ? { rttMs: quality.rttSeconds * 1000 } : {}),
+            width: videoRef.current?.videoWidth ?? 0, height: videoRef.current?.videoHeight ?? 0,
+          };
+          receiverQualityRef.current = { pc, at: qualityAt, sample: quality, presented: lastRenderedFrameRef.current.presentedFrames };
+          const headers = tokenHeadersRef.current;
+          if (headers) void axios.post(`${API_URL}/camera-stream/${cameraId}/live-quality`, metrics,
+            { headers, timeout: 3000 }).catch(() => undefined);
+        }
         let bytesReceived = 0;
         let framesDecoded = 0;
         let hasDecodedFrameMetric = false;
@@ -2536,6 +2567,7 @@ export function LiveStreamPlayer({
     <div
       ref={containerRef}
       className={`relative overflow-hidden bg-black ${className ?? ''}`}
+      style={liveViewMode === 'grid' ? { contain: 'layout paint style', isolation: 'isolate' } : undefined}
       aria-label={`Live ${cameraName}`}
       onDoubleClick={resetZoom}
     >

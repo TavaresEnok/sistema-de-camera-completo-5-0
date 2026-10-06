@@ -149,6 +149,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
   private runtimePathListInFlight: Promise<any[]> | null = null;
   private readonly capacityDefaults = liveCapacityDefaults();
   private readonly capacityBudget = new LiveCapacityBudget();
+  private readonly optionalLightGridPaths = new Set<string>();
   private readonly capacityPressure = new LivePressureSampler();
   private capacityTimer: ReturnType<typeof setInterval> | null = null;
   private readonly maxTranscodes = envNumber(
@@ -2612,7 +2613,15 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     }
     const audioAvailable = sourceAudioCodec == null ? null : sourceAudioCodec !== 'none';
     const codecPassthroughMode = deliveryMode === 'original' || deliveryMode === 'grid-hevc';
-    const needsPublisher = (wantsAudio && audioAvailable !== false) || (!codecPassthroughMode && (isHevc || sanitizeGridSource));
+    // Optional, bounded grid reduction. Already-small sources stay in copy;
+    // recordings/original/analytics must not depend on this viewing profile.
+    const lightGrid = deliveryMode === 'grid' && !isHevc && !sanitizeGridSource
+      && process.env.MEDIAMTX_LIGHT_GRID_ENABLED === 'true'
+      && sourceWidth != null && sourceHeight != null
+      && (sourceWidth > GRID_LIVE_MAX_WIDTH || sourceHeight > GRID_LIVE_MAX_HEIGHT);
+    if (lightGrid) this.optionalLightGridPaths.add(pathName);
+    else this.optionalLightGridPaths.delete(pathName);
+    const needsPublisher = lightGrid || (wantsAudio && audioAvailable !== false) || (!codecPassthroughMode && (isHevc || sanitizeGridSource));
     const originalProfile = resolveOriginalRtspProfile(camera);
     // Só afirmamos equivalência quando a grade NÃO passou por FFmpeg e o perfil
     // físico escolhido é precisamente o que a máxima resolução pediria. Assim o
@@ -2627,10 +2636,10 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
 
     // Só é "transcodificado" quando o publisher FFmpeg existe de fato — no modo
     // 'original' (passthrough) a fonte HEVC segue intocada e o rótulo deve refletir isso.
-    const transcodedForLive = needsPublisher && (isHevc || wantsAudio);
+    const transcodedForLive = needsPublisher && (isHevc || wantsAudio || lightGrid);
     // Audio never changes H.264 resolution. Original preserves its codec too;
     // only the compatibility grid needs a HEVC -> H.264 video conversion.
-    const videoEncoded = needsPublisher && isHevc && !originalDelivery;
+    const videoEncoded = needsPublisher && (isHevc || lightGrid) && !originalDelivery;
     const audioEncoded = needsPublisher && wantsAudio && audioAvailable !== false && sourceAudioCodec !== 'opus';
     this.capacityBudget.register(pathName, needsPublisher ? liveConversionCost({
       videoEncoded, codec: sourceVideoCodec, width: sourceWidth, height: sourceHeight, fps: sourceFps,
@@ -2847,6 +2856,25 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
 
     try {
       const current: any = await this.getPath(pathName);
+      // Introduce optional downscaling only after the old direct path drains.
+      // Deploying a viewing optimization must not disconnect current viewers.
+      if (lightGrid && current.source !== 'publisher'
+        && (current.source === sharedInput.url || current.source === sourceUrl)) {
+        let inUse = true;
+        try {
+          const runtime = JSON.parse(await this.apiRequest('GET', `/v3/paths/get/${encodedPath}`));
+          inUse = !Array.isArray(runtime.readers) || runtime.readers.length > 0;
+        } catch (error: any) { if (Number(error?.status) === 404) inUse = false; }
+        if (inUse) {
+          this.capacityBudget.register(pathName, 0);
+          this.optionalLightGridPaths.delete(pathName);
+          return {
+            pathName, sourceUrl, sourceVideoCodec, transcodedForLive: false,
+            videoEncoded: false, audioEncoded: false, audioAvailable, liveProfile, deliveryMode,
+            sourceIsOriginal: liveProfile?.channel === originalProfile.channel && liveProfile?.subtype === originalProfile.subtype,
+          };
+        }
+      }
       // A direct passthrough still serving viewers drains before moving to its
       // equivalent shared raw generation. Explicit camera edits still apply.
       if (sharedInput.shared && current.source === sourceUrl && current.source !== desiredPath.source) {
@@ -3002,6 +3030,10 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     this.capacityBudget.reserve(pathName, cost, runtime, {
       processes: this.maxTranscodes, points: this.maxTranscodePoints,
     }, this.capacityPressure.snapshot());
+  }
+
+  isOptionalLightGridPath(pathName: string | null): boolean {
+    return pathName != null && this.optionalLightGridPaths.has(pathName);
   }
 
   buildInternalRtspUrl(pathName: string | null) {

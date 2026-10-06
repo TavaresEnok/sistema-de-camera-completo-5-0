@@ -90,6 +90,8 @@ export class CameraStreamController {
   // são cacheadas por um intervalo curto para que uma única câmera errada não
   // transforme o banco em rate limiter; vínculo recém-criado passa em até 15 s.
   private readonly rejectedSrsPaths = new Map<string, number>();
+  // Bounded, short-lived receiver measurements; no database writes or SDP.
+  private readonly receiverSamples = new Map<string, { cameraId: string; at: number; metrics: Record<string, number> }>();
 
   constructor(
     private readonly ffmpegMjpegService: FfmpegMjpegService,
@@ -431,7 +433,40 @@ export class CameraStreamController {
     @Param('cameraId') cameraId: string,
   ) {
     await this.accessControlService.assertCanViewCamera(user, cameraId);
-    return this.streamResourceAdvisor.getCameraReport(cameraId);
+    const report = await this.streamResourceAdvisor.getCameraReport(cameraId);
+    const receivers = Array.from(this.receiverSamples.values())
+      .filter(sample => sample.cameraId === cameraId && Date.now() - sample.at < 300000)
+      .slice(-8).map(({ at, metrics }) => ({ sampledAt: new Date(at).toISOString(), ...metrics }));
+    return { ...report, receivers };
+  }
+
+  @Roles(UserRole.VIEWER)
+  @RequirePermission('liveView')
+  @Post(':cameraId/live-quality')
+  async recordLiveQuality(
+    @CurrentUser() user: AuthUser,
+    @Param('cameraId') cameraId: string,
+    @Body() body: Record<string, unknown>,
+  ) {
+    await this.accessControlService.assertCanViewCamera(user, cameraId);
+    const now = Date.now();
+    for (const [key, sample] of this.receiverSamples) {
+      if (now - sample.at >= 300000) this.receiverSamples.delete(key);
+    }
+    const key = `${user.id}:${cameraId}`;
+    const previous = this.receiverSamples.get(key);
+    if (previous && now - previous.at < 10000) return { accepted: false };
+    const metrics: Record<string, number> = {};
+    for (const name of ['receivedFps', 'decodedFps', 'presentedFps', 'droppedFrames', 'lostPackets',
+      'decodeMsPerFrame', 'bufferMsPerFrame', 'rttMs', 'width', 'height']) {
+      const value = body?.[name];
+      if (typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1000000) metrics[name] = value;
+    }
+    if (!Object.keys(metrics).length) return { accepted: false };
+    this.receiverSamples.delete(key);
+    if (this.receiverSamples.size >= 500) this.receiverSamples.delete(this.receiverSamples.keys().next().value!);
+    this.receiverSamples.set(key, { cameraId, at: now, metrics });
+    return { accepted: true };
   }
 
   @Roles(UserRole.VIEWER)
@@ -498,8 +533,17 @@ export class CameraStreamController {
         if (viewMode === 'grid' || viewMode === 'grid-hevc') {
           this.mediamtxProxyService.markGridViewed(cameraId);
         }
-        const ensured = await this.mediamtxProxyService.ensurePathForCamera(cameraId, viewMode);
-        await this.mediamtxProxyService.assertDeliveryCapacity(ensured.pathName);
+        let ensured = await this.mediamtxProxyService.ensurePathForCamera(cameraId, viewMode);
+        try {
+          await this.mediamtxProxyService.assertDeliveryCapacity(ensured.pathName);
+        } catch (error) {
+          // Optional H.264 downscaling cannot turn a healthy camera black.
+          // The alternate grid path is codec passthrough, not another encoder.
+          if (!(error instanceof LiveCapacityException) || viewMode !== 'grid'
+            || !this.mediamtxProxyService.isOptionalLightGridPath(ensured.pathName)) throw error;
+          ensured = await this.mediamtxProxyService.ensurePathForCamera(cameraId, 'grid-hevc');
+          await this.mediamtxProxyService.assertDeliveryCapacity(ensured.pathName);
+        }
         mediaBridge = this.mediamtxProxyService.buildPublicUrls(req, ensured.pathName, ensured.sourceUrl);
         measuredLiveCodec = ensured.sourceVideoCodec;
         gridSourceIsOriginal = ensured.sourceIsOriginal === true;

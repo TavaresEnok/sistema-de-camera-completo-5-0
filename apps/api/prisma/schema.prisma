@@ -159,6 +159,7 @@ model Camera {
   groupId                String?
   recordingEnabled       Boolean      @default(true)
   recordingMode          String       @default("continuous")
+  motionSensitivity      String       @default("media")
   /// Dias que ESTA câmera guarda, quando NÃO segue o grupo.
   retentionDays          Int          @default(3)
   /// Segue a retenção do grupo? Nasce ligado: câmera nova herda a política do

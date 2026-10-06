@@ -378,6 +378,7 @@ export class CamerasService implements OnApplicationBootstrap {
         aiObjectClasses: dto.aiObjectClasses ?? [],
         aiSensitivity: dto.aiSensitivity ?? 'balanced',
         aiConfidence: dto.aiConfidence ?? 70,
+        motionSensitivity: dto.motionSensitivity ?? 'media',
         alarmsEnabled: dto.alarmsEnabled ?? true,
         hasEdgeAi: dto.hasEdgeAi ?? false,
         motionTrigger: dto.motionTrigger ?? (dto.hasEdgeAi ? 'CAMERA' : 'SYSTEM'),
@@ -815,6 +816,7 @@ export class CamerasService implements OnApplicationBootstrap {
         ...(dto.aiObjectClasses !== undefined ? { aiObjectClasses: dto.aiObjectClasses } : {}),
         ...(dto.aiSensitivity !== undefined ? { aiSensitivity: dto.aiSensitivity } : {}),
         ...(dto.aiConfidence !== undefined ? { aiConfidence: dto.aiConfidence } : {}),
+        ...(dto.motionSensitivity != null ? { motionSensitivity: dto.motionSensitivity } : {}),
         // Classes que iniciam gravação no modo objeto. `undefined` preserva;
         // array vazio VOLTA ao conjunto padrão (pessoa + veículos) — nunca
         // significa "não gravar nada", que seria uma câmera muda por engano.

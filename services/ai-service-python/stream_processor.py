@@ -175,7 +175,10 @@ class StreamProcessor:
             default_threshold=float(self.profile.get("confirm_median_threshold", 0.70)),
             default_min_frames=int(self.profile.get("confirm_min_frames", 3)),
         )
-        self.motion_detector = MotionDetector(zones=self.detection_zones)
+        self.motion_detector = MotionDetector(
+            cfg={"sensitivity": self.source_info.get("motionSensitivity", "media")},
+            zones=self.detection_zones,
+        )
         # Tripwire: as LINHAS viajam na mesma lista das zonas (kind: 'line').
         # Fica inativo — e sem custo — quando não há nenhuma desenhada.
         self.tripwire = DetectorDeTravessia(self.detection_zones)
@@ -436,10 +439,17 @@ class StreamProcessor:
         cpu_percent = self._read_system_cpu_percent()
         mode_key = self._adaptive_mode_key()
 
-        overloaded = drop_ratio >= self.adaptive_drop_ratio_high
+        # Latest-frame replacement is not a backlog: inference may legitimately
+        # occupy more than one motion interval. Require an unsustainable MODEL
+        # budget as well before treating these replacements as overload.
+        infer_samples = list(self._advanced_infer_latencies_ms)
+        infer_ms = float(np.percentile(infer_samples, 95)) if infer_samples else 0.0
+        model_budget_ms = 1000.0 / max(0.5, float(self.advanced_process_fps))
+        model_over_budget = infer_ms > model_budget_ms * 1.5
+        overloaded = drop_ratio >= self.adaptive_drop_ratio_high and model_over_budget
         if cpu_percent is not None and cpu_percent >= self.adaptive_cpu_high:
             overloaded = True
-        recovered = drop_ratio <= self.adaptive_drop_ratio_low
+        recovered = not model_over_budget
         if cpu_percent is not None and cpu_percent > self.adaptive_cpu_low:
             recovered = False
 
@@ -448,6 +458,8 @@ class StreamProcessor:
             "cpu_percent": cpu_percent,
             "window_enqueued": float(delta_enqueued),
             "window_dropped": float(delta_dropped),
+            "model_p95_ms": infer_ms,
+            "model_budget_ms": model_budget_ms,
         }
 
         elapsed_change = now - self._adaptive_last_change_at
@@ -778,6 +790,10 @@ class StreamProcessor:
         )
 
     def _apply_qos_mode(self, qos_mode: str):
+        # Operational recording/alerts must never lose analysis priority just
+        # because a viewer opens the grid. Preview-only simulations keep QoS.
+        if self.emit_events and not self.simulation_only:
+            qos_mode = "base"
         if self.advanced_analysis_type:
             if qos_mode == "grid":
                 process_fps = max(0.5, float(self.grid_process_fps))
@@ -820,6 +836,10 @@ class StreamProcessor:
             frame_height = max(120, int(self.base_frame_height))
             input_size_hint = 0
 
+        if self.emit_events and not self.simulation_only:
+            # Motion/tracking and semantic inference have independent budgets.
+            # The model is NOT forced to run seven times per second.
+            process_fps = max(process_fps, float(MOTION_PROFILE["detection_fps"]))
         if self._has_perimeter_motion_test_session_locked():
             process_fps = max(process_fps, self.perimeter_motion_test_fps)
 
@@ -833,6 +853,8 @@ class StreamProcessor:
     def _refresh_qos_mode_locked(self):
         mode = self._current_live_view_mode_locked() if self.qos_live_enabled else None
         target_qos_mode = "selected" if mode == "selected" else "grid" if mode == "grid" else "base"
+        if self.emit_events and not self.simulation_only:
+            target_qos_mode = "base"
         mode_key = "grid" if target_qos_mode == "grid" else "selected" if target_qos_mode == "selected" else "base"
         state = self._adaptive_state.get(mode_key, {"fps_idx": 0, "imgsz_idx": 0, "res_idx": 0})
         signature = (

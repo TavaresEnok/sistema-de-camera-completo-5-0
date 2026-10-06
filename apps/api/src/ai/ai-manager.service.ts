@@ -1262,6 +1262,8 @@ export class AiManagerService implements OnModuleInit {
       // As LINHAS de perímetro viajam na mesma lista (kind: 'line') e são
       // usadas pelo tripwire — ver detectors/tripwire.py.
       detectionZones: Array.isArray(cam.detectionZones) ? cam.detectionZones : [],
+      motionSensitivity: cam.motionSensitivity ?? 'media',
+      recordingMode: cam.recordingMode,
       // ── ESCOPO DA DETECÇÃO DE OBJETO ────────────────────────────────────
       // Quem decide SE roda é a regra por câmera (auto = só com linha
       // desenhada); quem decide O QUE detectar é a Central, via política
@@ -1281,7 +1283,10 @@ export class AiManagerService implements OnModuleInit {
     // exatamente a política existente (H.264 copy; HEVC convertido somente
     // porque o detector precisa de quadros compatíveis).
     if (isPushSourced(cam)) {
-      const delivery = await this.mediamtxProxy.ensurePathForCamera(cam.id, 'grid');
+      let delivery = await this.mediamtxProxy.ensurePathForCamera(cam.id, 'grid');
+      if (!isHevcCodec(delivery.sourceVideoCodec)) {
+        delivery = await this.mediamtxProxy.ensurePathForCamera(cam.id, 'original');
+      }
       const internalUrl = this.mediamtxProxy.buildInternalRtspUrl(delivery.pathName);
       if (!internalUrl) {
         throw new BadRequestException('Publicação RTMP ainda não está disponível para análise.');

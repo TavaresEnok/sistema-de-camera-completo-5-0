@@ -55,6 +55,9 @@ type Form = EquipmentForm & {
   recordingVideoCodec: string;
   recordingMode: 'continuous' | 'motion' | 'object' | 'schedule' | 'manual';
   recordingObjectClasses: string[];
+  motionSensitivity: 'baixa' | 'media' | 'alta';
+  aiConfidence: number;
+  aiSensitivity: 'sensitive' | 'balanced' | 'precise';
   retentionDays: string;
   /** Segue a política do grupo? Sem isto, o número de dias é decorativo. */
   retentionFollowsGroup: boolean;
@@ -217,6 +220,9 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
           recordingVideoCodec: normalizeVideoCodec(data.recordingVideoCodec),
           recordingMode: (data.recordingMode ?? (data.recordingEnabled ? 'continuous' : 'manual')) as Form['recordingMode'],
           recordingObjectClasses: Array.isArray(data.recordingObjectClasses) ? data.recordingObjectClasses : [],
+          motionSensitivity: data.motionSensitivity ?? 'media',
+          aiConfidence: data.aiConfidence ?? 70,
+          aiSensitivity: data.aiSensitivity ?? 'balanced',
           retentionDays: String(data.retentionDays ?? 7),
           retentionFollowsGroup: data.retentionFollowsGroup !== false,
           grupoRetentionDays: (data as { group?: { retentionDays?: number | null } }).group?.retentionDays ?? null,
@@ -429,6 +435,9 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
           recordingVideoCodec: normalizeVideoCodec(form.recordingVideoCodec),
           recordingMode: form.recordingMode,
           recordingObjectClasses: form.recordingObjectClasses,
+          motionSensitivity: form.motionSensitivity,
+          aiConfidence: form.aiConfidence,
+          aiSensitivity: form.aiSensitivity,
           retentionDays: Number(form.retentionDays),
           // SEM ISTO o número de dias não tinha efeito nenhum: a câmera
           // continuava seguindo o grupo e o campo mentia o prazo.
@@ -945,6 +954,43 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
                       onChange={(classes) => upd('recordingObjectClasses', classes)}
                       classesLiberadas={classesLiberadas}
                     />
+                  )}
+                  {(form.recordingMode === 'motion' || form.recordingMode === 'object') && (
+                    <div className="space-y-2">
+                      <Label htmlFor="recording-sensitivity">Sensibilidade da detecção</Label>
+                      <Select
+                        value={form.recordingMode === 'motion' ? form.motionSensitivity
+                          : form.aiConfidence === 85 && form.aiSensitivity === 'precise' ? 'baixa'
+                          : form.aiConfidence === 70 && form.aiSensitivity === 'balanced' ? 'media'
+                          : form.aiConfidence === 55 && form.aiSensitivity === 'sensitive' ? 'alta' : 'personalizada'}
+                        onValueChange={(value) => {
+                          if (value === 'personalizada') return;
+                          if (form.recordingMode === 'motion') {
+                            upd('motionSensitivity', value as Form['motionSensitivity']);
+                          } else {
+                            const presets = { baixa: [85, 'precise'], media: [70, 'balanced'], alta: [55, 'sensitive'] } as const;
+                            const [confidence, profile] = presets[value as keyof typeof presets];
+                            setForm(current => current ? { ...current, aiConfidence: confidence, aiSensitivity: profile } : current);
+                            setDirty(true);
+                          }
+                        }}>
+                        <SelectTrigger id="recording-sensitivity"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="baixa">Baixa</SelectItem>
+                          <SelectItem value="media">Média</SelectItem>
+                          <SelectItem value="alta">Alta</SelectItem>
+                          {form.recordingMode === 'object'
+                            && !((form.aiConfidence === 85 && form.aiSensitivity === 'precise')
+                              || (form.aiConfidence === 70 && form.aiSensitivity === 'balanced')
+                              || (form.aiConfidence === 55 && form.aiSensitivity === 'sensitive'))
+                            && <SelectItem value="personalizada">Personalizada ({form.aiConfidence}%)</SelectItem>}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground">
+                        Baixa reduz alertas indesejados. Alta percebe mudanças menores, mas pode gerar mais alertas.
+                        {form.recordingMode === 'motion' && ' As áreas com sensibilidade própria mantêm seu ajuste.'}
+                      </p>
+                    </div>
                   )}
                   <Separator />
                     {/* ── O NÚMERO SÓ VALE SE A CÂMERA NÃO SEGUIR O GRUPO ──────────

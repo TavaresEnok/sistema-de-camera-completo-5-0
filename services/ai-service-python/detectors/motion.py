@@ -70,6 +70,9 @@ class MotionDetector(Detector):
     def __init__(self, cfg: dict | None = None, zones: list | None = None):
         self.frame_width = int(MOTION_PROFILE["analysis_width"])
         self.frame_height = int(MOTION_PROFILE["analysis_height"])
+        self._default_sensitivity = _NIVEL_POR_NOME.get(
+            str((cfg or {}).get("sensitivity", "media")).strip().lower(), _NIVEL_PADRAO
+        )
         # Máscara de zonas (0/255) na resolução de ANÁLISE. None = câmera inteira.
         self._zones = zones or []
         self._zone_mask = self._build_zone_mask(self._zones)
@@ -186,24 +189,24 @@ class MotionDetector(Detector):
         Retorna None quando toda a área está no nível padrão — assim quem não
         usa o recurso não paga nada (nem memória, nem a busca por componente).
         """
-        if not zones:
+        if not zones and self._default_sensitivity == _NIVEL_PADRAO:
             return None
         try:
-            padrao = _NIVEL_PADRAO
+            padrao = self._default_sensitivity
             mapa = np.full((self.frame_height, self.frame_width), padrao, dtype=np.uint8)
-            algum = False
-            for zone in zones:
+            algum = padrao != _NIVEL_PADRAO
+            for zone in zones or []:
                 if str(zone.get("kind", "exclude")) not in ("include", "exclude"):
                     continue
                 nivel = _NIVEL_POR_NOME.get(str(zone.get("sensitivity", "")).strip().lower())
-                if nivel is None or nivel == padrao:
+                if nivel is None:
                     continue
                 poly = self._zona_para_poligono(zone)
                 if poly is None:
                     continue
                 cv2.fillPoly(mapa, [poly], int(nivel))
                 algum = True
-            return mapa if algum else None
+            return mapa if algum and np.any(mapa != _NIVEL_PADRAO) else None
         except Exception:
             return None  # sensibilidade malformada nunca pode cegar a câmera
 
