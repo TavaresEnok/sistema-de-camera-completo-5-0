@@ -92,7 +92,8 @@ def build(args):
                   'databaseSchemaHash':database_schema_hash(root/'apps/api/prisma'),'distributionApproval':args.distribution_approval,'images':image_ids,'files':files}
         if args.reviewed_motion_schema:
             migration=root/'apps/api/prisma/migrations/20261006190000_camera_motion_sensitivity/migration.sql'
-            if migration.read_text().strip() != 'ALTER TABLE "Camera" ADD COLUMN "motionSensitivity" TEXT NOT NULL DEFAULT \'media\';':
+            statement='\n'.join(line for line in migration.read_text().splitlines() if not line.strip().startswith('--')).strip()
+            if statement != 'ALTER TABLE "Camera" ADD COLUMN "motionSensitivity" TEXT NOT NULL DEFAULT \'media\';':
                 raise ValueError('Reviewed additive migration changed')
             manifest['reviewedSchemaTransition']={'from':database_schema_hash(root/'apps/api/prisma',True),
                 'migration':'20261006190000_camera_motion_sensitivity','kind':'additive'}
