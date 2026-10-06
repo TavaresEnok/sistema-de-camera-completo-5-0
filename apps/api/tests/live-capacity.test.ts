@@ -82,6 +82,7 @@ test('a API propaga capacidade como 503 explícito para câmeras pull e push', a
       buildPublicUrls: () => ({}), isEnabled: () => true, markGridViewed() {},
       ensurePathForCamera: async () => ({ pathName: 'cam_grid' }),
       assertDeliveryCapacity: async () => { throw new LiveCapacityException(); },
+      isOptionalLightGridPath: () => false,
     };
     await assert.rejects(c.getDeliveryUrls({ id: 'user' }, 'cam', 'grid', {}), LiveCapacityException);
   }

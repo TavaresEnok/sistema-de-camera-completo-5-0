@@ -48,7 +48,10 @@ def validate(args):
             'MEDIAMTX_API_USER':'fixture-media','RECORDING_AUTO_START_ENABLED':'false'})
         (infra/'.env').write_text('\n'.join(k+'='+v for k,v in environment.items())+'\n');os.chmod(infra/'.env',0o600)
         for name in ['storage','backups/postgres','apk','ai-models','license']:(infra/name).mkdir(parents=True,exist_ok=True)
+        # Match the installer, including when the vendor runs this lab as root.
+        os.chown(infra/'storage',1000,1000)
         run(['openssl','genpkey','-algorithm','ED25519','-out',str(infra/'license/device.pem')]);os.chmod(infra/'license/device.pem',0o600)
+        os.chown(infra/'license/device.pem',1000,1000)
         (infra/'license/trusted-keys.json').write_bytes((infra/'trusted-license-keys.json').read_bytes())
         api=configuration['services']['api'];api['environment']={x.split('=',1)[0]:x.split('=',1)[1] for x in api['environment']}
         api['environment'].update({'CLOUD_LICENSE_VERIFICATION':'required','CLOUD_DEVICE_KEY_FILE':'/run/drac-license/device.pem','CLOUD_LICENSE_KEYS_FILE':'/run/drac-license/trusted-keys.json'})
@@ -62,10 +65,22 @@ def validate(args):
         configuration['services']['mediamtx']['environment']=[]
         file=infra/'lab-compose.yml';file.write_text(yaml.safe_dump(configuration,sort_keys=False))
         compose=['docker','compose','--project-name',project,'--env-file',str(infra/'.env'),'-f',str(file)]
-        def node(source):return json.loads(run(['docker','exec',project+'-api','node','-e',source]).stdout)
+        def node(source):return json.loads(run(['docker','exec','-i','-w','/app/apps/api',project+'-api','node','-'],input=source).stdout)
         try:
             run(['bash',str(verified/'runtime/scripts/install-ai-models.sh'),str(infra/'ai-models')])
-            run(compose+['up','-d','--no-build','--pull','never','--wait','--wait-timeout','180'])
+            try:
+                run(compose+['up','-d','--no-build','--pull','never','--wait','--wait-timeout','180'])
+            except subprocess.CalledProcessError as error:
+                def redact(message):
+                    for key, value in environment.items():
+                        if value and any(word in key for word in ['PASS','SECRET','TOKEN','KEY','DATABASE_URL']):
+                            message=message.replace(value, '[REDACTED]')
+                    return message
+                print(redact(str(error.stderr)[-3000:]), flush=True)
+                for service in ['api','ai-service','postgres','mediamtx']:
+                    logs=subprocess.run(['docker','logs','--tail','15',project+'-'+service],capture_output=True,text=True)
+                    print(service+': '+redact(logs.stdout+logs.stderr),flush=True)
+                raise
             ready=node('fetch("http://127.0.0.1:3000/health/ready").then(r=>r.json()).then(x=>console.log(JSON.stringify(x)))')
             if not ready.get('ready'):raise ValueError('Fresh package readiness failed')
             actual_schema=run(['docker','exec',project+'-api','node','-e',
@@ -77,7 +92,7 @@ def validate(args):
             if login['status']!=201 or not login['tokenPresent']:raise ValueError('Fresh bootstrap/login failed')
             sensitivity=node('''(async()=>{
                 const {PrismaClient}=require("@prisma/client");const p=new PrismaClient();
-                const camera=await p.camera.create({data:{name:"Sensitivity fixture",ip:"192.0.2.1",username:"fixture",passwordEncrypted:"",enabled:false}});
+                const camera=await p.camera.create({data:{name:"Sensitivity fixture",ip:"0.0.0.0",sourceMode:"rtmp_push",username:"fixture",passwordEncrypted:"",enabled:false}});
                 const response=await fetch("http://127.0.0.1:3000/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},body:''' + json.dumps(json.dumps({'username':admin['username'],'password':admin['password']})) + '''});
                 const token=(await response.json()).accessToken;
                 const headers={"Content-Type":"application/json",Authorization:"Bearer "+token};
@@ -88,6 +103,7 @@ def validate(args):
                 console.log(JSON.stringify({defaultLevel:camera.motionSensitivity,updatedLevel:after.motionSensitivity,confidencePreserved:after.aiConfidence===camera.aiConfidence,updateStatus:update.status,invalidStatus:invalid.status}));
             })().catch(()=>process.exit(1))''')
             if sensitivity['defaultLevel']!='media' or sensitivity['updatedLevel']!='alta' or sensitivity['updateStatus']!=200 or sensitivity['invalidStatus']!=400 or not sensitivity['confidencePreserved']:
+                print(json.dumps({'cameraSensitivityGate':sensitivity}),flush=True)
                 raise ValueError('Camera sensitivity/default/validation/preservation gate failed')
             web=node('fetch("http://web:8080/").then(r=>console.log(JSON.stringify({status:r.status})))')
             publisher=subprocess.Popen(['docker','run','--rm','--name',project+'-publisher','--network',project+'_vms-net','--cpus','1',manifest['images']['api'],

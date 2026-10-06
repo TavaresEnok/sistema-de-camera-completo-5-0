@@ -12,7 +12,9 @@ const fs=require('node:fs');const crypto=require('node:crypto');
     gate:{runtimeFresh:true,signatureVerified:true,dataPreservationReviewed:true,
       reportSha256:crypto.createHash('sha256').update(input.reportText).digest('hex'),em:new Date().toISOString()},
     notas:input.installationId==='vibe'
-      ?'Vibe package migration reviewed: 34 cameras, same schema, existing capacity/media/license configuration preserved; shared package validated in fresh isolated Docker. No physical customer ICE claim.'
+      ?(input.reviewedAdditiveSchemaMigration==='camera_motion_sensitivity_20261006'
+        ?'Vibe reviewed additive migration: camera-level motion sensitivity defaults to medium; camera/user/group preservation verified; bounded optional light grid and operational analysis priority; signed source-free package validated in fresh isolated Docker. No physical customer ICE claim.'
+        :'Vibe package migration reviewed: 34 cameras, same schema, existing capacity/media/license configuration preserved; shared package validated in fresh isolated Docker. No physical customer ICE claim.')
       :'First local runtime pilot: fresh isolated Docker + synthetic RTSP/capture/motion/recording/HLS; not physical customer-camera or ICE validation.'};
   const response=await fetch('http://127.0.0.1:9765/api/admin/installations/'+input.installationId+'/runtime-release',
     {method:'POST',headers:{authorization:'Bearer '+process.env.DRAC_CENTRAL_ADMIN_TOKEN,'Content-Type':'application/json'},body:JSON.stringify(request)});

@@ -16,8 +16,8 @@ function servicoComStubs() {
   svc.cryptoService = { decrypt: () => 'senha-decifrada' };
   svc.commercialPolicy = { getPolicy: async () => ({ aiObjectClasses: [] }) };
   svc.mediamtxProxy = {
-    ensurePathForCamera: async (cameraId: string) => ({
-      pathName: `cam_${cameraId}_grid`,
+    ensurePathForCamera: async (cameraId: string, mode: string) => ({
+      pathName: `cam_${cameraId}_${mode === 'original' ? 'orig' : 'grid'}`,
       sourceVideoCodec: 'h264',
       transcodedForLive: false,
     }),
@@ -48,7 +48,7 @@ test('câmera RTMP é analisada pelo caminho interno do MediaMTX, não pelo ende
 
   assert.match(
     fonte.rtspUrl,
-    /^rtsp:\/\/mediamtx:8554\/cam_cam-rtmp_grid$/,
+    /^rtsp:\/\/mediamtx:8554\/cam_cam-rtmp_orig$/,
     'a análise precisa ler a publicação já recebida, não discar 0.0.0.0',
   );
   assert.equal(fonte.info.sourceKind, 'mediamtx_rtmp_push');

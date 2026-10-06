@@ -40,7 +40,6 @@ def deploy(args):
     with tempfile.TemporaryDirectory(prefix='vibe-signed-sensitivity-') as directory:
         stage = Path(directory)
         manifest = verifier.extract_verified(args.bundle, ROOT / 'infra/release-public.pem', stage / 'verified', report['commit'], state['securityVersion'])
-        migration = stage / 'verified/runtime'
         # The final image is checked for exactly the reviewed additive SQL.
         api = manifest['images']['api']
         backup = ROOT / 'infra/backups/runtime-updates' / manifest['commit']
@@ -64,6 +63,7 @@ def deploy(args):
         command = ['docker', 'compose', '--env-file', str(ROOT / 'infra/.env')]
         for file in files:
             command += ['-f', file]
+        rollback_command = list(command)
         media_before = {name: run(['docker', 'inspect', name, '--format', '{{.Id}}']).stdout.decode().strip()
                         for name in ('vms-mediamtx', 'vms-postgres', 'vms-redis', 'vms-rtmp-ingest')}
         run(['docker', 'load', '-i', str(stage / 'verified/images.tar')])
@@ -76,8 +76,16 @@ def deploy(args):
         override = json.loads(persistent.read_text())
         for service in ('api', 'web', 'ai-service'):
             override['services'][service]['image'] = manifest['images'][service]
-        override['services']['api'].setdefault('environment', {}).update({
-            'DRAC_VERSION': manifest['commit'], 'MEDIAMTX_LIGHT_GRID_ENABLED': 'true', 'MEDIAMTX_MAX_TRANSCODE_POINTS': '24'})
+        override['services']['api'].setdefault('environment', {}).update({'DRAC_VERSION': manifest['commit']})
+        # Keep capacity tuning in a separate deployment overlay: future signed
+        # image updates replace runtime-images.json but discover all overlays.
+        tuning = ROOT / 'infra/docker-compose.live-vibe.json'
+        if tuning.exists():
+            raise ValueError('Existing tuning overlay must be reviewed, not overwritten')
+        tuning.write_text(json.dumps({'services': {'api': {'environment': {
+            'MEDIAMTX_LIGHT_GRID_ENABLED': 'true', 'MEDIAMTX_MAX_TRANSCODE_POINTS': '24'}}}}))
+        os.chmod(tuning,0o600)
+        command += ['-f', str(tuning)]
         persistent.write_text(json.dumps(override))
         os.chmod(persistent, 0o600)
         try:
@@ -90,7 +98,7 @@ def deploy(args):
                     raise ValueError('Protected ingest/database service changed')
         except Exception:
             shutil.copyfile(backup / 'images.before.json', persistent)
-            run(command + ['up', '-d', '--no-build', '--pull', 'never', '--no-deps', '--wait', '--wait-timeout', '180', 'api', 'web', 'ai-service'])
+            run(rollback_command + ['up', '-d', '--no-build', '--pull', 'never', '--no-deps', '--wait', '--wait-timeout', '180', 'api', 'web', 'ai-service'])
             raise ValueError('Previous application images restored; database was NOT rolled back')
         (ROOT / '.runtime-release.json').write_text(json.dumps(manifest))
         os.chmod(ROOT / '.runtime-release.json', 0o600)
