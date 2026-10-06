@@ -36,6 +36,7 @@ function rodaObjetoDe(info: Record<string, unknown>): boolean {
 }
 import { envNumber } from '../common/config/env-number.helper';
 import { modoArmado } from '../cameras/helpers/gatilho-de-gravacao.helper';
+import { MOTION_NOTICE_DEMAND, needsSystemMotion } from '../cameras/helpers/motion-notice.helper';
 import { isPushSourced } from '../cameras/helpers/rtmp-ingest.helper';
 import { decidirSincronizacaoDeIa } from './helpers/decisao-de-sincronizacao.helper';
 
@@ -254,7 +255,7 @@ export class AiManagerService implements OnModuleInit {
     // prisma nem política — a decisão precisa sobreviver a isso.
     const camerasMarcadas = await Promise.resolve()
       .then(() => this.prisma?.camera?.count?.({
-        where: { enabled: true, recordingMode: 'motion', motionTrigger: 'SYSTEM' },
+        where: { enabled: true, ...MOTION_NOTICE_DEMAND },
       }) ?? 0)
       .catch(() => 0);
     const movimentoPermitido = await Promise.resolve()
@@ -321,8 +322,7 @@ export class AiManagerService implements OnModuleInit {
             // Quando a câmera volta, este mesmo ciclo a religa em até 5 minutos: não
             // é desistir dela, é parar de bater na porta fechada.
             where: {
-              recordingMode: 'motion',
-              motionTrigger: 'SYSTEM',
+              ...MOTION_NOTICE_DEMAND,
               enabled: true,
               status: { not: CameraStatus.OFFLINE },
             },
@@ -385,6 +385,7 @@ export class AiManagerService implements OnModuleInit {
                   enabled: { not: false },
                   aiEnabled: { not: false },
                   status: { not: CameraStatus.OFFLINE },
+                  ...MOTION_NOTICE_DEMAND,
                 },
               select: { id: true },
             })).map((cam) => cam.id),
@@ -517,14 +518,15 @@ export class AiManagerService implements OnModuleInit {
       const enabledCameras = cameras.filter((cam: any) => {
         if (cam.enabled === false) return false; // câmera desativada no sistema
         if (cam.aiEnabled === false || !isCameraAllowedByAiEnv(cam)) return false;
-        // No modo 'motion' a detecção existe para servir à GRAVAÇÃO por
-        // movimento: analisa APENAS as câmeras armadas (recordingMode='motion')
+        // No modo 'motion', analisa câmeras armadas OU com aviso de movimento.
+        // O aviso é independente da gravação e reaproveita este processador.
+        // Câmeras armadas (recordingMode='motion')
         // E que dependem da NOSSA detecção (motionTrigger='SYSTEM'). Câmeras com
         // detecção própria (motionTrigger='CAMERA') usam o evento ONVIF e não
         // gastam nossa CPU. Assim nada é analisado sem necessidade. Nos modos de
         // objetos (general/face) segue analisando todas as câmeras habilitadas.
         if (settings.mode === 'motion') {
-          return modoArmado(cam.recordingMode) && cam.motionTrigger === 'SYSTEM';
+          return needsSystemMotion(cam);
         }
         return true;
       });
@@ -595,15 +597,15 @@ export class AiManagerService implements OnModuleInit {
     if (!options?.simulationMode && (cam.aiEnabled === false || !isCameraAllowedByAiEnv(cam))) {
       return { status: 'camera_disabled', cameraId };
     }
-    // ABRIR O LIVE não pode criar processador PERSISTENTE em câmera que não
-    // grava por movimento. O processador sobrevive ao fechar do live (só a
+    // A análise persistente exige gravação armada OU aviso explicitamente ligado.
+    // O processador sobrevive ao fechar do live (só a
     // lease morre) e ao restart da API (mora no ai-service) — foi exatamente
     // assim que produção acumulou 9 processadores com UMA câmera armada:
     // cada tile aberto semeava um MOG2 eterno. No modo movimento, IA de
     // câmera desarmada não arma gravação nenhuma e não desenha nada (o
     // overlay de movimento foi removido de vez): é só custo. Objeto/face
     // (modo avançado) seguem podendo nascer do live — lá o overlay é real.
-    if (options?.liveAutoStart && !options.simulationMode && settings.mode === 'motion' && !modoArmado(cam.recordingMode)) {
+    if (!options?.simulationMode && settings.mode === 'motion' && !options?.allowCameraTrigger && !needsSystemMotion(cam)) {
       return { status: 'disabled', cameraId, reason: 'not_armed' };
     }
     // No modo 'motion', câmeras com detecção própria (motionTrigger='CAMERA')
@@ -625,7 +627,7 @@ export class AiManagerService implements OnModuleInit {
       modoGlobal: settings.mode,
       motionTrigger: (cam as any).motionTrigger,
       rodaObjeto: rodaObjetoDe(source.info),
-      permitirGatilhoDaCamera: options?.allowCameraTrigger || Boolean(options?.simulationMode),
+      permitirGatilhoDaCamera: options?.allowCameraTrigger || Boolean(options?.simulationMode) || cam.motionNoticeEnabled,
     })) {
       return { status: 'camera_self_detection', cameraId };
     }

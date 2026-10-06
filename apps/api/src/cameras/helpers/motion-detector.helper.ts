@@ -24,17 +24,18 @@ export type EstadoDeteccao = {
   recordingMode: string | null | undefined;
   motionTrigger: string | null | undefined;
   aiEnabled: boolean | null | undefined;
+  motionNoticeEnabled?: boolean | null;
 };
 
 /**
  * O detector é OBRIGATÓRIO para esta combinação?
  *
- * Só quando a gravação é por movimento E quem detecta é o sistema. Gravação
+ * Quando o aviso independente está ligado OU a gravação depende do sistema. Gravação
  * contínua não depende de detector, e `CAMERA` usa o da própria câmera — forçar
  * o MOG2 nesses casos gastaria CPU sem nada em troca.
  */
 export function detectorObrigatorio(estado: EstadoDeteccao): boolean {
-  return modoArmado(estado.recordingMode) && estado.motionTrigger === 'SYSTEM';
+  return estado.motionNoticeEnabled === true || (modoArmado(estado.recordingMode) && estado.motionTrigger === 'SYSTEM');
 }
 
 /**

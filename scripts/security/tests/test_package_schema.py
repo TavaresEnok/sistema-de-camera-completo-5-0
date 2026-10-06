@@ -8,6 +8,18 @@ spec=importlib.util.spec_from_file_location('package_builder',Path(__file__).par
 builder=importlib.util.module_from_spec(spec);spec.loader.exec_module(builder)
 
 class PackageSchemaTest(unittest.TestCase):
+    def test_notice_transition_changes_only_its_field_and_additive_migration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);(root/'migrations/001').mkdir(parents=True)
+            (root/'migrations/001/migration.sql').write_text('existing migration')
+            (root/'schema.prisma').write_text('model Camera {\n}\n')
+            old=builder.database_schema_hash(root)
+            (root/'schema.prisma').write_text('model Camera {\n  motionNoticeEnabled    Boolean      @default(false)\n}\n')
+            (root/'migrations/20261006220000_camera_motion_notice').mkdir()
+            (root/'migrations/20261006220000_camera_motion_notice/migration.sql').write_text('add notice field')
+            self.assertEqual(builder.database_schema_hash(root,previous_notice_schema=True),old)
+            self.assertNotEqual(builder.database_schema_hash(root),old)
+
     def test_reviewed_transition_changes_only_one_field_and_its_additive_migration(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)

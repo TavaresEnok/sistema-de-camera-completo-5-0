@@ -209,6 +209,7 @@ function WizardModal({
     recordingMode: 'continuous' | 'motion' | 'object' | 'schedule' | 'manual';
     /** Vazio = pessoa + veículos (o padrão). Só vale no modo objeto. */
     recordingObjectClasses?: string[];
+    motionNoticeEnabled?: boolean;
     retentionDays: number;
     retentionFollowsGroup?: boolean;
     preferredRtspTransport: 'tcp' | 'udp';
@@ -363,6 +364,7 @@ function WizardModal({
     recordingFps: '',
     recordingBitrateKbps: '',
     audioEnabled: true,
+    motionNoticeEnabled: false,
   });
   const [isSaving, setIsSaving] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
@@ -494,6 +496,7 @@ function WizardModal({
         recordingFps,
         recordingBitrateKbps,
         audioEnabled: form.audioEnabled,
+        motionNoticeEnabled: form.motionNoticeEnabled,
       });
       onClose();
     } catch (error) {
@@ -802,6 +805,10 @@ function WizardModal({
           )}
           {step === 2 && (
             <div className="space-y-3">
+              <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border p-3">
+                <input type="checkbox" checked={form.motionNoticeEnabled} onChange={e => updateField('motionNoticeEnabled', e.target.checked)} className="mt-1" />
+                <span><span className="block text-xs font-semibold">Avisar quando houver movimento</span><span className="block text-xs text-muted-foreground">Mostra um aviso discreto na tela, mesmo em modo manual. Não inicia gravação.</span></span>
+              </label>
               <div className="rounded-lg border border-border bg-background p-3 space-y-3">
                 <div className="text-xs font-semibold">Gravação</div>
                 <div className="grid grid-cols-2 gap-3">
@@ -1211,6 +1218,7 @@ export default function CamerasPage() {
     recordingMode: 'continuous' | 'motion' | 'object' | 'schedule' | 'manual';
     /** Vazio = pessoa + veículos (o padrão). Só vale no modo objeto. */
     recordingObjectClasses?: string[];
+    motionNoticeEnabled?: boolean;
     retentionDays: number;
     preferredRtspTransport: 'tcp' | 'udp';
     preferredLiveProtocol: PreferredLiveProtocol;

@@ -374,7 +374,9 @@ export class CamerasService implements OnApplicationBootstrap {
           recordingMode: dto.recordingMode ?? 'continuous',
           motionTrigger: dto.motionTrigger ?? (dto.hasEdgeAi ? 'CAMERA' : 'SYSTEM'),
           aiEnabled: dto.aiEnabled ?? true,
+          motionNoticeEnabled: dto.motionNoticeEnabled,
         }),
+        motionNoticeEnabled: dto.motionNoticeEnabled ?? false,
         aiObjectClasses: dto.aiObjectClasses ?? [],
         aiSensitivity: dto.aiSensitivity ?? 'balanced',
         aiConfidence: dto.aiConfidence ?? 70,
@@ -800,7 +802,9 @@ export class CamerasService implements OnApplicationBootstrap {
           recordingMode: dto.recordingMode ?? existing.recordingMode,
           motionTrigger: dto.motionTrigger ?? existing.motionTrigger,
           aiEnabled: dto.aiEnabled,
+          motionNoticeEnabled: dto.motionNoticeEnabled ?? existing.motionNoticeEnabled,
         }),
+        motionNoticeEnabled: dto.motionNoticeEnabled,
         motionTrigger: migrarGatilhoParaZonas ? 'SYSTEM' : (dto.motionTrigger ?? existing.motionTrigger),
         // A migração de gatilho (comentário acima) também ARMA a análise: sem
         // aiEnabled o startCamera devolve 'camera_disabled' e o detector com
@@ -980,6 +984,25 @@ export class CamerasService implements OnApplicationBootstrap {
       occurredAt: event.occurredAt,
     });
     return event;
+  }
+
+  async listMotionNotices(accessibleCameraIds: string[], since?: string) {
+    const now = new Date();
+    const parsed = since ? new Date(since).getTime() : NaN;
+    // First request establishes a server-time baseline, never replays history.
+    if (!Number.isFinite(parsed) || parsed > now.getTime()) return { items: [], cursor: now.toISOString() };
+    const from = new Date(Math.max(parsed - 1000, now.getTime() - 30_000));
+    const events = accessibleCameraIds.length ? await this.prisma.cameraEvent.findMany({
+      where: {
+        cameraId: { in: accessibleCameraIds }, type: 'MOTION_DETECTED',
+        createdAt: { gte: from, lte: now },
+        occurredAt: { gte: new Date(now.getTime() - 30_000) },
+        camera: { enabled: true, motionNoticeEnabled: true },
+      },
+      select: { id: true, cameraId: true, occurredAt: true, camera: { select: { name: true } } },
+      orderBy: { occurredAt: 'desc' }, take: 50,
+    }) : [];
+    return { items: events.map(e => ({ id: e.id, cameraId: e.cameraId, cameraName: e.camera.name, occurredAt: e.occurredAt })), cursor: now.toISOString() };
   }
 
   async listLatestDetections(cameraId: string, seconds = 8, limit = 12) {
@@ -1992,7 +2015,9 @@ export class CamerasService implements OnApplicationBootstrap {
           recordingMode: 'manual',
           motionTrigger: dto.motionTrigger ?? (dto.hasEdgeAi ? 'CAMERA' : 'SYSTEM'),
           aiEnabled: dto.aiEnabled ?? true,
+          motionNoticeEnabled: dto.motionNoticeEnabled,
         }),
+        motionNoticeEnabled: dto.motionNoticeEnabled ?? false,
         alarmsEnabled: dto.alarmsEnabled ?? true,
         hasEdgeAi: dto.hasEdgeAi ?? false,
         motionTrigger: dto.motionTrigger ?? (dto.hasEdgeAi ? 'CAMERA' : 'SYSTEM'),

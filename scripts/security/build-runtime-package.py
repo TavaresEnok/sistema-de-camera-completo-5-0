@@ -32,17 +32,20 @@ def sha(file):
     return value.hexdigest()
 
 
-def database_schema_hash(prisma, previous_motion_schema=False):
+def database_schema_hash(prisma, previous_motion_schema=False, previous_notice_schema=False):
     # Match exactly what the API image ships: schema + applied migrations.
     # Optional SQL tools (e.g. rls/) are not runtime schema or migrations.
     digest=hashlib.sha256()
     files=[prisma/'schema.prisma',*(prisma/'migrations').rglob('*.sql')]
     for file in sorted(files):
         if previous_motion_schema and file.relative_to(prisma).as_posix() == 'migrations/20261006190000_camera_motion_sensitivity/migration.sql':continue
+        if previous_notice_schema and file.relative_to(prisma).as_posix() == 'migrations/20261006220000_camera_motion_notice/migration.sql':continue
         digest.update(file.relative_to(prisma).as_posix().encode())
         content=file.read_bytes()
         if previous_motion_schema and file.name=='schema.prisma':
             content=content.replace(b'  motionSensitivity      String       @default("media")\n',b'')
+        if previous_notice_schema and file.name=='schema.prisma':
+            content=content.replace(b'  motionNoticeEnabled    Boolean      @default(false)\n',b'')
         digest.update(content)
     return digest.hexdigest()
 
@@ -97,6 +100,13 @@ def build(args):
                 raise ValueError('Reviewed additive migration changed')
             manifest['reviewedSchemaTransition']={'from':database_schema_hash(root/'apps/api/prisma',True),
                 'migration':'20261006190000_camera_motion_sensitivity','kind':'additive'}
+        if getattr(args,'reviewed_motion_notice_schema',False):
+            if args.reviewed_motion_schema:raise ValueError('Only one reviewed transition may be approved')
+            migration=root/'apps/api/prisma/migrations/20261006220000_camera_motion_notice/migration.sql'
+            if migration.read_text().strip() != 'ALTER TABLE "Camera" ADD COLUMN "motionNoticeEnabled" BOOLEAN NOT NULL DEFAULT false;':
+                raise ValueError('Reviewed motion notice migration changed')
+            manifest['reviewedSchemaTransition']={'from':database_schema_hash(root/'apps/api/prisma',previous_notice_schema=True),
+                'migration':'20261006220000_camera_motion_notice','kind':'additive'}
         raw=json.dumps(manifest,sort_keys=True,separators=(',',':')).encode()
         (stage/'manifest.json').write_bytes(raw)
         message=stage/'message';message.write_bytes(b'drac-runtime-manifest-v1\n'+raw)
@@ -126,4 +136,5 @@ if __name__=='__main__':
     parser.add_argument('--license-keys',type=Path,required=True);parser.add_argument('--images',type=Path,required=True)
     parser.add_argument('--distribution-approval',required=True)
     parser.add_argument('--reviewed-motion-schema',action='store_true')
+    parser.add_argument('--reviewed-motion-notice-schema',action='store_true')
     build(parser.parse_args())

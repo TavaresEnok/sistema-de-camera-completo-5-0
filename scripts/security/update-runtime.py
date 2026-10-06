@@ -62,10 +62,12 @@ def run(args):
         manifest=loader.extract_verified(bundle,root/'infra/release-public.pem',stage/'verified',commit,state.get('securityVersion',1))
         if not state.get('databaseSchemaHash') or manifest.get('databaseSchemaHash')!=state['databaseSchemaHash']:
             transition=manifest.get('reviewedSchemaTransition') or {}
-            if not (getattr(args,'approve_motion_schema',False)
+            reviewed_migration = ('20261006220000_camera_motion_notice' if getattr(args,'approve_motion_notice_schema',False)
+                                 else '20261006190000_camera_motion_sensitivity' if getattr(args,'approve_motion_schema',False) else None)
+            if not (reviewed_migration
                     and transition.get('from')==state.get('databaseSchemaHash')
                     and transition.get('kind')=='additive'
-                    and transition.get('migration')=='20261006190000_camera_motion_sensitivity'):
+                    and transition.get('migration')==reviewed_migration):
                 raise ValueError('Schema change requires an approved database migration')
         metadata=json.loads(subprocess.run(['docker','inspect','vms-api'],check=True,capture_output=True,text=True).stdout)[0]
         compose_files=[]
@@ -125,6 +127,7 @@ if __name__=='__main__':
     parser=argparse.ArgumentParser();parser.add_argument('root',type=Path)
     parser.add_argument('--commit');parser.add_argument('--conferir',action='store_true')
     parser.add_argument('--approve-motion-schema',action='store_true')
+    parser.add_argument('--approve-motion-notice-schema',action='store_true')
     # Accepted legacy option, but unsafe suppression of rollback is not honored.
     parser.add_argument('--sem-volta',action='store_true')
     try:run(parser.parse_args())

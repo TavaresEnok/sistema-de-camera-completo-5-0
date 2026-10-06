@@ -106,9 +106,9 @@ class LifecycleTests(unittest.TestCase):
         (root/'infra/license-state-preserved').write_text('existing device and license remain')
         return root
 
-    def update(self,fail=False,schema_change=False,approved_transition=False):
+    def update(self,fail=False,schema_change=False,approved_transition=False,notice=False):
         if approved_transition:
-            self.schema_transition={'from':'e'*64,'kind':'additive','migration':'20261006190000_camera_motion_sensitivity'}
+            self.schema_transition={'from':'e'*64,'kind':'additive','migration':'20261006220000_camera_motion_notice' if notice else '20261006190000_camera_motion_sensitivity'}
             self.archive,self.manifest=self.make_archive()
             self.grant.update(size=len(self.archive),sha256=hashlib.sha256(self.archive).hexdigest())
         root=self.installation();old=(root/'.runtime-release.json').read_bytes()
@@ -129,7 +129,7 @@ class LifecycleTests(unittest.TestCase):
         with patch('urllib.request.build_opener',return_value=self.opener()),patch('subprocess.run',side_effect=execute),contextlib.redirect_stdout(io.StringIO()):
             if fail or (schema_change and not approved_transition):
                 with self.assertRaises(ValueError):updater.run(argparse.Namespace(root=root,commit=self.commit,conferir=False))
-            else:updater.run(argparse.Namespace(root=root,commit=self.commit,conferir=False,approve_motion_schema=approved_transition))
+            else:updater.run(argparse.Namespace(root=root,commit=self.commit,conferir=False,approve_motion_schema=approved_transition and not notice,approve_motion_notice_schema=approved_transition and notice))
         self.assertEqual((root/'infra/license-state-preserved').read_text(),'existing device and license remain')
         compose=[c for c in self.calls if 'compose' in c and 'up' in c]
         if schema_change and not approved_transition:self.assertEqual(self.calls,[]);return
@@ -145,6 +145,7 @@ class LifecycleTests(unittest.TestCase):
             self.assertTrue(all(v['image']=='sha256:'+'f'*64 for v in images['services'].values()))
 
     def test_update_preserves_overlays_and_does_not_recreate_video_ingress(self):self.update()
+    def test_signed_reviewed_notice_transition_with_explicit_approval(self):self.update(schema_change=True,approved_transition=True,notice=True)
     def test_failed_update_restores_images_not_license_database(self):self.update(fail=True)
     def test_schema_change_refused_before_docker_or_backup(self):self.update(schema_change=True)
     def test_explicit_approved_signed_additive_transition_keeps_backup_and_rollback(self):self.update(schema_change=True,approved_transition=True)

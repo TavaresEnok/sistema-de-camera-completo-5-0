@@ -22,7 +22,7 @@ def run(args):
         result = subprocess.run(['docker', *cmd], input=input, text=True, capture_output=True, timeout=timeout)
         if result.returncode:
             # Docker stderr can contain environment values: never echo it.
-            safe_error = re.search(r'(?m)^(bootstrap_login_failed|urls_failed_[a-z0-9_-]+|hls_failed_[a-z0-9_-]+|media_not_advancing_[a-z0-9_-]+|encode_policy_wrong_[a-z0-9_-]+|bad_audio_not_isolated|healthy_audio_not_preserved)\s*$', result.stderr)
+            safe_error = re.search(r'(?m)^(bootstrap_login_failed|urls_failed_[a-z0-9_-]+|hls_failed_[a-z0-9_-]+|media_not_advancing_[a-z0-9_-]+|encode_policy_wrong_[a-z0-9_-]+|bad_audio_not_isolated|healthy_audio_not_preserved|notice_[a-z0-9_-]+|real_motion_did_not_generate_notice)\s*$', result.stderr)
             if safe_error: print('fixture_failure: ' + safe_error.group(1), flush=True)
             raise RuntimeError('lab_operation_failed_' + str(result.returncode) + '_' + cmd[0])
         return result.stdout
@@ -122,7 +122,32 @@ for(const name of ['healthy','bframes','bad-audio']){
   cases.push({name,mode,path,videoEncoded:u.liveDiagnostics.videoEncoded,audioAvailable:u.liveDiagnostics.audioAvailable,startMs:Date.now()-started,samples});
  }
 }
-console.log(JSON.stringify({bootstrapLogin:{status:l.status,tokenPresent:!!login.accessToken},cases,hls:{status:200}}));
+const auth={Authorization:'Bearer '+login.accessToken,'Content-Type':'application/json'};
+const target=cameras.find(c=>c.name==='healthy');
+const baseline=await(await fetch(root+'/cameras/motion-notices',{headers:auth})).json();
+if(baseline.items.length)throw Error('notice_replayed_history');
+const changed=await fetch(root+'/cameras/'+target.id,{method:'PATCH',headers:auth,body:JSON.stringify({recordingMode:'manual',motionNoticeEnabled:true})});
+const saved=await changed.json();
+if(!changed.ok||saved.recordingMode!=='manual'||saved.motionNoticeEnabled!==true||saved.aiEnabled!==true)throw Error('notice_manual_configuration_failed');
+let notice=null;let cursor=baseline.cursor;
+for(let i=0;i<30;i++){
+ await new Promise(r=>setTimeout(r,2000));
+ const response=await fetch(root+'/cameras/motion-notices?since='+encodeURIComponent(cursor),{headers:auth});
+ const feed=await response.json();if(!response.ok)throw Error('notice_feed_failed');cursor=feed.cursor;
+ notice=feed.items.find(e=>e.cameraId===target.id);if(notice)break;
+}
+if(!notice)throw Error('real_motion_did_not_generate_notice');
+const state=await(await fetch(root+'/cameras/'+target.id,{headers:auth})).json();
+if(state.recordingMode!=='manual'||state.recordingEnabled!==false)throw Error('notice_changed_recording');
+const rec=await fetch(root+'/recordings?cameraId='+target.id,{headers:auth});if(!rec.ok)throw Error('notice_recordings_query_failed');
+const recordings=await rec.json();
+if((Array.isArray(recordings)?recordings:recordings.items||[]).length)throw Error('notice_started_recording');
+const unauth=await fetch(root+'/cameras/motion-notices');if(unauth.status!==401)throw Error('notice_requires_authentication');
+const stopped=await fetch(root+'/cameras/'+target.id,{method:'PATCH',headers:auth,body:JSON.stringify({motionNoticeEnabled:false})});
+if(!stopped.ok)throw Error('notice_disable_failed');
+const after=await(await fetch('http://ai-service:8000/health')).json();
+if(after.active_processors?.includes(target.id))throw Error('notice_detector_not_stopped');
+console.log(JSON.stringify({bootstrapLogin:{status:l.status,tokenPresent:!!login.accessToken},cases,hls:{status:200},motionNotices:{realMotionEvent:true,manualPreserved:true,recordingNotStarted:true,authenticationRequired:true,disabledDetectorStopped:true}}));
 })().catch(e=>{console.error(e.message);process.exitCode=1});
 '''
         report.update(json.loads(node(script, input=json.dumps({'password': password}))))

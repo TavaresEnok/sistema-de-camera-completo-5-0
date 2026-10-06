@@ -162,6 +162,10 @@ export class CreateCameraDto {
   motionSensitivity?: 'baixa' | 'media' | 'alta';
 
   @IsOptional()
+  @IsBoolean()
+  motionNoticeEnabled?: boolean;
+
+  @IsOptional()
   @IsInt()
   @Min(1)
   retentionDays?: number;

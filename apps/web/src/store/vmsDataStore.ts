@@ -52,6 +52,7 @@ export interface Camera {
   isOnline: boolean;
   signalStrength: number;
   recordingMode: 'continuous' | 'motion' | 'object' | 'schedule' | 'manual';
+  motionNoticeEnabled?: boolean;
   retentionDays: number;
   effectiveRetentionDays: number;
   /** Segue a política do grupo? Ausente em API antiga = segue (o padrão). */
@@ -356,6 +357,7 @@ function mapCameraItems(
       storageLocalBytes: Number(camera.storageLocalBytes ?? 0),
       storageCloudBytes: Number(camera.storageCloudBytes ?? 0),
       lastEvent: lastEvent ?? previous?.lastEvent,
+      motionNoticeEnabled: camera.motionNoticeEnabled === true,
       // PTZ vem SONDADO da API (Camera.ptzCapable), não deduzido aqui.
       //
       // Isto era `Boolean(camera.onvifPath || camera.onvifProfileToken)`: ou

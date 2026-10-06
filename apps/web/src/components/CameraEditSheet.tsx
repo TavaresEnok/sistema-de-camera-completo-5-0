@@ -56,6 +56,7 @@ type Form = EquipmentForm & {
   recordingMode: 'continuous' | 'motion' | 'object' | 'schedule' | 'manual';
   recordingObjectClasses: string[];
   motionSensitivity: 'baixa' | 'media' | 'alta';
+  motionNoticeEnabled: boolean;
   aiConfidence: number;
   aiSensitivity: 'sensitive' | 'balanced' | 'precise';
   retentionDays: string;
@@ -221,6 +222,7 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
           recordingMode: (data.recordingMode ?? (data.recordingEnabled ? 'continuous' : 'manual')) as Form['recordingMode'],
           recordingObjectClasses: Array.isArray(data.recordingObjectClasses) ? data.recordingObjectClasses : [],
           motionSensitivity: data.motionSensitivity ?? 'media',
+          motionNoticeEnabled: data.motionNoticeEnabled === true,
           aiConfidence: data.aiConfidence ?? 70,
           aiSensitivity: data.aiSensitivity ?? 'balanced',
           retentionDays: String(data.retentionDays ?? 7),
@@ -436,6 +438,7 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
           recordingMode: form.recordingMode,
           recordingObjectClasses: form.recordingObjectClasses,
           motionSensitivity: form.motionSensitivity,
+          motionNoticeEnabled: form.motionNoticeEnabled,
           aiConfidence: form.aiConfidence,
           aiSensitivity: form.aiSensitivity,
           retentionDays: Number(form.retentionDays),
@@ -451,12 +454,17 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
       const changes = Object.fromEntries(Object.entries(payload).filter(([key]) =>
         JSON.stringify(form[key as keyof Form]) !== JSON.stringify(initialForm.current?.[key as keyof Form])));
       if (!Object.keys(changes).length) { onClose(); return; }
-      await axios.patch(
+      const { data: saved } = await axios.patch(
         `${getApiBaseUrl()}/cameras/${camera.id}`,
         changes,
         { headers: { Authorization: `Bearer ${accessToken}` } },
       );
       await loadData();
+      if (changes.motionNoticeEnabled === true && ['failed', 'disabled', 'camera_disabled'].includes(saved.aiApplyStatus)) {
+        toast({ title: 'Opção salva', description: 'O aviso ainda não está ativo. Verifique se a detecção de movimento está disponível.', variant: 'destructive' });
+        onClose();
+        return;
+      }
       toast({ title: 'Câmera atualizada', description: form.name });
       onClose();
     } catch (err) {
@@ -561,6 +569,7 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
                   <FormField label="Nome da câmera" required>
                     <Input value={form.name} onChange={(e) => upd('name', e.target.value)} className="text-sm" />
                   </FormField>
+                  <ToggleRow label="Avisar quando houver movimento" desc="Mostra um aviso discreto na tela, mesmo com gravação manual. Não inicia gravação nem envia mensagens." value={form.motionNoticeEnabled} onChange={v => upd('motionNoticeEnabled', v)} />
                   <div className="space-y-3 rounded-lg border border-border bg-background/55 p-3">
                     <div className="flex items-center gap-2">
                       <MapPin className="h-4 w-4 text-primary" />
@@ -955,17 +964,17 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
                       classesLiberadas={classesLiberadas}
                     />
                   )}
-                  {(form.recordingMode === 'motion' || form.recordingMode === 'object') && (
+                  {(form.recordingMode === 'motion' || form.recordingMode === 'object' || form.motionNoticeEnabled) && (
                     <div className="space-y-2">
                       <Label htmlFor="recording-sensitivity">Sensibilidade da detecção</Label>
                       <Select
-                        value={form.recordingMode === 'motion' ? form.motionSensitivity
+                        value={form.recordingMode !== 'object' ? form.motionSensitivity
                           : form.aiConfidence === 85 && form.aiSensitivity === 'precise' ? 'baixa'
                           : form.aiConfidence === 70 && form.aiSensitivity === 'balanced' ? 'media'
                           : form.aiConfidence === 55 && form.aiSensitivity === 'sensitive' ? 'alta' : 'personalizada'}
                         onValueChange={(value) => {
                           if (value === 'personalizada') return;
-                          if (form.recordingMode === 'motion') {
+                          if (form.recordingMode !== 'object') {
                             upd('motionSensitivity', value as Form['motionSensitivity']);
                           } else {
                             const presets = { baixa: [85, 'precise'], media: [70, 'balanced'], alta: [55, 'sensitive'] } as const;

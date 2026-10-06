@@ -390,15 +390,22 @@ test('liveAutoStart: modo AVANÇADO (objeto/face licenciado) segue permitido pel
   assert.deepEqual(calls, ['start:cam-1:general']);
 });
 
-test('start SEM origem live (watchdog/boot) não é afetado pelo gate', async () => {
+test('boot/watchdog não criam detector de câmera manual sem aviso solicitado', async () => {
   const { mgr, calls } = managerFake({
     mode: 'motion',
     allowed: { aiMotion: true, aiAdvanced: false },
     camera: { recordingMode: 'manual' },
   });
-  // O watchdog/boot decide por conta própria QUEM ligar; o gate é específico
-  // do caminho "espectador abriu um tile".
   await mgr.startCamera('cam-1');
+  assert.deepEqual(calls, []);
+});
+
+test('câmera manual com aviso explícito ganha um detector, inclusive pelo live', async () => {
+  const { mgr, calls } = managerFake({
+    mode: 'motion', allowed: { aiMotion: true, aiAdvanced: false },
+    camera: { recordingMode: 'manual', motionNoticeEnabled: true },
+  });
+  await mgr.startCamera('cam-1', { liveAutoStart: true });
   assert.deepEqual(calls, ['start:cam-1:motion']);
 });
 

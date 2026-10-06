@@ -53,6 +53,7 @@ export function AddPushCameraDialog({
 }) {
   const accessToken = useAuthStore((s) => s.accessToken);
   const [nome, setNome] = useState('');
+  const [motionNoticeEnabled, setMotionNoticeEnabled] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [copiado, setCopiado] = useState<string | null>(null);
   const [alvo, setAlvo] = useState<RtmpTarget | null>(null);
@@ -83,6 +84,7 @@ export function AddPushCameraDialog({
   }, [open, alvo, cameraId, accessToken]);
 
   const fechar = () => {
+    setMotionNoticeEnabled(false);
     setNome(''); setAlvo(null); setCopiado(null); setCameraId(null); setPendentes([]); setCaminhoManual('');
     onClose();
   };
@@ -111,6 +113,7 @@ export function AddPushCameraDialog({
           // só é armada depois, conscientemente, na página de Gravações.
           recordingEnabled: false,
           recordingMode: 'manual',
+          motionNoticeEnabled,
           ...(localizacaoDoInstalador ?? {}),
         },
         { headers: { Authorization: `Bearer ${accessToken}` } },
@@ -193,9 +196,10 @@ export function AddPushCameraDialog({
               />
             </div>
 
-            <p className="text-[10px] leading-relaxed text-amber-500/90">
-              O RTMP transporta H.264. Equipamento que só sai em H.265 não serve para este modo.
-            </p>
+            <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border p-3">
+              <input type="checkbox" checked={motionNoticeEnabled} onChange={e => setMotionNoticeEnabled(e.target.checked)} className="mt-1" />
+              <span><span className="block text-xs font-semibold">Avisar quando houver movimento</span><span className="block text-xs text-muted-foreground">Mostra um aviso na tela quando a câmera estiver online. Não inicia gravação.</span></span>
+            </label>
           </div>
         ) : (
           <div className="space-y-3 py-1">

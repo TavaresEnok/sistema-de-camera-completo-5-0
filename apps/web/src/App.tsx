@@ -7,6 +7,7 @@ import { MotionConfig } from 'framer-motion';
 
 import { AppLayout } from './layouts/AppLayout';
 import { ActionConfirmation } from './components/ActionConfirmation';
+import { MotionNotices } from './components/MotionNotices';
 
 import { useAuthStore } from './store/authStore';
 import { useThemeStore } from './store/themeStore';
@@ -475,6 +476,7 @@ function App() {
             </Suspense>
           </WouterRouter>
           <Toaster />
+          <MotionNotices />
         </TooltipProvider>
       </QueryClientProvider>
     </MotionConfig>
