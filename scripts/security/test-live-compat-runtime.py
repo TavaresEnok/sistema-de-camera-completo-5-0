@@ -168,7 +168,7 @@ console.log(JSON.stringify({bootstrapLogin:{status:l.status,tokenPresent:!!login
             print('Retained isolated diagnostic containers: ' + prefix, flush=True)
             raise
         for container in reversed(containers):
-            subprocess.run(['docker', 'rm', '-f', container], capture_output=True)
+            subprocess.run(['docker', 'rm', '-f', '-v', container], capture_output=True)
         subprocess.run(['docker', 'volume', 'rm', volume], capture_output=True)
         subprocess.run(['docker', 'network', 'rm', network], capture_output=True)
 
