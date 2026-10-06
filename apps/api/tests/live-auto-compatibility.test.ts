@@ -5,6 +5,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MediamtxProxyService } from '../src/camera-stream/mediamtx-proxy.service';
 import { LiveCompatibilityMemory, unsafeVideoTimestamps, compatibilityVideoArgs, audioDecodeErrors } from '../src/camera-stream/helpers/live-compatibility.helper';
+import { isManagedLivePublisher } from '../src/camera-stream/helpers/transcode-admission.helper';
+
+test('automatic original-quality adapters count against capacity, direct RTSP sources do not', () => {
+  assert.equal(isManagedLivePublisher({name:'cam_test_orig',ready:true,source:{type:'rtspSession'}}),true);
+  assert.equal(isManagedLivePublisher({name:'cam_test_orig',ready:true,source:{type:'rtspSource'}}),false);
+  assert.equal(isManagedLivePublisher({name:'cam_test_orig',ready:false,source:{type:'rtspSession'}}),false);
+});
 
 test('initial compatibility probe is packet-bounded even when the camera clock resets', () => {
   const source=readFileSync(new URL('../src/camera-stream/mediamtx-proxy.service.ts',import.meta.url),'utf8');

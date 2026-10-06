@@ -1317,7 +1317,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
   async noteClientMediaFailure(cameraId: string, protocol: string, reason: string, mode?: string) {
     if (!['webrtc', 'hls', 'llhls'].includes(protocol)
       || /ICE|rede|network|fetch|401|403|capacidade|cancelad/i.test(reason)
-      || !/decod|codec|B.frames|DTS|mídia HLS|video válido|vídeo válido|imagem preta/i.test(reason)) return;
+      || !/decod|codec|B.frames|DTS|mídia HLS|video válido|vídeo válido|imagem preta|vídeo preto|não entregou imagem/i.test(reason)) return;
     const now = Date.now();
     for (const [key, value] of this.compatibilityFailures) if (now - value.at > 120000) this.compatibilityFailures.delete(key);
     if (this.compatibilityFailures.size >= 512) return;

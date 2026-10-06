@@ -1,7 +1,7 @@
 /** Only application-owned delivery publishers, not camera ingest sessions. */
 export function isManagedLivePublisher(path: any): boolean {
   return path?.ready === true
-    && /^cam_[a-zA-Z0-9]+_(?:grid|grid_audio|orig_audio)$/.test(String(path.name ?? ''))
+    && /^cam_[a-zA-Z0-9]+_(?:grid|grid_audio|orig|orig_audio)$/.test(String(path.name ?? ''))
     && ['rtspSession', 'publisher'].includes(String(path.source?.type ?? ''));
 }
 
