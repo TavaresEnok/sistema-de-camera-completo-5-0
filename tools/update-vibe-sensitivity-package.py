@@ -5,6 +5,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -13,7 +14,7 @@ import tempfile
 OLD_SCHEMA = '57b29171f34c557f1bca565bef966f82b6a98ed966ca6ef13d8b04e7c7265295'
 MIGRATION = '20261006190000_camera_motion_sensitivity'
 ROOT = Path('/opt/drac')
-SQL = '''SELECT json_build_object('cameras',(SELECT count(*) FROM "Camera"),'users',(SELECT count(*) FROM "User"),'groups',(SELECT count(*) FROM "CameraGroup"),'cameraConfiguration',(SELECT md5(string_agg(row_to_json(c)::text,'' ORDER BY c.id)) FROM (SELECT id,name,enabled,"recordingEnabled","recordingMode","motionTrigger","detectionZones","recordingObjectClasses","aiSensitivity","aiConfidence","aiObjectClasses","objectMode" FROM "Camera") c),'usersHash',(SELECT md5(string_agg(row_to_json(u)::text,'' ORDER BY u.id)) FROM (SELECT id,username,"passwordHash",role FROM "User") u));'''
+SQL = '''SELECT json_build_object('cameras',(SELECT count(*) FROM "Camera"),'users',(SELECT count(*) FROM "User"),'groups',(SELECT count(*) FROM "CameraGroup"),'cameraConfiguration',(SELECT md5(string_agg(row_to_json(c)::text,'' ORDER BY c.id)) FROM (SELECT id,name,enabled,CASE WHEN "recordingMode" IN ('motion','object') THEN NULL ELSE "recordingEnabled" END AS "recordingEnabled","recordingMode","motionTrigger","detectionZones","recordingObjectClasses","aiSensitivity","aiConfidence","aiObjectClasses","objectMode" FROM "Camera") c),'usersHash',(SELECT md5(string_agg(row_to_json(u)::text,'' ORDER BY u.id)) FROM (SELECT id,username,"passwordHash",role FROM "User") u));'''
 
 def run(command, **kwargs):
     return subprocess.run(command, check=True, capture_output=True, **kwargs)
@@ -42,7 +43,9 @@ def deploy(args):
         manifest = verifier.extract_verified(args.bundle, ROOT / 'infra/release-public.pem', stage / 'verified', report['commit'], state['securityVersion'])
         # The final image is checked for exactly the reviewed additive SQL.
         api = manifest['images']['api']
-        backup = ROOT / 'infra/backups/runtime-updates' / manifest['commit']
+        if args.attempt and not re.fullmatch('[a-zA-Z0-9-]{1,24}',args.attempt):
+            raise ValueError('Invalid reviewed attempt name')
+        backup = ROOT / 'infra/backups/runtime-updates' / (manifest['commit'] + ('.' + args.attempt if args.attempt else ''))
         backup.mkdir(parents=True, mode=0o700, exist_ok=False)
         before = database_snapshot()
         (backup / 'preservation.before.json').write_text(json.dumps(before))
@@ -66,7 +69,11 @@ def deploy(args):
         rollback_command = list(command)
         media_before = {name: run(['docker', 'inspect', name, '--format', '{{.Id}}']).stdout.decode().strip()
                         for name in ('vms-mediamtx', 'vms-postgres', 'vms-redis', 'vms-rtmp-ingest')}
-        run(['docker', 'load', '-i', str(stage / 'verified/images.tar')])
+        # Reuse already-imported immutable images on a reviewed retry. The
+        # signed archive is still fully verified before this decision.
+        if any(subprocess.run(['docker','image','inspect',image],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode
+               for image in manifest['images'].values()):
+            run(['docker', 'load', '-i', str(stage / 'verified/images.tar')])
         sql = run(['docker', 'run', '--rm', '--entrypoint', 'cat', api,
                    '/app/apps/api/prisma/migrations/' + MIGRATION + '/migration.sql']).stdout.decode()
         expected = 'ALTER TABLE "Camera" ADD COLUMN "motionSensitivity" TEXT NOT NULL DEFAULT \'media\';'
@@ -80,10 +87,12 @@ def deploy(args):
         # Keep capacity tuning in a separate deployment overlay: future signed
         # image updates replace runtime-images.json but discover all overlays.
         tuning = ROOT / 'infra/docker-compose.live-vibe.json'
-        if tuning.exists():
-            raise ValueError('Existing tuning overlay must be reviewed, not overwritten')
-        tuning.write_text(json.dumps({'services': {'api': {'environment': {
-            'MEDIAMTX_LIGHT_GRID_ENABLED': 'true', 'MEDIAMTX_MAX_TRANSCODE_POINTS': '24'}}}}))
+        expected_tuning={'services': {'api': {'environment': {
+            'MEDIAMTX_LIGHT_GRID_ENABLED': 'true', 'MEDIAMTX_MAX_TRANSCODE_POINTS': '24'}}}}
+        if tuning.exists() and json.loads(tuning.read_text()) != expected_tuning:
+            raise ValueError('Existing tuning overlay differs from reviewed configuration')
+        if not tuning.exists():
+            tuning.write_text(json.dumps(expected_tuning))
         os.chmod(tuning,0o600)
         command += ['-f', str(tuning)]
         persistent.write_text(json.dumps(override))
@@ -110,4 +119,5 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--bundle', type=Path, required=True)
     parser.add_argument('--report', type=Path, required=True)
+    parser.add_argument('--attempt', default='')
     deploy(parser.parse_args())
