@@ -708,7 +708,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       try {
         process = spawnWithSecretUrl('ffprobe', [
           '-v', 'error', '-rtsp_transport', 'tcp', '-timeout', '3000000',
-          '-analyzeduration', '500000', '-probesize', '262144', '-read_intervals', '%+2',
+          '-analyzeduration', '500000', '-probesize', '262144', '-read_intervals', '%+#64',
           '-show_packets', '-show_entries', 'packet=codec_type,pts_time,dts_time', '-of', 'json', url,
         ], url);
         process.stderr?.resume();
@@ -1195,7 +1195,10 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
           '-v', 'error',
           '-rtsp_transport', transport,
           '-timeout', '5000000',
-          '-read_intervals', '%+1', '-show_packets',
+          // Packet count, NOT elapsed camera time: a broken clock can jump
+          // backwards for hours and prevent a time-based probe from finishing.
+          '-analyzeduration', '500000', '-probesize', '524288',
+          '-read_intervals', '%+#64', '-show_packets',
           '-show_entries', 'stream=codec_name,codec_type,width,height,has_b_frames,avg_frame_rate,r_frame_rate:packet=codec_type,dts_time',
           '-of', 'json',
           sourceUrl,

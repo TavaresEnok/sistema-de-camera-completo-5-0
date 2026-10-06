@@ -6,6 +6,13 @@ import { join } from 'node:path';
 import { MediamtxProxyService } from '../src/camera-stream/mediamtx-proxy.service';
 import { LiveCompatibilityMemory, unsafeVideoTimestamps, compatibilityVideoArgs, audioDecodeErrors } from '../src/camera-stream/helpers/live-compatibility.helper';
 
+test('initial compatibility probe is packet-bounded even when the camera clock resets', () => {
+  const source=readFileSync(new URL('../src/camera-stream/mediamtx-proxy.service.ts',import.meta.url),'utf8');
+  const initial=source.slice(source.indexOf('private runProbeStreamVideoMetadata('),source.indexOf('private async resolveLiveCompatibility('));
+  assert.match(initial, /'-read_intervals', '%\+#64'/);
+  assert.doesNotMatch(initial, /'-read_intervals', '%\+1'/);
+});
+
 test('B-frame/timestamp adaptations preserve maximum resolution and repair before fps', () => {
   const full = compatibilityVideoArgs({ fps: 10, original: true, width: 640, height: 360, bitrate: 4000 });
   assert.match(full, /-bf 0/);
@@ -20,6 +27,11 @@ test('timestamp detection tolerates normal frame reordering but rejects clock re
   assert.equal(unsafeVideoTimestamps([{ codec_type: 'video', dts_time: '1' }, { codec_type: 'video', dts_time: '0.95' }]), false);
   assert.equal(unsafeVideoTimestamps([{ codec_type: 'video', dts_time: '1500' }, { codec_type: 'video', dts_time: '0' }]), true);
   assert.equal(unsafeVideoTimestamps([{ codec_type: 'video', dts_time: '0' }, { codec_type: 'video', dts_time: '1500' }]), true);
+});
+
+test('real Dguardian clock jump is detected even when the H264 header reports no B frames', () => {
+  const packets=[2.4958,40179.583089,2.6958,2.7958].map(dts=>({codec_type:'video',dts_time:String(dts)}));
+  assert.equal(unsafeVideoTimestamps(packets),true);
 });
 
 test('decisions survive restart without storing camera credentials', () => {
