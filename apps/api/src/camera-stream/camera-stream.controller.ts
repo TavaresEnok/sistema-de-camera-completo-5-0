@@ -475,7 +475,7 @@ export class CameraStreamController {
   async recordLiveFailure(
     @CurrentUser() user: AuthUser,
     @Param('cameraId') cameraId: string,
-    @Body() body: { protocol?: string; reason?: string; stage?: string; state?: string },
+    @Body() body: { protocol?: string; reason?: string; stage?: string; state?: string; deliveryMode?: string },
     @Req() req: Request,
   ) {
     await this.accessControlService.assertCanViewCamera(user, cameraId);
@@ -490,6 +490,8 @@ export class CameraStreamController {
       state,
       userAgent: String(req.headers['user-agent'] || '').slice(0, 240),
     }, req);
+    void this.mediamtxProxyService.noteClientMediaFailure?.(cameraId, protocol, reason,
+      normalizeLiveViewMode(body?.deliveryMode)).catch(() => undefined);
     return { accepted: true, cameraId, protocol, stage };
   }
 
@@ -522,6 +524,7 @@ export class CameraStreamController {
     let liveTranscodedForBrowser = false;
     let audioEncoded = false;
     let audioAvailable: boolean | null = null;
+    let compatibility: { adaptedVideo: boolean; audioUnavailable: boolean; message: string | null } | null = null;
     let gridSourceIsOriginal = false;
     let effectiveDeliveryProfile = resolveDeliveryRtspProfile(camera);
     if (this.mediamtxProxyService.isEnabled()) {
@@ -545,7 +548,8 @@ export class CameraStreamController {
           await this.mediamtxProxyService.assertDeliveryCapacity(ensured.pathName);
         }
         mediaBridge = this.mediamtxProxyService.buildPublicUrls(req, ensured.pathName, ensured.sourceUrl);
-        measuredLiveCodec = ensured.sourceVideoCodec;
+        measuredLiveCodec = ensured.compatibility?.adaptedVideo ? 'h264' : ensured.sourceVideoCodec;
+        compatibility = ensured.compatibility ?? null;
         gridSourceIsOriginal = ensured.sourceIsOriginal === true;
         // `transcodedForLive` também cobre AAC→Opus: há um publisher, mas o
         // vídeo H.264 continua em cópia. O selo do painel é exclusivamente
@@ -704,6 +708,7 @@ export class CameraStreamController {
         videoCopied: mediaBridge.enabled && !liveTranscodedForBrowser,
         audioEncoded,
         audioAvailable,
+        compatibility,
         // ── CUSTO DA CONVERSÃO, EXPLÍCITO ───────────────────────────────────
         //
         // Medido na simulação de capacidade (2026-08-03): entregar H.265
@@ -717,10 +722,14 @@ export class CameraStreamController {
         transcodeCost: liveTranscodedForBrowser
           ? {
             cpuMultiplier: null, // Cost depends on resolution, codec and hardware; not a measurement.
-            reason: supportsOriginalOnClient
+            reason: compatibility?.adaptedVideo
+              ? 'A câmera precisa de adaptação para reproduzir o vídeo.'
+              : supportsOriginalOnClient
               ? 'A fonte é H.265 e este modo de entrega exige conversão.'
               : 'Este navegador não decodifica H.265, então o servidor converte para H.264.',
-            hint: supportsOriginalOnClient
+            hint: compatibility?.adaptedVideo
+              ? 'O sistema ajusta a transmissão automaticamente.'
+              : supportsOriginalOnClient
               ? 'O modo "Máxima qualidade" entrega H.265 sem conversão.'
               : 'Um cliente com H.265/WebRTC reproduz o codec direto, sem custo de conversão.',
           }

@@ -8,6 +8,21 @@ spec=importlib.util.spec_from_file_location('package_builder',Path(__file__).par
 builder=importlib.util.module_from_spec(spec);spec.loader.exec_module(builder)
 
 class PackageSchemaTest(unittest.TestCase):
+    def test_reviewed_transition_changes_only_one_field_and_its_additive_migration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            (root/'schema.prisma').write_text('model Camera {\n}\n')
+            (root/'migrations/001').mkdir(parents=True)
+            (root/'migrations/001/migration.sql').write_text('old migration')
+            old=builder.database_schema_hash(root)
+            (root/'schema.prisma').write_text('model Camera {\n  motionSensitivity      String       @default("media")\n}\n')
+            (root/'migrations/20261006190000_camera_motion_sensitivity').mkdir()
+            (root/'migrations/20261006190000_camera_motion_sensitivity/migration.sql').write_text('add field')
+            self.assertEqual(builder.database_schema_hash(root,True),old)
+            self.assertNotEqual(builder.database_schema_hash(root),old)
+            (root/'migrations/001/migration.sql').write_text('changed old migration')
+            self.assertNotEqual(builder.database_schema_hash(root,True),old)
+
     def test_hash_covers_only_files_shipped_in_api_image(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)

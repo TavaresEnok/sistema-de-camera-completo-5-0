@@ -32,14 +32,18 @@ def sha(file):
     return value.hexdigest()
 
 
-def database_schema_hash(prisma):
+def database_schema_hash(prisma, previous_motion_schema=False):
     # Match exactly what the API image ships: schema + applied migrations.
     # Optional SQL tools (e.g. rls/) are not runtime schema or migrations.
     digest=hashlib.sha256()
     files=[prisma/'schema.prisma',*(prisma/'migrations').rglob('*.sql')]
     for file in sorted(files):
+        if previous_motion_schema and file.relative_to(prisma).as_posix() == 'migrations/20261006190000_camera_motion_sensitivity/migration.sql':continue
         digest.update(file.relative_to(prisma).as_posix().encode())
-        digest.update(file.read_bytes())
+        content=file.read_bytes()
+        if previous_motion_schema and file.name=='schema.prisma':
+            content=content.replace(b'  motionSensitivity      String       @default("media")\n',b'')
+        digest.update(content)
     return digest.hexdigest()
 
 
@@ -86,6 +90,12 @@ def build(args):
         now=int(time.time())
         manifest={'v':1,'commit':args.commit,'securityVersion':1,'protection':'standard','issuedAt':now,'expiresAt':now+30*86400,
                   'databaseSchemaHash':database_schema_hash(root/'apps/api/prisma'),'distributionApproval':args.distribution_approval,'images':image_ids,'files':files}
+        if args.reviewed_motion_schema:
+            migration=root/'apps/api/prisma/migrations/20261006190000_camera_motion_sensitivity/migration.sql'
+            if migration.read_text().strip() != 'ALTER TABLE "Camera" ADD COLUMN "motionSensitivity" TEXT NOT NULL DEFAULT \'media\';':
+                raise ValueError('Reviewed additive migration changed')
+            manifest['reviewedSchemaTransition']={'from':database_schema_hash(root/'apps/api/prisma',True),
+                'migration':'20261006190000_camera_motion_sensitivity','kind':'additive'}
         raw=json.dumps(manifest,sort_keys=True,separators=(',',':')).encode()
         (stage/'manifest.json').write_bytes(raw)
         message=stage/'message';message.write_bytes(b'drac-runtime-manifest-v1\n'+raw)
@@ -114,4 +124,5 @@ if __name__=='__main__':
     signing.add_argument('--signing-key',type=Path);signing.add_argument('--signer-command')
     parser.add_argument('--license-keys',type=Path,required=True);parser.add_argument('--images',type=Path,required=True)
     parser.add_argument('--distribution-approval',required=True)
+    parser.add_argument('--reviewed-motion-schema',action='store_true')
     build(parser.parse_args())

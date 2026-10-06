@@ -1,5 +1,6 @@
 export type TrackProgress = 'progressing' | 'missing' | 'stalled' | 'unknown';
-export type TrackPacketHealth = { video: TrackProgress; audio: TrackProgress };
+import { unsafeVideoTimestamps } from './live-compatibility.helper';
+export type TrackPacketHealth = { video: TrackProgress; audio: TrackProgress; unsafeVideoTimestamps?: boolean };
 
 /** Packet timestamps distinguish an audio-only stream from progressing video.
  * An inconclusive probe is never evidence for restarting a healthy source. */
@@ -25,5 +26,6 @@ export function trackPacketHealth(text: string, tracks: string[]): TrackPacketHe
   return {
     video: status(video, audio, tracks.some(x => /h26[45]|hevc|vp[89]|av1|mjpeg/i.test(x))),
     audio: status(audio, video, tracks.some(x => /audio|opus|aac|g7|pcm|mp[23]/i.test(x))),
+    ...(unsafeVideoTimestamps(packets) ? { unsafeVideoTimestamps: true } : {}),
   };
 }

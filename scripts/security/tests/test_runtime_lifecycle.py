@@ -47,6 +47,7 @@ class LifecycleTests(unittest.TestCase):
         manifest={'v':1,'commit':self.commit,'securityVersion':1,'protection':'standard','issuedAt':now,'expiresAt':now+86400,
                   'databaseSchemaHash':'c'*64,'images':{k:'sha256:'+'d'*64 for k in ['api','web','ai-service']},
                   'files':{k:{'size':len(v),'sha256':hashlib.sha256(v).hexdigest()} for k,v in self.payload.items()}}
+        if hasattr(self,'schema_transition'):manifest['reviewedSchemaTransition']=self.schema_transition
         raw=json.dumps(manifest,sort_keys=True,separators=(',',':')).encode();message=self.root/'signed-message'
         message.write_bytes(bundle_module.DOMAIN+raw)
         signature=subprocess.run(['openssl','pkeyutl','-sign','-inkey',str(self.key),'-rawin','-in',str(message)],check=True,capture_output=True).stdout
@@ -105,14 +106,18 @@ class LifecycleTests(unittest.TestCase):
         (root/'infra/license-state-preserved').write_text('existing device and license remain')
         return root
 
-    def update(self,fail=False,schema_change=False):
+    def update(self,fail=False,schema_change=False,approved_transition=False):
+        if approved_transition:
+            self.schema_transition={'from':'e'*64,'kind':'additive','migration':'20261006190000_camera_motion_sensitivity'}
+            self.archive,self.manifest=self.make_archive()
+            self.grant.update(size=len(self.archive),sha256=hashlib.sha256(self.archive).hexdigest())
         root=self.installation();old=(root/'.runtime-release.json').read_bytes()
         if schema_change:
             state=json.loads(old);state['databaseSchemaHash']='e'*64;(root/'.runtime-release.json').write_text(json.dumps(state))
         def execute(command,**kwargs):
             if command[0]=='openssl':return self.real_run(command,**kwargs)
             self.assertEqual(command[0],'docker');self.calls.append(command)
-            if command[1:3]==['inspect','vms-api'] and len(command)==3:
+            if command[1]=='inspect' and len(command)==3:
                 files=','.join(str(root/'infra'/f) for f in ['docker-compose.yml','docker-compose.license-security.yml'])
                 return subprocess.CompletedProcess(command,0,json.dumps([{'Config':{'Labels':{'com.docker.compose.project.config_files':files}}}]))
             if command[1]=='inspect':return subprocess.CompletedProcess(command,0,'sha256:'+'f'*64)
@@ -122,12 +127,12 @@ class LifecycleTests(unittest.TestCase):
                 if fail_calls==1:raise subprocess.CalledProcessError(1,command)
             return subprocess.CompletedProcess(command,0,'')
         with patch('urllib.request.build_opener',return_value=self.opener()),patch('subprocess.run',side_effect=execute),contextlib.redirect_stdout(io.StringIO()):
-            if fail or schema_change:
+            if fail or (schema_change and not approved_transition):
                 with self.assertRaises(ValueError):updater.run(argparse.Namespace(root=root,commit=self.commit,conferir=False))
-            else:updater.run(argparse.Namespace(root=root,commit=self.commit,conferir=False))
+            else:updater.run(argparse.Namespace(root=root,commit=self.commit,conferir=False,approve_motion_schema=approved_transition))
         self.assertEqual((root/'infra/license-state-preserved').read_text(),'existing device and license remain')
         compose=[c for c in self.calls if 'compose' in c and 'up' in c]
-        if schema_change:self.assertEqual(self.calls,[]);return
+        if schema_change and not approved_transition:self.assertEqual(self.calls,[]);return
         self.assertEqual(len(compose),2 if fail else 1)
         for command in compose:
             self.assertIn(str(root/'infra/docker-compose.license-security.yml'),command)
@@ -142,6 +147,7 @@ class LifecycleTests(unittest.TestCase):
     def test_update_preserves_overlays_and_does_not_recreate_video_ingress(self):self.update()
     def test_failed_update_restores_images_not_license_database(self):self.update(fail=True)
     def test_schema_change_refused_before_docker_or_backup(self):self.update(schema_change=True)
+    def test_explicit_approved_signed_additive_transition_keeps_backup_and_rollback(self):self.update(schema_change=True,approved_transition=True)
 
 
 if __name__=='__main__':unittest.main()

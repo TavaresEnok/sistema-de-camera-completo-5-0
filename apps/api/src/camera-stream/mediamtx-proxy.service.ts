@@ -14,6 +14,7 @@ import { createHash } from 'node:crypto';
 import { isManagedLivePublisher, withTranscodeAdmission, withWeightedTranscodeAdmission, withHostPressureAdmission, liveConversionCost } from './helpers/transcode-admission.helper';
 import { LiveCapacityBudget, LiveCapacityException, LivePressureSampler, liveCapacityDefaults } from './helpers/live-capacity.helper';
 import { audioCodecFromTracks } from './helpers/live-audio.helper';
+import { LiveCompatibilityMemory, audioDecodeErrors, compatibilityVideoArgs, unsafeVideoTimestamps, type LiveCompatibility } from './helpers/live-compatibility.helper';
 import { trackPacketHealth, type TrackPacketHealth } from './helpers/track-packet-health.helper';
 import { envNumber } from '../common/config/env-number.helper';
 import { liveDecoderInputArgs } from './helpers/live-decoder-budget.helper';
@@ -73,6 +74,9 @@ type StreamMetadata = {
   height: number | null;
   hasDataTrack: boolean;
   audioCodec?: string | null;
+  hasBFrames?: boolean;
+  unsafeTimestamps?: boolean;
+  fps?: number | null;
 };
 
 type DeliveryUrls = {
@@ -93,6 +97,7 @@ type EnsuredCameraPath = {
   videoEncoded?: boolean;
   audioEncoded?: boolean;
   audioAvailable?: boolean | null;
+  compatibility?: { adaptedVideo: boolean; audioUnavailable: boolean; message: string | null };
   liveProfile: { channel: number; subtype: number } | null;
   deliveryMode: LiveViewMode;
   /** A fonte efetiva da grade já é o mesmo perfil físico da máxima resolução. */
@@ -101,6 +106,10 @@ type EnsuredCameraPath = {
 
 @Injectable()
 export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDestroy {
+  private compatibilityMemory?: LiveCompatibilityMemory;
+  private readonly compatibilityInFlight = new Map<string, Promise<LiveCompatibility>>();
+  private readonly compatibilitySources = new Map<string, { url: string; transport: string }>();
+  private readonly compatibilityFailures = new Map<string, { at: number; protocols: Set<string> }>();
   private readonly logger = new Logger(MediamtxProxyService.name);
   private readonly liveCodecCache = new Map<string, { isHevc: boolean; at: number }>();
   private readonly liveSourceCache = new Map<string, { url: string; codec: string | null; width: number | null; height: number | null; at: number }>();
@@ -641,6 +650,18 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     if (String(process.env.MEDIAMTX_TRACK_HEALTH_ENABLED ?? 'true') === 'true') {
       await Promise.all(candidates.map(async item => {
         const health = await this.sampleTrackHealth(item.name, item.tracks);
+        if (health.unsafeVideoTimestamps) {
+          const source = this.compatibilitySources.get(item.name);
+          if (source) {
+            this.compatibilityMemory ??= new LiveCompatibilityMemory();
+            const key = LiveCompatibilityMemory.key(source.url, source.transport);
+            const before = this.compatibilityMemory.get(key);
+            if (!before?.normalizeVideo) {
+              this.compatibilityMemory.set(key, { normalizeVideo: true, audio: before?.audio ?? 'unknown', reason: 'timestamps' }, 1_800_000);
+              if (!stuck.some(x => x.name === item.name)) stuck.push({ name: item.name, ready: true, readers: item.readers.length });
+            }
+          }
+        }
         const previous = this.trackHealthState.get(item.name);
         const badVideo = ['missing', 'stalled'].includes(health.video) ? (previous?.badVideo ?? 0) + 1 : 0;
         const badAudio = ['missing', 'stalled'].includes(health.audio) ? (previous?.badAudio ?? 0) + 1 : 0;
@@ -653,6 +674,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       }));
     }
     for (const key of this.trackHealthState.keys()) if (!seen.has(key)) this.trackHealthState.delete(key);
+    for (const key of this.compatibilitySources.keys()) if (!seen.has(key)) this.compatibilitySources.delete(key);
     // Recupera os paths travados em PARALELO (limite interno), não um a um.
     await this.recoverStuckPaths(stuck);
 
@@ -1173,12 +1195,17 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
           '-v', 'error',
           '-rtsp_transport', transport,
           '-timeout', '5000000',
-          '-show_entries', 'stream=codec_name,codec_type,width,height',
+          '-read_intervals', '%+1', '-show_packets',
+          '-show_entries', 'stream=codec_name,codec_type,width,height,has_b_frames,avg_frame_rate,r_frame_rate:packet=codec_type,dts_time',
           '-of', 'json',
           sourceUrl,
         ], sourceUrl);
         let stdout = '';
-        proc.stdout!.on('data', (chunk) => { stdout += chunk.toString(); });
+        proc.stderr?.resume();
+        proc.stdout!.on('data', (chunk) => {
+          stdout += chunk.toString();
+          if (stdout.length > 1_000_000) { proc.kill('SIGKILL'); finish(null); }
+        });
         const killTimer = setTimeout(() => {
           try { proc.kill('SIGKILL'); } catch { /* ignore */ }
           finish(null);
@@ -1189,7 +1216,8 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
           clearTimeout(killTimer);
           if (code !== 0) return finish(null);
           try {
-            const streams = JSON.parse(stdout)?.streams ?? [];
+            const parsed = JSON.parse(stdout);
+            const streams = parsed?.streams ?? [];
             const stream = streams.find((item: any) => item?.codec_type === 'video') ?? {};
             const audio = streams.find((item: any) => item?.codec_type === 'audio');
             finish({
@@ -1197,6 +1225,12 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
               width: Number.isFinite(Number(stream.width)) ? Number(stream.width) : null,
               height: Number.isFinite(Number(stream.height)) ? Number(stream.height) : null,
               hasDataTrack: streams.some((item: any) => item?.codec_type === 'data'),
+              hasBFrames: Number(stream.has_b_frames) > 0,
+              unsafeTimestamps: unsafeVideoTimestamps(parsed.packets ?? []),
+              fps: (() => {
+                const [n, d] = String(stream.avg_frame_rate || stream.r_frame_rate || '').split('/').map(Number);
+                return n > 0 && d > 0 && n / d <= 120 ? n / d : null;
+              })(),
               audioCodec: audio
                 ? String(audio.codec_name ?? '').trim().toLowerCase() || null
                 : stream.codec_name ? 'none' : null,
@@ -1209,6 +1243,109 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
         finish(null);
       }
     });
+  }
+
+  private async resolveLiveCompatibility(sourceUrl: string, transport: string, wantsAudio: boolean,
+    audioCodec: string | null): Promise<LiveCompatibility> {
+    const key = LiveCompatibilityMemory.key(sourceUrl, transport);
+    this.compatibilityMemory ??= new LiveCompatibilityMemory();
+    const cached = this.compatibilityMemory.get(key);
+    if (cached && (!wantsAudio || cached.audio !== 'unknown' || audioCodec === 'none')) return cached;
+    // Modalities share the probe, while an audio request may extend a video-only result.
+    const pending = this.compatibilityInFlight.get(key);
+    if (pending) {
+      const result = await pending;
+      if (!wantsAudio || result.audio !== 'unknown' || audioCodec === 'none') return result;
+    }
+    const task = (async () => {
+      const metadata = await this.probeStreamVideoMetadata(sourceUrl, transport).catch(() => null);
+      const incompatibleBFrames = metadata?.codec === 'h264' && metadata.hasBFrames === true;
+      const normalizeVideo = cached?.normalizeVideo === true || incompatibleBFrames || metadata?.unsafeTimestamps === true
+        || ['mjpeg', 'mpeg4', 'h263', 'mpeg2video'].includes(metadata?.codec ?? '');
+      const codec = audioCodec ?? metadata?.audioCodec ?? null;
+      const audio = wantsAudio && codec && codec !== 'none'
+        ? await this.withProbeSlot(() => this.probeAudioDecoding(sourceUrl, transport))
+        : cached?.audio ?? 'unknown';
+      const value: LiveCompatibility = { normalizeVideo, audio,
+        reason: incompatibleBFrames ? 'b-frames' : metadata?.unsafeTimestamps ? 'timestamps' : cached?.reason };
+      // Unknown/offline results are short lived and never treated as incompatibility.
+      this.compatibilityMemory!.set(key, value, metadata ? 300_000 : 10_000);
+      return value;
+    })().finally(() => this.compatibilityInFlight.delete(key));
+    this.compatibilityInFlight.set(key, task);
+    return task;
+  }
+
+  private probeAudioDecoding(sourceUrl: string, transport: string): Promise<LiveCompatibility['audio']> {
+    return new Promise(resolve => {
+      let settled = false, stderr = '', progress = '';
+      let proc: ReturnType<typeof spawnWithSecretUrl> | undefined;
+      const finish = (value: LiveCompatibility['audio']) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(value);
+      };
+      const timer = setTimeout(() => {
+        proc?.kill('SIGKILL');
+        finish(audioDecodeErrors(stderr) >= 3 ? 'invalid' : 'unknown');
+      }, 8000);
+      timer.unref();
+      try {
+        proc = spawnWithSecretUrl('ffmpeg', ['-nostdin', '-hide_banner', '-loglevel', 'warning',
+          '-rtsp_transport', transport, '-timeout', '3000000', '-analyzeduration', '500000', '-probesize', '262144',
+          '-threads', '1', '-i', sourceUrl, '-map', '0:a:0', '-vn', '-t', '1.5',
+          '-af', 'asetpts=N/SR/TB', '-threads', '1', '-progress', 'pipe:1', '-f', 'null', '-'], sourceUrl);
+        proc.stdout?.on('data', data => { progress = (progress + data.toString()).slice(-16000); });
+        proc.stderr?.on('data', data => {
+          stderr = (stderr + data.toString()).slice(-32000);
+          if (audioDecodeErrors(stderr) >= 6) { proc?.kill('SIGKILL'); finish('invalid'); }
+        });
+        proc.once('error', () => finish('unknown'));
+        proc.once('close', () => {
+          const times = [...progress.matchAll(/out_time_us=(\d+)/g)].map(m => Number(m[1]));
+          finish(audioDecodeErrors(stderr) >= 3 ? 'invalid' : times.some(t => t >= 300_000) ? 'healthy' : 'unknown');
+        });
+      } catch { finish('unknown'); }
+    });
+  }
+
+  /** Network/auth failures are never evidence for changing a camera's codec. */
+  async noteClientMediaFailure(cameraId: string, protocol: string, reason: string, mode?: string) {
+    if (!['webrtc', 'hls', 'llhls'].includes(protocol)
+      || /ICE|rede|network|fetch|401|403|capacidade|cancelad/i.test(reason)
+      || !/decod|codec|B.frames|DTS|mídia HLS|video válido|vídeo válido|imagem preta/i.test(reason)) return;
+    const now = Date.now();
+    for (const [key, value] of this.compatibilityFailures) if (now - value.at > 120000) this.compatibilityFailures.delete(key);
+    if (this.compatibilityFailures.size >= 512) return;
+    const path = this.pathNameFromCameraId(cameraId, (mode ?? 'grid') as LiveViewMode);
+    const source = this.compatibilitySources.get(path);
+    if (!source) return;
+    const failure = this.compatibilityFailures.get(path) ?? { at: now, protocols: new Set<string>() };
+    failure.protocols.add(protocol);
+    this.compatibilityFailures.set(path, failure);
+    if (failure.protocols.size < 2 && !/B.frames|DTS/i.test(reason)) return;
+    const text = await this.apiRequest('GET', `/v3/paths/get/${encodeURIComponent(path)}`).catch(() => null);
+    if (!text) return;
+    const runtime = JSON.parse(text);
+    this.compatibilityMemory ??= new LiveCompatibilityMemory();
+    const key = LiveCompatibilityMemory.key(source.url, source.transport);
+    const before = this.compatibilityMemory.get(key);
+    if (String(mode).endsWith('-audio') && before?.audio !== 'invalid') {
+      const audio = await this.withProbeSlot(() => this.probeAudioDecoding(source.url, source.transport));
+      if (audio === 'invalid') {
+        this.compatibilityMemory.set(key, { normalizeVideo: before?.normalizeVideo ?? false, audio, reason: before?.reason }, 300_000);
+        this.compatibilityFailures.delete(path);
+        await this.recoverStuckPath(path, Boolean(runtime.ready), runtime.readers?.length ?? 0);
+        return;
+      }
+    }
+    // No conversion while the source is offline or already adapted.
+    if (!runtime.ready || Number(runtime.bytesReceived) <= 0) return;
+    if (before?.normalizeVideo) return;
+    this.compatibilityMemory.set(key, { normalizeVideo: true, audio: before?.audio ?? 'unknown', reason: 'client-media' }, 1_800_000);
+    this.compatibilityFailures.delete(path);
+    await this.recoverStuckPath(path, true, runtime.readers?.length ?? 0);
   }
 
   /**
@@ -2575,6 +2712,26 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       ? await this.sharedRtspSource.resolve(cameraId, sourceUrl, rtspTransport)
       : { url: sourceUrl, shared: false };
     const inputTransport = sharedInput.shared ? 'tcp' : rtspTransport;
+    if (this.compatibilitySources.size >= 512 && !this.compatibilitySources.has(pathName))
+      this.compatibilitySources.delete(this.compatibilitySources.keys().next().value!);
+    this.compatibilitySources.set(pathName, { url: sharedInput.url, transport: inputTransport });
+    const wantsAudio = deliveryMode === 'grid-audio' || deliveryMode === 'original-audio';
+    let sourceAudioCodec: string | null = 'audioCodec' in selected ? selected.audioCodec : null;
+    const compatibility = await this.resolveLiveCompatibility(sharedInput.url, inputTransport, wantsAudio, sourceAudioCodec);
+    const normalizeVideo = compatibility.normalizeVideo;
+    if (wantsAudio && !pushSourced && sourceAudioCodec == null) {
+      const metadata = await this.probeStreamVideoMetadata(sharedInput.url, inputTransport).catch(() => null);
+      sourceAudioCodec = metadata?.audioCodec ?? null;
+    }
+    const audioAvailable = compatibility.audio === 'invalid' ? false
+      : sourceAudioCodec == null ? null : sourceAudioCodec !== 'none';
+    const compatibilityNotice = {
+      adaptedVideo: normalizeVideo,
+      audioUnavailable: compatibility.audio === 'invalid',
+      message: compatibility.audio === 'invalid'
+        ? 'O áudio desta câmera está com problema. O vídeo continua disponível.'
+        : null,
+    };
     const isHevc = selected.isHevc;
     const sourceVideoCodec = String(('codec' in selected ? selected.codec : null) ?? '').trim().toLowerCase()
       || (isHevc ? 'h265' : 'h264');
@@ -2601,27 +2758,19 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     // passthrough e não abre pipeline de áudio. `*-audio` existe apenas para a
     // câmera única ou para o tile cujo operador escolheu escutar.
     //
-    // Modo 'original' (máxima qualidade): NUNCA transcoda — passa o stream
-    // principal como está (H.265 inclusive) direto pro HLS. O custo de CPU no
-    // servidor é ~0; o celular decodifica o HEVC no hardware. Só HLS (WebRTC não
-    // reproduz H.265), com latência maior — é o trade-off assumido pelo usuário.
-    const wantsAudio = deliveryMode === 'grid-audio' || deliveryMode === 'original-audio';
-    let sourceAudioCodec = 'audioCodec' in selected ? selected.audioCodec : null;
-    if (wantsAudio && !pushSourced && sourceAudioCodec == null) {
-      const metadata = await this.probeStreamVideoMetadata(sharedInput.url, inputTransport).catch(() => null);
-      sourceAudioCodec = metadata?.audioCodec ?? null;
-    }
-    const audioAvailable = sourceAudioCodec == null ? null : sourceAudioCodec !== 'none';
+    // Maximum resolution is preserved; incompatible sources alone are encoded.
     const codecPassthroughMode = deliveryMode === 'original' || deliveryMode === 'grid-hevc';
     // Optional, bounded grid reduction. Already-small sources stay in copy;
     // recordings/original/analytics must not depend on this viewing profile.
-    const lightGrid = deliveryMode === 'grid' && !isHevc && !sanitizeGridSource
+    const lightGrid = deliveryMode === 'grid' && !normalizeVideo && !isHevc && !sanitizeGridSource
       && process.env.MEDIAMTX_LIGHT_GRID_ENABLED === 'true'
       && sourceWidth != null && sourceHeight != null
       && (sourceWidth > GRID_LIVE_MAX_WIDTH || sourceHeight > GRID_LIVE_MAX_HEIGHT);
     if (lightGrid) this.optionalLightGridPaths.add(pathName);
     else this.optionalLightGridPaths.delete(pathName);
-    const needsPublisher = lightGrid || (wantsAudio && audioAvailable !== false) || (!codecPassthroughMode && (isHevc || sanitizeGridSource));
+    const needsPublisher = normalizeVideo || lightGrid || (wantsAudio && audioAvailable !== false)
+      || (wantsAudio && compatibility.audio === 'invalid')
+      || (!codecPassthroughMode && (isHevc || sanitizeGridSource));
     const originalProfile = resolveOriginalRtspProfile(camera);
     // Só afirmamos equivalência quando a grade NÃO passou por FFmpeg e o perfil
     // físico escolhido é precisamente o que a máxima resolução pediria. Assim o
@@ -2636,11 +2785,11 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
 
     // Só é "transcodificado" quando o publisher FFmpeg existe de fato — no modo
     // 'original' (passthrough) a fonte HEVC segue intocada e o rótulo deve refletir isso.
-    const transcodedForLive = needsPublisher && (isHevc || wantsAudio || lightGrid);
+    const transcodedForLive = needsPublisher && (isHevc || wantsAudio || lightGrid || normalizeVideo);
     // Audio never changes H.264 resolution. Original preserves its codec too;
     // only the compatibility grid needs a HEVC -> H.264 video conversion.
-    const videoEncoded = needsPublisher && (isHevc || lightGrid) && !originalDelivery;
-    const audioEncoded = needsPublisher && wantsAudio && audioAvailable !== false && sourceAudioCodec !== 'opus';
+    const videoEncoded = normalizeVideo || (needsPublisher && (isHevc || lightGrid) && !originalDelivery);
+    const audioEncoded = needsPublisher && wantsAudio && audioAvailable !== false && (normalizeVideo || sourceAudioCodec !== 'opus');
     this.capacityBudget.register(pathName, needsPublisher ? liveConversionCost({
       videoEncoded, codec: sourceVideoCodec, width: sourceWidth, height: sourceHeight, fps: sourceFps,
     }) : 0);
@@ -2747,7 +2896,12 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       const deliveryBitrateKbps = deliveryMode === 'grid-audio'
         ? instantBitrateKbps
         : GRID_LIVE_BITRATE_KBPS;
-      const videoArgs = (sanitizeGridSource && deliveryMode === 'grid') || videoJaServe
+      const compatibilityFps = Math.min(originalDelivery ? 30 : GRID_LIVE_TARGET_FPS, sourceFps || 15);
+      const videoArgs = normalizeVideo
+        ? compatibilityVideoArgs({ fps: compatibilityFps, original: originalDelivery,
+            width: GRID_LIVE_MAX_WIDTH, height: GRID_LIVE_MAX_HEIGHT,
+            bitrate: originalDelivery ? 4000 : deliveryBitrateKbps })
+        : (sanitizeGridSource && deliveryMode === 'grid') || videoJaServe
         ? '-c:v copy'
         :
         // `veryfast`, não `ultrafast`: o preset mais rápido do x264 degradava
@@ -2771,8 +2925,9 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       // reprodução WebRTC em Chrome, Firefox, Edge e Safari; sem isto o AAC da
       // origem aparece no MediaMTX, mas frequentemente não chega tocável ao
       // navegador. Quando o operador não o escuta, o <video> permanece muted.
-      const audioArgs = wantsAudio
-        ? (sourceAudioCodec === 'opus' ? '-map 0:a:0? -c:a copy' : '-map 0:a:0? -c:a libopus -b:a 64k -ac 1 -ar 48000')
+      const audioArgs = wantsAudio && audioAvailable !== false
+        ? (sourceAudioCodec === 'opus' && !normalizeVideo ? '-map 0:a:0? -c:a copy'
+          : `-map 0:a:0? -c:a libopus -b:a 64k -ac 1 -ar 48000${normalizeVideo ? ' -af "asetpts=N/SR/TB,aresample=async=1:first_pts=0"' : ''}`)
         : '-an';
       // MediaMTX preenche $MTX_PATH e $RTSP_PORT automaticamente para o script.
       // Input and output need independent limits. The -threads in videoArgs
@@ -2780,7 +2935,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       // with host core count (26 threads observed for one 640x360 publisher).
       const publishUrl = this.buildInternalPublishRtspUrl(pathName);
       const buildFfmpegCommand = (videoArgs: string) =>
-        `ffmpeg -nostdin -hide_banner -loglevel warning -fflags +genpts+discardcorrupt+nobuffer ` +
+        `ffmpeg -nostdin -hide_banner -loglevel warning -fflags ${normalizeVideo ? '+genpts+discardcorrupt' : '+genpts+discardcorrupt+nobuffer'} ` +
         // -analyzeduration/-probesize: o padrão do FFmpeg analisa até 5s/5MB do input
         // antes de começar a transcodificar. Para câmeras H.264/H.265 conhecidas isso é
         // exagero e adiciona vários segundos ao COLD START (quando o runOnDemand reabre
@@ -2791,7 +2946,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
         // careful: validates bitstream integrity and drops malformed packets
         // instead of passing corrupted NAL units downstream (which causes
         // green frames in the browser until the next IDR keyframe arrives).
-        `-flags low_delay -err_detect careful -rtsp_transport ${inputTransport} ` +
+        `${normalizeVideo ? '' : '-flags low_delay '}-err_detect careful -rtsp_transport ${inputTransport} ` +
         `${liveDecoderInputArgs()} ` +
         `-i "${privateSourceUrl}" -map 0:v:0 ${videoArgs} ${audioArgs} ` +
         `-f rtsp -rtsp_transport tcp -muxdelay 0.1 -pkt_size 1200 "${publishUrl}"`;
@@ -2910,7 +3065,9 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       // A policy refresh must not evict viewers of the same physical source.
       // Explicit source/credential changes still apply; only defer tuning of
       // the existing publisher, and report its ACTUAL operations while draining.
-      if (!isSamePath && needsPublisher && hasSameSource
+      const compatibilityRepair = (normalizeVideo && !/-c:v (?!copy\b)\S+/.test(String(current.runOnDemand ?? '')))
+        || (compatibility.audio === 'invalid' && /-map 0:a/.test(String(current.runOnDemand ?? '')));
+      if (!compatibilityRepair && !isSamePath && needsPublisher && hasSameSource
         && (String(current.runOnDemand ?? '').includes(sourceUrl)
           || (sharedInput.shared && String(current.runOnDemand ?? '').includes(new URL(sharedInput.url).pathname)))) {
         let inUse = true; // Control-plane failure must not interrupt viewers.
@@ -2926,12 +3083,14 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
             deliveryMode, sourceIsOriginal,
             videoEncoded: /-c:v (?!copy\b)\S+/.test(current.runOnDemand),
             audioEncoded: /-c:a (?!copy\b)\S+/.test(current.runOnDemand),
+            audioAvailable, compatibility: compatibilityNotice,
           };
         }
       }
 
       if (isSamePath) {
         return {
+          compatibility: compatibilityNotice,
           pathName,
           sourceUrl,
           sourceVideoCodec,
@@ -2961,6 +3120,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
           'path preservado; nada foi recriado.',
         );
         return {
+          compatibility: compatibilityNotice,
           pathName,
           sourceUrl,
           sourceVideoCodec,
@@ -2986,6 +3146,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
 
     this.logger.log(`Path MediaMTX pronto ${pathName} -> ${this.sanitizeRtspUrl(sourceUrl)}`);
     return {
+      compatibility: compatibilityNotice,
       pathName,
       sourceUrl,
       sourceVideoCodec,

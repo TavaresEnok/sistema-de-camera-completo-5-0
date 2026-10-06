@@ -61,12 +61,21 @@ def run(args):
         spec=importlib.util.spec_from_file_location('runtime_bundle',root/'scripts/security/runtime-bundle.py');loader=importlib.util.module_from_spec(spec);spec.loader.exec_module(loader)
         manifest=loader.extract_verified(bundle,root/'infra/release-public.pem',stage/'verified',commit,state.get('securityVersion',1))
         if not state.get('databaseSchemaHash') or manifest.get('databaseSchemaHash')!=state['databaseSchemaHash']:
-            raise ValueError('Schema change requires an approved database migration')
+            transition=manifest.get('reviewedSchemaTransition') or {}
+            if not (getattr(args,'approve_motion_schema',False)
+                    and transition.get('from')==state.get('databaseSchemaHash')
+                    and transition.get('kind')=='additive'
+                    and transition.get('migration')=='20261006190000_camera_motion_sensitivity'):
+                raise ValueError('Schema change requires an approved database migration')
         metadata=json.loads(subprocess.run(['docker','inspect','vms-api'],check=True,capture_output=True,text=True).stdout)[0]
-        configured=metadata['Config']['Labels'].get('com.docker.compose.project.config_files','')
-        compose_files=[Path(value).resolve() for value in configured.split(',') if value]
+        compose_files=[]
+        for container in ['vms-api','vms-web','vms-ai-service']:
+            current=metadata if container=='vms-api' else json.loads(subprocess.run(['docker','inspect',container],check=True,capture_output=True,text=True).stdout)[0]
+            configured=current['Config']['Labels'].get('com.docker.compose.project.config_files','')
+            for value in configured.split(','):
+                if value and Path(value).resolve() not in compose_files:compose_files.append(Path(value).resolve())
         if not compose_files or any(not value.is_file() for value in compose_files):raise ValueError('Cannot preserve deployment overlays')
-        command=['docker','compose','--env-file',str(root/'infra/.env')]
+        command=['docker','compose','--project-name',metadata['Config']['Labels'].get('com.docker.compose.project','infra'),'--env-file',str(root/'infra/.env')]
         for file in compose_files:command+=['-f',str(file)]
         services=['api','web','ai-service']
         before={}
@@ -115,6 +124,7 @@ def run(args):
 if __name__=='__main__':
     parser=argparse.ArgumentParser();parser.add_argument('root',type=Path)
     parser.add_argument('--commit');parser.add_argument('--conferir',action='store_true')
+    parser.add_argument('--approve-motion-schema',action='store_true')
     # Accepted legacy option, but unsafe suppression of rollback is not honored.
     parser.add_argument('--sem-volta',action='store_true')
     try:run(parser.parse_args())

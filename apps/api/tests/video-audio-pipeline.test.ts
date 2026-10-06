@@ -99,6 +99,7 @@ async function configure(codec: string, mode: 'grid-audio' | 'original-audio', c
   const writes: any[] = [];
   Object.assign(service, {
     logger: { log() {}, warn() {}, debug() {} },
+    resolveLiveCompatibility: async () => ({ normalizeVideo: false, audio: 'healthy' }),
     resolvePushLiveSource: async () => ({ sourceUrl: 'rtsp://media:8554/input', codec, isHevc: codec === 'h265', width: 1920, height: 1080, fps: 20, profile: null }),
     buildInternalPublishRtspUrl: () => 'rtsp://media:8554/cam_test_grid_audio',
     getPath: async () => { if (current) return current; throw Object.assign(new Error('missing'), { status: 404 }); },

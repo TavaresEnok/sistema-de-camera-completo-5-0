@@ -1,0 +1,16 @@
+# Only mounted in an isolated, disposable network with no published ports.
+api: yes
+authMethod: internal
+authInternalUsers:
+  - user: any
+    permissions:
+      - action: read
+      - action: publish
+      - action: api
+      - action: metrics
+hls: yes
+hlsVariant: lowLatency
+pathDefaults:
+  runOnDemandStartTimeout: 15s
+paths:
+  all_others:

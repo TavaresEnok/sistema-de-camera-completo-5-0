@@ -920,8 +920,9 @@ export function LiveStreamPlayer({
       stage,
       reason,
       state: state ?? activeProtocolRef.current ?? 'not-playing',
+      deliveryMode,
     }, { headers: tokenHeadersRef.current, timeout: 5000 }).catch(() => undefined);
-  }, [cameraId]);
+  }, [cameraId, deliveryMode]);
 
   const failActiveProtocol = useCallback((reason: string) => {
     const active = activeProtocolRef.current;
@@ -1085,6 +1086,7 @@ export function LiveStreamPlayer({
               protocolOrder?: LiveProtocol[];
             } | null;
             liveDiagnostics?: LiveDiagnostics | null;
+            compatibility?: { adaptedVideo?: boolean; audioUnavailable?: boolean; message?: string | null } | null;
             protocols?: {
               posterUrl?: string | null;
               hlsUrl?: string | null;
@@ -1128,6 +1130,13 @@ export function LiveStreamPlayer({
           onGridSourceIsOriginal?.(isOriginal);
         }
         const liveDiagnostics = data?.liveDiagnostics ?? null;
+        const compatibility = (liveDiagnostics as (LiveDiagnostics & {
+          compatibility?: { audioUnavailable?: boolean; message?: string | null };
+        }) | null)?.compatibility;
+        if (compatibility?.audioUnavailable && deliveryMode.endsWith('-audio')) {
+          setNotice(compatibility.message ?? 'O áudio desta câmera está com problema. O vídeo continua disponível.');
+          setAudioSwitchMessage(null);
+        }
         mediaAuthTokenRef.current = streamToken;
         sourceVideoCodecRef.current = sourceCodec ?? null;
         setSourceVideoCodec(sourceCodec ?? null);
