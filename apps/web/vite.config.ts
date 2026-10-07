@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'node:path';
+import { sourceCreditPlugin, creditedAssetFileNames } from './build/source-credit.mjs';
 
 export default defineConfig(async () => {
   const { default: tailwindcss } = await import('@tailwindcss/vite');
@@ -15,6 +16,7 @@ export default defineConfig(async () => {
     plugins: [
       react(),
       tailwindcss(),
+      sourceCreditPlugin(),
       {
         name: 's2cam-frontend-version',
         generateBundle() {
@@ -42,6 +44,7 @@ export default defineConfig(async () => {
       chunkSizeWarningLimit: 700,
       rollupOptions: {
         output: {
+          assetFileNames: creditedAssetFileNames,
           manualChunks(id) {
             if (!id.includes('node_modules')) return undefined;
             if (id.includes('@radix-ui') || id.includes('cmdk') || id.includes('vaul')) {
