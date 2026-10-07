@@ -20,6 +20,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ensureApprovedCommit, acquireBuildLease } from './build-maintenance.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MOBILE_DIR = path.resolve(__dirname, '..');
@@ -92,12 +93,7 @@ function ensureBuildWorktree(commit, slug) {
   // Nesse caso o clone local ainda não conhece o commit. Busque o remoto sob
   // demanda e confira novamente; sem isso toda primeira geração da release
   // falha instantaneamente com "Not a valid object name".
-  try {
-    git(['cat-file', '-e', `${commit}^{commit}`], { cwd: REPO_ROOT });
-  } catch {
-    git(['fetch', '--prune', 'origin'], { cwd: REPO_ROOT });
-    git(['cat-file', '-e', `${commit}^{commit}`], { cwd: REPO_ROOT });
-  }
+  ensureApprovedCommit(REPO_ROOT, commit, process.env.BUILD_AGENT_VENDOR_SOURCE || '');
   fs.mkdirSync(BUILD_WORKTREES_DIR, { recursive: true, mode: 0o700 });
   const worktree = path.join(BUILD_WORKTREES_DIR, String(commit).toLowerCase());
   const mobile = path.join(worktree, 'apps', 'mobile');
@@ -208,23 +204,29 @@ function summarizeBuildFailure(log, code) {
   return 'O aplicativo anterior continua disponível. Tente gerar novamente; se o problema continuar, consulte o suporte.';
 }
 
-function processQueue() {
+async function processQueue() {
   if (running || queue.length === 0) return;
   const job = queue.shift();
   running = true;
-  job.status = 'building';
-  job.startedAt = new Date().toISOString();
-  saveState();
-
   let buildMobileDir;
+  let releaseLease;
   try {
+    releaseLease = await acquireBuildLease(BUILD_WORKTREES_DIR);
+    job.status = 'building';
+    job.startedAt = new Date().toISOString();
+    saveState();
     buildMobileDir = ensureBuildWorktree(job.sourceCommit, job.slug);
   } catch (error) {
     job.status = 'failed';
     job.finishedAt = new Date().toISOString();
-    job.error = error instanceof Error ? error.message : 'não foi possível preparar a release aprovada';
-    job.log = job.error;
+    job.log = error instanceof Error ? error.message : 'não foi possível preparar a release aprovada';
+    job.error = /permiss|permission|cannot lock ref/i.test(job.log)
+      ? 'Não foi possível acessar os arquivos necessários para preparar o aplicativo. Consulte o suporte.'
+      : /valid object|bad object|versão aprovada|release aprovada/i.test(job.log)
+        ? 'A versão aprovada ainda não está disponível para preparar o aplicativo. Consulte o suporte.'
+        : summarizeBuildFailure(job.log);
     saveState();
+    if (releaseLease) await releaseLease();
     running = false;
     processQueue();
     return;
@@ -243,7 +245,10 @@ function processQueue() {
   const append = (b) => { log = (log + b.toString()).slice(-8000); job.log = log; };
   child.stdout.on('data', append);
   child.stderr.on('data', append);
-  child.on('close', (code) => {
+  let finished = false;
+  const finish = async (code) => {
+    if (finished) return;
+    finished = true;
     job.finishedAt = new Date().toISOString();
     if (code === 0) {
       job.status = 'done';
@@ -258,9 +263,12 @@ function processQueue() {
       job.error = summarizeBuildFailure(log, code);
     }
     saveState();
+    await releaseLease();
     running = false;
     processQueue();
-  });
+  };
+  child.on('error', error => { append(error.message); void finish(1); });
+  child.on('close', code => { void finish(code); });
 }
 
 // ── Helpers de clientes ────────────────────────────────────────────────────
@@ -509,10 +517,28 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   const p = url.pathname;
 
-  if (p === '/health') return send(res, 200, { ok: true });
+  if (p === '/health') return send(res, 200, { ok: true, busy: running, queued: queue.length });
   if (!TOKEN || req.headers['x-build-token'] !== TOKEN) return send(res, 401, { error: 'unauthorized' });
 
   try {
+    // Read-only readiness check: never prepares a worktree, invokes Gradle,
+    // changes the version counter or queues an APK.
+    if (req.method === 'GET' && p === '/preflight') {
+      const commit = url.searchParams.get('sourceCommit') || '';
+      if (!/^[0-9a-f]{40}$/i.test(commit)) return send(res, 400, { error: 'versão aprovada inválida' });
+      let sourceAvailable = false;
+      try { git(['cat-file', '-e', `${commit}^{commit}`], { cwd: REPO_ROOT }); sourceAvailable = true; } catch { /* unavailable */ }
+      const disks = [BUILD_WORKTREES_DIR, os.homedir()].map(dir => {
+        const disk = fs.statfsSync(dir);
+        return { area: dir === BUILD_WORKTREES_DIR ? 'compilation' : 'toolchain', freeGB: Number((disk.bavail * disk.bsize / 1024 ** 3).toFixed(2)) };
+      });
+      let writable = true;
+      try { for (const dir of [BUILDS_DIR, BUILD_WORKTREES_DIR, path.join(REPO_ROOT, '.git')]) fs.accessSync(dir, fs.constants.W_OK); }
+      catch { writable = false; }
+      const minimumFreeGB = Number(MIN_FREE_GB);
+      return send(res, 200, { ok: sourceAvailable && writable && disks.every(d => d.freeGB >= minimumFreeGB),
+        sourceCommit: commit, sourceAvailable, writable, minimumFreeGB, disks, busy: running, queued: queue.length });
+    }
     if (req.method === 'GET' && p === '/clients') return send(res, 200, { clients: listClients() });
     if (req.method === 'POST' && p === '/clients') {
       const body = await readBody(req);

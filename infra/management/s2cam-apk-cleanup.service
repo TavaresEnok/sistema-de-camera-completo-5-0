@@ -1,0 +1,12 @@
+[Unit]
+Description=Safe cleanup of disposable Android build worktrees
+After=docker.service s2cam-mobile-build-agent.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /opt/ajustcam-management/vendor-source/runtime-20261005/infra/management/run-apk-cleanup.sh
+SuccessExitStatus=75
+Nice=15
+IOSchedulingClass=idle
+TimeoutStartSec=30min
+UMask=0077
