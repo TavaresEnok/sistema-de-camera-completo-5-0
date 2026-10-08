@@ -101,12 +101,17 @@ def run(args):
         media_ip = docker('inspect', media, '--format', '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}').strip()
         node("const {PrismaClient}=require('@prisma/client');const {CryptoService}=require('./dist/common/crypto/crypto.service');const p=new PrismaClient();const c=new CryptoService();const ip=" + json.dumps(media_ip) + ";Promise.all(['healthy','bframes','bad-audio'].map(n=>p.camera.create({data:{name:n,ip,rtspPort:8554,httpPort:80,username:'',passwordEncrypted:c.encrypt(''),rtspPath:'/fixture-'+n,sourceMode:'rtsp_pull',detectedVideoCodec:'h264',streamVideoCodec:'h264',detectedWidth:640,detectedHeight:360,detectedFps:10,streamWidth:640,streamHeight:360,streamFps:10,aiEnabled:false,recordingEnabled:false,enabled:true,status:'ONLINE'}}))).then(()=>console.log('fixture cameras created')).finally(()=>p.$disconnect())")
         print('fixtures_created', flush=True)
+        auth_script = "const fs=require('fs');const p=JSON.parse(fs.readFileSync(0,'utf8'));fetch('http://127.0.0.1:3000/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:'labadmin',password:p.password})}).then(async r=>{const data=await r.json();if(r.status!==201||!data.accessToken)throw Error('bootstrap_login_failed');console.log(JSON.stringify({status:r.status,accessToken:data.accessToken}))}).catch(()=>process.exitCode=1)"
+        # The token remains solely in this process's memory and stdin, never logs.
+        admin_login = json.loads(node(auth_script, input=json.dumps({'password': password})))
+        privacy_script = (Path(__file__).parent / 'tests/web-private-camera-flow.cjs').read_text()
+        report['privacy'] = json.loads(node(privacy_script, input=json.dumps({'password': password, 'mediaIp': media_ip, 'adminToken': admin_login['accessToken']})))
+        print('private_camera_http_flow_passed', flush=True)
         script = r'''
 const fs=require('fs');
 (async()=>{
 const input=JSON.parse(fs.readFileSync(0,'utf8'));const root='http://127.0.0.1:3000';
-const l=await fetch(root+'/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:'labadmin',password:input.password})});
-const login=await l.json();if(!l.ok)throw Error('bootstrap_login_failed');
+const l={status:input.loginStatus};const login={accessToken:input.adminToken};if(l.status!==201||!login.accessToken)throw Error('bootstrap_login_failed');
 const cameras=await(await fetch(root+'/cameras',{headers:{Authorization:'Bearer '+login.accessToken}})).json();
 const preferenceHeaders={Authorization:'Bearer '+login.accessToken,'Content-Type':'application/json'};
 const preferenceCamera=cameras.find(c=>c.name==='healthy');
@@ -204,9 +209,7 @@ await p.$disconnect();
 console.log(JSON.stringify({bootstrapLogin:{status:l.status,tokenPresent:!!login.accessToken},cases,hls:{status:200},detectorLabel:{defaultHidden:true,persistedPerCamera:true,invalidBooleanRejected:true,noAiOrRecordingChange:true},cpuMeasurement:{percent:summary.server.cpuUsagePercent,windowMs:summary.server.cpuUsageWindowMs},motionNotices:{realMotionEvent:true,manualPreserved:true,recordingNotStarted:true,authenticationRequired:true,disabledDetectorStopped:true},objectNotices:{realModelInference:objectInference,controlledEventFixtures:true,selectedClassesFiltered:true,unlicensedSelectionRejected:true,manualAndMotionRecordingPreserved:true,recordingNotStarted:true,authenticationRequired:true,disabledDetectorStopped:true}}));
 })().catch(e=>{console.error(e.message);process.exitCode=1});
 '''
-        report.update(json.loads(node(script, input=json.dumps({'password': password}))))
-        privacy_script = (Path(__file__).parent / 'tests/web-private-camera-flow.cjs').read_text()
-        report['privacy'] = json.loads(node(privacy_script, input=json.dumps({'password': password, 'mediaIp': media_ip})))
+        report.update(json.loads(node(script, input=json.dumps({'password': password, 'adminToken': admin_login['accessToken'], 'loginStatus': admin_login['status']}))))
         for case in report['cases']:
             path = case.pop('path')
             probe = json.loads(docker('exec', media, 'ffprobe', '-v', 'error', '-rtsp_transport', 'tcp',
