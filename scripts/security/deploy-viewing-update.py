@@ -101,6 +101,8 @@ def main():
     original = persistent.read_bytes()
     configuration = json.loads(original)
     backup = root / 'infra/backups/viewing-updates' / body['commit']
+    if backup.exists():
+        backup = backup.with_name(backup.name + '-retry-' + str(time.time_ns()))
     backup.mkdir(mode=0o700, parents=True, exist_ok=False)
     (backup / 'runtime-images-before.json').write_bytes(original)
     (backup / 'manifest.json').write_text(json.dumps(signed))
@@ -115,7 +117,8 @@ def main():
         command(['docker', 'exec', '-i', 'vms-postgres', 'pg_restore', '--list'], stdin=source)
     command(['docker', 'load', '-i', str(args.archive)])
     for service, expected in body['images'].items():
-        if inspect(expected['image'])['Id'] != expected['imageId']:
+        # Saving by immutable ID intentionally does not carry a mutable tag.
+        if inspect(expected['imageId'])['Id'] != expected['imageId']:
             raise ValueError('Loaded image differs from signed manifest')
         configuration['services'][service]['image'] = expected['imageId']
     configuration['services']['api'].setdefault('environment', {})['DRAC_VERSION'] = body['commit']
