@@ -1,4 +1,5 @@
 import { ArrayMaxSize, IsArray, IsBoolean, IsIP, IsIn, IsInt, IsNumber, IsOptional, IsString, Max, MaxLength, Min, ValidateIf } from 'class-validator';
+import { Transform } from 'class-transformer';
 
 const SOURCE_MODES = ['rtsp_pull', 'rtmp_push'] as const;
 // Agenda não é aceita enquanto não houver persistência de janelas, fuso e
@@ -167,6 +168,7 @@ export class CreateCameraDto {
 
   @IsOptional()
   @IsBoolean()
+  @Transform(({ obj, key }) => obj[key])
   showDetectorPercentage?: boolean;
 
   @IsOptional()

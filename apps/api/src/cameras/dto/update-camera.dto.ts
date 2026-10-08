@@ -1,5 +1,5 @@
 import { ArrayMaxSize, IsArray, IsBoolean, IsIP, IsIn, IsInt, IsISO8601, IsNumber, IsOptional, IsString, Max, MaxLength, Min, ValidateNested } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { DetectionZoneDto } from './detection-zone.dto';
 
 const RECORDING_MODES = ['continuous', 'motion', 'object', 'manual'] as const;
@@ -195,6 +195,7 @@ export class UpdateCameraDto {
 
   @IsOptional()
   @IsBoolean()
+  @Transform(({ obj, key }) => obj[key])
   showDetectorPercentage?: boolean;
 
   @IsOptional()
