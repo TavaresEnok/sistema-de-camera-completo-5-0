@@ -2922,6 +2922,17 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
     }, 1500).unref();
   }
 
+  private async stopLocalProcessesForShutdown() {
+    // A deploy is not an operator's stop request. Drain/finalize existing
+    // segments without changing recordingEnabled or the selected mode.
+    for (const [cameraId, state] of [...this.active]) {
+      state.stopRequested = true;
+      clearInterval(state.watcher);
+      await this.stopProcessAndWait(state);
+      await this.finalizeRecordingState(cameraId, state, state.process.exitCode);
+    }
+  }
+
   async onApplicationShutdown() {
     // ANTES de qualquer kill: desligar a API não pode disparar gravação nova.
     this.shuttingDown = true;
@@ -2958,7 +2969,7 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
       this.orphanRecoveryInterval = null;
     }
     if (this.controlMode === 'local') {
-      await this.stopAll();
+      await this.stopLocalProcessesForShutdown();
     }
     await this.durableManual?.release().catch(error => this.logger.warn(sanitizeSensitiveText(error)));
     if (this.redisPublisher) {

@@ -12,7 +12,6 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useAuthStore } from '../store/authStore';
 import { useThemeStore } from '../store/themeStore';
-import { useIsMobile } from '../hooks/use-mobile';
 import { useBrandingStore } from '../store/brandingStore';
 import { ADMIN_PAGE_PERMISSION, hasPermission, usePermissionsStore } from '../store/permissionsStore';
 import { useDeteccoesNaoVistas, formatarContador } from '../hooks/use-deteccoes-nao-vistas';
@@ -130,14 +129,15 @@ const ROLE_COLOR: Record<string, string> = {
 export function Sidebar({
   onAtalhosOpen,
   onSearchOpen,
+  drawer = false,
+  onNavigate,
 }: {
   onAtalhosOpen?: () => void;
   onSearchOpen?: () => void;
+  drawer?: boolean;
+  onNavigate?: () => void;
 }) {
-  const isMobile = useIsMobile();
-  // Desktop permanece sempre aberto. No celular a versão compacta continua
-  // automática por responsividade, sem botão ou preferência de recolhimento.
-  const isExpanded = !isMobile;
+  const isExpanded = true;
   const { user, logout } = useAuthStore();
   const { theme, setTheme } = useThemeStore();
   const [location] = useLocation();
@@ -176,10 +176,11 @@ export function Sidebar({
 
   return (
     <motion.aside
-      animate={{ width: isExpanded ? 240 : 56 }}
+      animate={{ width: drawer ? '100%' : 240 }}
       transition={{ type: 'spring', stiffness: 320, damping: 32 }}
       className="sidebar-shell relative flex flex-col h-full overflow-hidden shrink-0"
-      style={{ minWidth: isExpanded ? 240 : 56 }}
+      style={{ minWidth: drawer ? 0 : 240 }}
+      onClick={(event) => { if ((event.target as HTMLElement).closest('a[href]')) onNavigate?.(); }}
     >
       {/* ── Brand header ── */}
       <div className={`sidebar-brand flex items-center justify-center px-3 shrink-0 ${logoDataUrl && isExpanded ? 'h-24' : 'h-14'}`}>

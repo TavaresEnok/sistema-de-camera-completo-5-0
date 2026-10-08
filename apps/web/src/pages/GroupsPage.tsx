@@ -451,7 +451,7 @@ export default function GroupsPage() {
                 {selGroup.cameras.length} câmeras · {groupPerms.length} usuários com acesso
               </p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {isAdmin && (
                 <div
                   className="flex items-center gap-2.5 h-8 rounded-md border border-border px-3"
@@ -508,7 +508,7 @@ export default function GroupsPage() {
           </div>
 
           {/* Tabs */}
-          <div className="px-6 border-b border-border shrink-0 flex items-center gap-0">
+          <div className="px-3 sm:px-6 border-b border-border shrink-0 flex flex-wrap items-center gap-0">
             {TABS.map((t) => (
               <button key={t.id} onClick={() => setTab(t.id)}
                 className={cn(

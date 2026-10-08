@@ -298,7 +298,7 @@ export default function UsuariosPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="px-6 py-3 border-b border-border shrink-0 flex items-center justify-end gap-2">
+      <div className="page-actions px-6 py-3 border-b border-border shrink-0 flex flex-wrap items-center justify-end gap-2">
           <div className="input-wrap w-44">
             <span className="input-icon"><Search className="w-3.5 h-3.5" /></span>
             <input className="input" style={{ height: 32, fontSize: 12 }} value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar usuário..." />
@@ -312,7 +312,7 @@ export default function UsuariosPage() {
       </div>
 
       {/* Filtros por papel */}
-      <div className="px-5 py-2 border-b border-border shrink-0 flex gap-1">
+      <div className="px-5 py-2 border-b border-border shrink-0 flex flex-wrap gap-1">
         {ROLE_FILTS.map((f) => (
           <button key={f.v} onClick={() => setRoleFilter(f.v)} className={`ops-pill ${roleFilter === f.v ? 'ops-pill-active' : ''}`}>
             {f.l}

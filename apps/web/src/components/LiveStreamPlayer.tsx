@@ -2734,7 +2734,7 @@ export function LiveStreamPlayer({
               className="inline-flex items-center gap-0.5 rounded-md border border-white/15 bg-black/60 p-0.5 backdrop-blur-sm shadow-sm"
             >
               {([
-                ['instant', 'Instantâneo', 'Substream da câmera: imagem menor, menor latência e menos banda. Use em redes lentas ou muitas câmeras.'],
+                ['instant', 'Instantâneo', 'Prioriza menor atraso e usa a imagem menor da câmera quando disponível. Se a câmera enviar apenas 1080p, essa resolução pode ser mantida para evitar processamento extra.'],
                 [
                   'max',
                   'Máxima resolução',
@@ -2775,7 +2775,7 @@ export function LiveStreamPlayer({
               {videoRef.current.videoWidth}×{videoRef.current.videoHeight}
             </span>
           ) : null}
-          {!compactLiveOverlay && sourceVideoCodec ? (
+          {!compactLiveOverlay && showsVideoTranscode ? (
             <span
               className={`inline-flex h-6 items-center gap-1 rounded border px-2 text-[10px] font-semibold uppercase tracking-wide ${
                 showsVideoTranscode
@@ -2788,7 +2788,7 @@ export function LiveStreamPlayer({
                   : undefined
               }
             >
-              {showsVideoTranscode ? 'Vídeo otimizado' : 'Qualidade original'}
+              Vídeo otimizado
             </span>
           ) : null}
           {!compactLiveOverlay && measuredBitrateKbps != null ? (

@@ -413,8 +413,8 @@ export default function InvestigationPage() {
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background">
-      <div className="flex items-center justify-between gap-4 border-b border-border bg-card px-5 py-3 shrink-0">
+    <div className="investigation-workspace flex h-full min-h-0 flex-col bg-background">
+      <div className="investigation-header flex flex-wrap items-center justify-between gap-4 border-b border-border bg-card px-5 py-3 shrink-0">
         <div className="flex min-w-0 items-center gap-3">
           <ShieldAlert className="h-4 w-4 text-[hsl(var(--primary))] shrink-0" />
           {editingNome ? (
@@ -433,7 +433,7 @@ export default function InvestigationPage() {
             </button>
           )}
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex flex-wrap min-w-0 items-center gap-2">
           <Select value={investigationId || '__new__'} onValueChange={(value) => {
             if (value === '__new__') {
               setInvestigationId('');
@@ -472,7 +472,7 @@ export default function InvestigationPage() {
       </div>
 
       <div className="border-b border-border bg-card px-5 py-3 shrink-0">
-        <div className="flex items-center gap-3">
+        <div className="investigation-filters flex flex-wrap min-w-0 items-center gap-3">
           <input value={listSearch} onChange={(event) => setListSearch(event.target.value)} className="h-8 w-40 rounded border border-border bg-background px-2 text-xs" placeholder="Buscar casos" />
           <Select value={listStatusFilter} onValueChange={(value) => setListStatusFilter(value as typeof listStatusFilter)}>
             <SelectTrigger className="h-8 w-36 text-xs"><SelectValue placeholder="Status caso" /></SelectTrigger>
@@ -647,7 +647,7 @@ export default function InvestigationPage() {
         )}
       </div>
 
-      <div className="flex flex-1 min-h-0">
+      <div className="investigation-body flex flex-1 min-h-0">
         <div className="w-72 shrink-0 border-r border-border bg-card">
           <div className="border-b border-border px-4 py-3">
             <div className="text-xs font-semibold">Eventos no intervalo</div>
@@ -672,7 +672,7 @@ export default function InvestigationPage() {
 
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="flex-1 overflow-auto p-4">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {selectedCams.map((camId, index) => {
                 const camera = cameras.find((item) => item.id === camId);
                 if (!camera) return null;

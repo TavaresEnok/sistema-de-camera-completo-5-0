@@ -34,7 +34,7 @@ export function StatusStrip() {
 
   return (
     <div
-      className="h-6 shrink-0 flex items-center px-3 sm:px-4 border-t border-border bg-sidebar select-none"
+      className="status-strip h-6 shrink-0 flex items-center px-3 sm:px-4 border-t border-border bg-sidebar select-none"
       style={{ fontSize: '10px' }}
     >
       {/* Left: system status */}

@@ -4,13 +4,16 @@ import * as os from 'node:os';
 import { isManagedLivePublisher } from './transcode-admission.helper';
 
 export class LiveCapacityException extends ServiceUnavailableException {
-  constructor() {
-    const message = 'Capacidade de visualização ocupada. Feche algumas câmeras para abrir esta. Tentaremos novamente em instantes.';
+  constructor(reason: 'budget' | 'cpu' | 'memory' | 'unavailable' = 'budget') {
+    const message = reason === 'budget'
+      ? 'Há muitas imagens sendo ajustadas ao mesmo tempo. Tentaremos abrir esta câmera novamente em instantes.'
+      : 'Estamos aguardando recursos para abrir esta câmera. Tentaremos novamente em instantes.';
     super({
       error: 'live_capacity_reached',
       message,
       userMessage: message,
       retryAfterSeconds: 30,
+      reason,
     });
   }
 }
@@ -28,7 +31,7 @@ export function liveCapacityDefaults() {
   const cores = effectiveLiveCpus(os.availableParallelism(), quota);
   // Three weighted points per CPU allows a 6x6 grid of small H.265 streams on
   // a 30-core installation (36 × cost 2 = 72), while reserving headroom for
-  // recording/AI. Runtime pressure still closes admission at 75% host load.
+  // recording/AI. Actual CPU pressure closes admission at 75% busy CPU.
   return { cores, processes: Math.max(2, Math.floor(cores * 4)), points: Math.max(2, Math.floor(cores * 3)) };
 }
 
@@ -87,10 +90,12 @@ export class LiveCapacityBudget {
     for (const [key, value] of this.pending) if (!active.has(key)) active.set(key, value.cost);
     const usedPoints = [...active.values()].reduce((sum, value) => sum + value, 0);
     const memoryReserve = Math.max(512 * 1024 * 1024, pressure.totalMemory * 0.1);
-    if (active.size >= limits.processes || usedPoints + cost > limits.points
-      || pressure.cpuPercent >= 75 || (pressure.loadRatio ?? 0) >= 0.75 || pressure.availableMemory < memoryReserve) {
-      throw new LiveCapacityException();
-    }
+    if (active.size >= limits.processes || usedPoints + cost > limits.points)
+      throw new LiveCapacityException('budget');
+    // Load average includes disk waits and still reflects past activity. It is
+    // diagnostic data, not evidence that CPU is busy now; never gate on it.
+    if (pressure.cpuPercent >= 75) throw new LiveCapacityException('cpu');
+    if (pressure.availableMemory < memoryReserve) throw new LiveCapacityException('memory');
     this.pending.set(path, { cost, expires: now + 30_000 });
   }
 }

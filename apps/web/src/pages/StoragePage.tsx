@@ -256,13 +256,13 @@ export default function MonitoramentoPage() {
       </StorageSection>
 
       <StorageSection title="Uso de armazenamento" aria-label="Uso de armazenamento" open={openStorageSections.cameras} onToggle={() => toggleStorageSection('cameras')}>
-        <div className="px-5 py-4 border-b border-border flex items-center justify-between gap-3">
+        <div className="px-5 py-4 border-b border-border flex flex-wrap items-center justify-between gap-3">
           <div>
             <div className="text-xs font-semibold text-[hsl(var(--muted-foreground))]">Gravações e clipes exportados no período selecionado</div>
           </div>
-          <div className="flex items-center gap-2">
-            <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="h-8 rounded border border-border bg-background px-2 text-xs" />
-            <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className="h-8 rounded border border-border bg-background px-2 text-xs" />
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <input aria-label="Data inicial do uso de armazenamento" type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="h-8 min-w-0 rounded border border-border bg-background px-2 text-xs" />
+            <input aria-label="Data final do uso de armazenamento" type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className="h-8 min-w-0 rounded border border-border bg-background px-2 text-xs" />
           </div>
         </div>
         <div className="px-5 py-3 text-xs text-[hsl(var(--muted-foreground))]">

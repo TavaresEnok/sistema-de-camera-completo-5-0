@@ -724,11 +724,15 @@ export class CameraStreamController {
             cpuMultiplier: null, // Cost depends on resolution, codec and hardware; not a measurement.
             reason: compatibility?.adaptedVideo
               ? 'A câmera precisa de adaptação para reproduzir o vídeo.'
+              : !isHevcCodec(originalCodec)
+              ? 'A imagem foi reduzida para deixar a visualização mais leve.'
               : supportsOriginalOnClient
               ? 'A fonte é H.265 e este modo de entrega exige conversão.'
               : 'Este navegador não decodifica H.265, então o servidor converte para H.264.',
             hint: compatibility?.adaptedVideo
               ? 'O sistema ajusta a transmissão automaticamente.'
+              : !isHevcCodec(originalCodec)
+              ? 'Máxima resolução mantém a imagem original sem essa redução.'
               : supportsOriginalOnClient
               ? 'O modo "Máxima qualidade" entrega H.265 sem conversão.'
               : 'Um cliente com H.265/WebRTC reproduz o codec direto, sem custo de conversão.',

@@ -689,7 +689,7 @@ export function DetectionZonesEditor({ cameraId, cameraName, configurationRevisi
           )))}
           {!drawing && !panMode && !readOnly && zones.filter((z) => z.id === selectedZone).flatMap((zone) => zone.points.map(([x, y], index) => (
             <g key={`${zone.id}-${index}`}>
-              <circle cx={x * 100} cy={y * 100} r={2.4} fill="transparent" stroke="none" className="cursor-move" tabIndex={0} role="button" aria-label={`Mover ponto ${index + 1} de ${zone.name}`}
+              <circle cx={x * 100} cy={y * 100} r={2.4} fill="transparent" stroke="none" className="perimeter-handle cursor-move" tabIndex={0} role="button" aria-label={`Mover ponto ${index + 1} de ${zone.name}`}
                 onPointerDown={(event) => { if (saving) return; event.stopPropagation(); remember(); drag.current = { id: zone.id, index }; event.currentTarget.setPointerCapture(event.pointerId); }}
                 onKeyDown={(event) => {
                   const delta = event.shiftKey ? 0.01 : 0.0025;

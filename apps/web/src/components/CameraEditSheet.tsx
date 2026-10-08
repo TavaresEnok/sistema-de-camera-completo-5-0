@@ -516,7 +516,7 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
 
   return (
     <Sheet open={open} onOpenChange={(o) => !o && close()}>
-      <SheetContent className="w-full sm:max-w-[560px] flex flex-col p-0 gap-0" onInteractOutside={(event) => { if (dirty || saving || ingestBusy) event.preventDefault(); }}>
+      <SheetContent className="responsive-form w-full sm:max-w-[560px] flex flex-col p-0 gap-0" onInteractOutside={(event) => { if (dirty || saving || ingestBusy) event.preventDefault(); }}>
         <SheetHeader className="px-5 py-4 border-b border-border shrink-0 space-y-0 text-left">
           <div className="flex items-center gap-3">
             <span className={cn('w-2 h-2 rounded-full shrink-0', camera.isOnline ? 'bg-[hsl(var(--status-online))]' : 'bg-[hsl(var(--status-offline))]')} />
@@ -536,7 +536,7 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
           <>
             <fieldset disabled={saving || ingestBusy} className="flex-1 overflow-y-auto min-h-0">
               <Tabs defaultValue="geral" className="flex flex-col">
-                <TabsList className="mx-4 mt-4 grid h-10 shrink-0 grid-cols-4 gap-1 rounded-lg border border-border bg-muted/45 p-1">
+                <TabsList className="mx-4 mt-4 grid h-auto min-h-10 shrink-0 grid-cols-2 sm:grid-cols-4 gap-1 rounded-lg border border-border bg-muted/45 p-1">
                   <TabsTrigger value="geral" className="rounded-md text-xs text-muted-foreground data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Geral</TabsTrigger>
                   <TabsTrigger value="conexao" className="rounded-md text-xs text-muted-foreground data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Conexão</TabsTrigger>
                   <TabsTrigger value="stream" className="rounded-md text-xs text-muted-foreground data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Vídeo</TabsTrigger>

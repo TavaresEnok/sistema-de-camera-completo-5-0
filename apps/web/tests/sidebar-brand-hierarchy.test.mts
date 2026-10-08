@@ -28,6 +28,9 @@ test('grupos do menu possuem hierarquia visual global e independente da marca', 
 
 test('menu lateral não oferece recolhimento manual no desktop', () => {
   assert.doesNotMatch(sidebar, /button-sidebar-toggle|sidebarStore|Recolher menu lateral|Expandir menu lateral/);
-  assert.match(sidebar, /const isExpanded = !isMobile/);
+  assert.match(sidebar, /const isExpanded = true/);
+  const layout = fs.readFileSync(path.join(root, 'src/layouts/AppLayout.tsx'), 'utf8');
+  assert.match(layout, /!compact && <Sidebar/);
+  assert.match(layout, /aria-label="Abrir menu"/);
   assert.equal(fs.existsSync(path.join(root, 'src/store/sidebarStore.ts')), false);
 });

@@ -8,7 +8,7 @@ test('capacidade agenda nova tentativa espaçada e não expõe diagnóstico inte
   const last = liveCapacityWait(503, body, 1)!;
   assert.equal(first.delayMs, 30_000);
   assert.equal(last.delayMs, 40_000);
-  assert.match(first.message, /Capacidade de visualização ocupada/);
+  assert.match(first.message, /aguardando recursos/);
   assert.doesNotMatch(first.message, /secret/);
 });
 

@@ -3189,7 +3189,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       runtime = await this.getRuntimePathItems();
     } catch {
       // Unknown occupancy cannot authorize a new CPU-heavy conversion.
-      throw new LiveCapacityException();
+      throw new LiveCapacityException('unavailable');
     }
     this.capacityBudget.reserve(pathName, cost, runtime, {
       processes: this.maxTranscodes, points: this.maxTranscodePoints,

@@ -129,7 +129,7 @@ function proxyComOrcamento(opts: { budget: number; envOnDemand?: boolean; vistas
   // correção removida, porque o helper existia e o `desiredPath` continuava lendo
   // a env global. O que importa é o payload do POST /v3/config/paths/add.
   const enviados: Array<{ path: string; body: any }> = [];
-  const svc: any = Object.create(MediamtxProxyService.prototype);
+  const svc: any = new MediamtxProxyService({ get: () => undefined } as any, {} as any, {} as any);
   svc.capacityBudget = { register() {} };
   svc.capacityDefaults = { cores: 4 };
   svc.logger = { warn() {}, log() {}, debug() {}, error() {} };
@@ -157,6 +157,7 @@ function proxyComOrcamento(opts: { budget: number; envOnDemand?: boolean; vistas
     profile: { channel: 1, subtype: 0 }, sourceUrl: 'rtsp://x/main', isHevc: false,
   });
   svc.sourceGateway = undefined;
+  svc.resolveLiveCompatibility = async () => ({ normalizeVideo: false, audio: 'valid' });
   svc.apiRequest = async (method: string, path: string, body?: any) => {
     if (method === 'POST') enviados.push({ path, body });
     if (method === 'GET') {

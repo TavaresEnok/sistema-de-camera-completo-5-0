@@ -9,9 +9,13 @@ export function isManagedLivePublisher(path: any): boolean {
  * in MediaMTX before any new worker, never terminates an existing stream.
  * Base64 shields awk $fields from MediaMTX's environment expansion.
  */
-export function withHostPressureAdmission(command: string, cores: number): string {
-  const safeCores = Math.max(0.25, Math.min(2048, Number(cores) || 1));
-  const check = `awk 'NR == 1 { if ($1 >= ${safeCores * 0.75}) exit 75 }' /proc/loadavg && `
+export function withHostPressureAdmission(command: string, _cores: number): string {
+  // Measure busy CPU over a short interval. /proc/loadavg also counts disk
+  // waits and retains past pressure: it blocked healthy starts below 70% CPU.
+  // awk excludes guest time (already part of user/nice) and counts iowait idle.
+  const readCpu = `awk '/^cpu / { total=0; for(i=2;i<=9;i++) total+=$i; print total, $5+$6; exit }' /proc/stat`;
+  const check = `before=$(${readCpu}); sleep 0.3; `
+    + `awk -v before="$before" '/^cpu / { split(before,b," "); total=0; for(i=2;i<=9;i++) total+=$i; elapsed=total-b[1]; idle=$5+$6-b[2]; if(elapsed<=0 || (elapsed-idle)*100/elapsed>=75) exit 75; exit }' /proc/stat && `
     + `awk '/^MemTotal:/ { total=$2 } /^MemAvailable:/ { available=$2 } END { if (available < 524288 || available < total*0.1) exit 75 }' /proc/meminfo`;
   const encoded = Buffer.from(check).toString('base64');
   return `printf %s ${encoded} | base64 -d | sh || { echo 'Live conversion host pressure reached' >&2; exit 75; }; ${command}`;

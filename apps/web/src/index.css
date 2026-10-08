@@ -1,5 +1,6 @@
 /*! Feito por by Enok Tavares https://github.com/TavaresEnok/ */
 @import "tailwindcss";
+@import "./responsive.css";
 @import "tw-animate-css";
 @plugin "@tailwindcss/typography";
 

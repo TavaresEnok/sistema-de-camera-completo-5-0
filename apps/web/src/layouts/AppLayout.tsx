@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useLocation } from 'wouter';
 import { AnimatePresence, motion } from 'framer-motion';
-import { AlertTriangle, RefreshCw, Sun, Moon } from 'lucide-react';
+import { AlertTriangle, RefreshCw, Sun, Moon, Menu } from 'lucide-react';
 import { Sidebar } from '../components/Sidebar';
 import { AvisoDeLicenca } from '../components/AvisoDeLicenca';
 import { StatusStrip } from '../components/StatusStrip';
@@ -15,6 +15,8 @@ import { useAuthStore } from '../store/authStore';
 import { PRODUCT_TAGLINE } from '../lib/product-brand';
 import { ADMIN_PAGE_PERMISSION, hasPermission, usePermissionsStore } from '../store/permissionsStore';
 import { confirmNavigation } from '../hooks/use-unsaved-changes';
+import { useCompactLayout } from '../hooks/use-compact-layout';
+import { Sheet, SheetContent, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 
 const PAGE_TITLES: Record<string, string> = {
   '/live':          'Ao Vivo',
@@ -76,6 +78,9 @@ export function AppLayout({ children, active = true, contentKey }: AppLayoutProp
   const [location, setLocation] = useLocation();
   const [cmdOpen, setCmdOpen] = useState(false);
   const [shortcutsOpen, setAtalhosOpen] = useState(false);
+  const compact = useCompactLayout();
+  const [menuOpen, setMenuOpen] = useState(false);
+  useEffect(() => { setMenuOpen(false); }, [location, active, compact]);
   const { theme, setTheme } = useThemeStore();
   const cameras = useVmsDataStore((state) => state.cameras);
   const stale = useVmsDataStore((state) => state.stale);
@@ -123,17 +128,28 @@ export function AppLayout({ children, active = true, contentKey }: AppLayoutProp
   }, [active, pagePaths, setLocation]);
 
   return (
-    <div className="flex h-[100dvh] w-full overflow-hidden bg-background">
-      <Sidebar
+    <div className="app-shell flex h-[100dvh] w-full overflow-hidden bg-background">
+      {!compact && <Sidebar
         onAtalhosOpen={() => setAtalhosOpen(true)}
         onSearchOpen={() => setCmdOpen(true)}
-      />
+      />}
 
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
         {/* Header */}
-        <header className="h-12 flex items-center px-5 border-b border-border bg-card/60 backdrop-blur-sm shrink-0">
+        <header className="app-header h-12 flex items-center gap-2 px-3 sm:px-5 border-b border-border bg-card/60 backdrop-blur-sm shrink-0">
+          {compact && <Sheet open={active && menuOpen} onOpenChange={setMenuOpen}>
+            <SheetTrigger asChild>
+              <button type="button" aria-label="Abrir menu" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-border" data-testid="mobile-menu">
+                <Menu className="h-5 w-5" />
+              </button>
+            </SheetTrigger>
+            <SheetContent side="left" className="mobile-navigation-sheet w-[min(320px,calc(100vw-32px))] p-0 sm:max-w-none" aria-describedby={undefined}>
+              <SheetTitle className="sr-only">Menu principal</SheetTitle>
+              <Sidebar drawer onAtalhosOpen={() => { setMenuOpen(false); setAtalhosOpen(true); }} onSearchOpen={() => { setMenuOpen(false); setCmdOpen(true); }} onNavigate={() => setMenuOpen(false)} />
+            </SheetContent>
+          </Sheet>}
           <div className="flex-1 min-w-0">
-            <h1 className="text-[13px] font-semibold text-foreground leading-none">{pageTitle}</h1>
+            <h1 className="truncate text-[13px] font-semibold text-foreground leading-tight">{pageTitle}</h1>
             <div className="text-[10px] text-[hsl(var(--muted-foreground)_/_0.68)] mt-0.5">
               {cameras.length} câmera{cameras.length === 1 ? '' : 's'} cadastrada{cameras.length === 1 ? '' : 's'}
             </div>

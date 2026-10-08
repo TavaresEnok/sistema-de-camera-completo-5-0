@@ -1,0 +1,85 @@
+/*! Feito por by Enok Tavares https://github.com/TavaresEnok/ */
+
+/* Camada comum para páginas operacionais e portais Radix. Diagramas, vídeo e
+   tabelas preservam sua geometria; a rolagem fica no próprio componente. */
+@media (max-width: 1199px) {
+  .app-shell { padding-inline: env(safe-area-inset-left) env(safe-area-inset-right); }
+  .app-header { height: auto; min-height: 56px; padding-top: env(safe-area-inset-top); }
+  .app-header h1 { font-size: 14px; }
+  .status-strip { padding-bottom: env(safe-area-inset-bottom); height: auto; min-height: 26px; }
+  .toolbar, .page-hdr, .page-actions { flex-wrap: wrap; height: auto; gap: 8px; }
+  .toolbar > *, .page-hdr > * { max-width: 100%; min-width: 0; }
+  .toolbar .segment { flex-wrap: wrap; }
+  .toolbar .live-status-summary { margin-left: 0; }
+  .toolbar .seg-btn { width: auto; padding-inline: 10px; }
+  .toolbar .toolbar-label { display: inline; }
+  .app-shell .grid > * { min-width: 0; }
+  [aria-label="Qualidade da transmissão ao vivo"] { max-width: 100%; flex-wrap: wrap; }
+  [aria-label="Qualidade da transmissão ao vivo"] button { min-height: 36px; }
+  .app-shell :is(.btn,.ops-button,.ops-pill,.seg-btn),
+  :is([role="dialog"],[role="alertdialog"]) :is(.btn,.ops-button,.ops-pill,.seg-btn),
+  :is(.app-header,.mobile-navigation-sheet,.responsive-side-panel) button,
+  .app-shell button:has(> svg):not([role="switch"]):not([role="checkbox"]),
+  :is([role="dialog"],[role="alertdialog"]) button:has(> svg):not([role="switch"]):not([role="checkbox"]) {
+    min-height: 44px; min-width: 44px; touch-action: manipulation;
+  }
+  .mobile-navigation-sheet .sidebar-item { min-height: 48px; }
+  .mobile-navigation-sheet .sidebar-item span { font-size: 14px; }
+  .mobile-navigation-sheet .sidebar-brand { padding-right: 44px; }
+  .mobile-navigation-sheet nav { padding-bottom: max(16px, env(safe-area-inset-bottom)); }
+  :is(.app-shell,[role="dialog"],[role="alertdialog"]) :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),select,textarea) {
+    font-size: 16px !important; max-width: 100%; min-height: 44px;
+  }
+  :is(.app-shell,[role="dialog"]) [role="combobox"] { min-height: 44px; }
+  :is(.app-shell,[role="dialog"]) [role="tab"] { min-height: 44px; }
+  [role="menuitem"], [role="option"] { min-height: 40px; }
+  [data-responsive-sheet] { max-width: 100vw; max-height: 100dvh; padding-bottom: env(safe-area-inset-bottom); }
+  [data-responsive-dialog], [role="alertdialog"] {
+    max-width: calc(100vw - 24px); max-height: calc(100dvh - 24px);
+    overflow-y: auto; overscroll-behavior: contain;
+  }
+  :is(.app-shell,[role="dialog"]) :is(div,section):has(> table) {
+    max-width: 100%; overflow-x: auto;
+  }
+  .camera-filters { width: 100%; margin-left: 0; }
+  .camera-filters > * { flex: 1 1 150px; min-width: 0; }
+  .camera-touch-actions { max-width: calc(100% - 8px); flex-wrap: wrap; justify-content: center; }
+  .playback-timeline, .playback-minimap { min-height: 44px; }
+  .responsive-side-panel { overscroll-behavior: contain; }
+  .investigation-workspace { overflow-y: auto; }
+  .investigation-workspace > * { min-width: 0; }
+  .investigation-workspace :is(.mt-3.flex,.mt-2.flex) { flex-wrap: wrap; }
+  .investigation-filters > * { max-width: 100%; min-width: 0; }
+  .investigation-workspace > .investigation-body { flex: 0 0 auto; flex-direction: column; }
+  .investigation-body > * { width: 100%; flex: 0 0 auto; min-height: 0; }
+  .investigation-body > :first-child { max-height: 320px; overflow-y: auto; }
+  .investigation-body > :nth-child(2) { order: -1; }
+  .investigation-workspace > :last-child { flex-wrap: wrap; gap: 8px; }
+  .investigation-workspace > :last-child > div { flex-wrap: wrap; gap: 8px; }
+}
+
+@media (max-width: 1023px) {
+  .settings-sections { display: flex; gap: 4px; overflow-x: auto; }
+  .settings-sections button { width: auto; flex: 0 0 auto; padding: 8px; }
+  .settings-section-description { display: none; }
+}
+
+@media (max-width: 639px) {
+  .page-hdr, .page-actions, .toolbar { padding: 10px 12px; }
+  .responsive-form :is(.grid-cols-2,.grid-cols-3) { grid-template-columns: minmax(0,1fr); }
+  .responsive-form :is(.col-span-2,.col-span-3) { grid-column: auto; }
+  .responsive-form fieldset, .responsive-form label { min-width: 0; }
+  .responsive-form input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), .responsive-form textarea { width: 100%; }
+  [data-responsive-dialog], [role="alertdialog"] { padding: 20px 16px; }
+  .cameras-workspace .page-actions > .btn { flex: 1 1 130px; white-space: normal; }
+  .cameras-workspace > div > div:has(.camera-filters) { padding-inline: 12px; }
+  .status-strip > div:nth-child(2) { padding-inline: 8px; gap: 8px; }
+  .status-strip > div:last-child { flex: 0 0 auto; }
+  .toolbar > .input { flex: 1 1 140px; }
+  .toolbar .live-status-summary { display: none; }
+}
+
+@media (pointer: coarse) {
+  .perimeter-handle { stroke: transparent; stroke-width: 32px; vector-effect: non-scaling-stroke; pointer-events: all; }
+  .rdp-root { --cell-size: 2.25rem; }
+}

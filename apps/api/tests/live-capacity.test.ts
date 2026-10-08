@@ -28,11 +28,16 @@ test('108 fontes diferentes respeitam o orçamento mesmo antes de a primeira pub
 });
 
 test('CPU e memória reservam recursos para gravação, IA e banco sem bloquear cópia de vídeo', () => {
-  for (const pressure of [{ ...room, cpuPercent: 80 }, { ...room, availableMemory: 1e8 }, { ...room, loadRatio: 0.8 }]) {
+  for (const pressure of [{ ...room, cpuPercent: 80 }, { ...room, availableMemory: 1e8 }]) {
     const budget = new LiveCapacityBudget();
     assert.throws(() => budget.reserve('cam_a_grid', 2, [], { processes: 100, points: 100 }, pressure), LiveCapacityException);
     assert.doesNotThrow(() => budget.reserve('cam_b_grid', 0, [], { processes: 100, points: 100 }, pressure));
   }
+});
+
+test('carga acumulada alta não bloqueia uma CPU que já está livre', () => {
+  const budget = new LiveCapacityBudget();
+  assert.doesNotThrow(() => budget.reserve('cam_a_grid', 2, [], { processes: 10, points: 20 }, { ...room, loadRatio: 2 }));
 });
 
 test('guarda no processo de mídia recusa pressão mesmo quando o cliente reutiliza URL em cache', (t) => {
@@ -42,16 +47,26 @@ test('guarda no processo de mídia recusa pressão mesmo quando o cliente reutil
   assert.doesNotMatch(command, /\$/, 'MediaMTX não pode consumir variáveis do awk');
   const encoded = /printf %s ([A-Za-z0-9+/=]+)/.exec(command)![1];
   const script = Buffer.from(encoded, 'base64').toString('utf8')
-    .replace('/proc/loadavg', join(root, 'load'))
+    .replaceAll('/proc/stat', join(root, 'stat'))
+    .replace('sleep 0.3', `cp ${join(root, 'next-stat')} ${join(root, 'stat')}`)
     .replace('/proc/meminfo', join(root, 'memory'));
-  writeFileSync(join(root, 'load'), '1.00 1.00 1.00 1/100 123\n');
+  const initial = () => writeFileSync(join(root, 'stat'), 'cpu 100 0 0 900 0 0 0 0 0 0\n');
+  initial();
+  writeFileSync(join(root, 'next-stat'), 'cpu 120 0 0 980 0 0 0 0 0 0\n');
   writeFileSync(join(root, 'memory'), 'MemTotal: 8000000 kB\nMemAvailable: 4000000 kB\n');
   assert.equal(spawnSync('sh', ['-c', script]).status, 0);
-  writeFileSync(join(root, 'load'), '3.5 1.00 1.00 1/100 123\n');
+  initial();
+  writeFileSync(join(root, 'next-stat'), 'cpu 180 0 0 920 0 0 0 0 0 0\n');
   assert.equal(spawnSync('sh', ['-c', script]).status, 75);
-  writeFileSync(join(root, 'load'), '1.00 1.00 1.00 1/100 123\n');
+  initial();
+  writeFileSync(join(root, 'next-stat'), 'cpu 120 0 0 980 0 0 0 0 0 0\n');
   writeFileSync(join(root, 'memory'), 'MemTotal: 8000000 kB\nMemAvailable: 100000 kB\n');
   assert.equal(spawnSync('sh', ['-c', script]).status, 75);
+  // Disk wait is not busy CPU, and guest counters must not be counted twice.
+  initial();
+  writeFileSync(join(root, 'memory'), 'MemTotal: 8000000 kB\nMemAvailable: 4000000 kB\n');
+  writeFileSync(join(root, 'next-stat'), 'cpu 110 0 0 910 80 0 0 0 500 0\n');
+  assert.equal(spawnSync('sh', ['-c', script]).status, 0);
 });
 
 test('reserva não é duplicada quando vira publisher e expira quando a aba não conecta', () => {

@@ -88,5 +88,6 @@ test('quem JÁ tem path no ar não é derrubado pelo freio', () => {
 test('a recusa explica o que fazer, não só que falhou', () => {
   const error = new LiveCapacityException();
   assert.equal(error.getStatus(), 503);
-  assert.match((error.getResponse() as any).userMessage, /Feche algumas câmeras/);
+  assert.match((error.getResponse() as any).userMessage, /Tentaremos abrir esta câmera novamente/);
+  assert.equal((error.getResponse() as any).reason, 'budget');
 });

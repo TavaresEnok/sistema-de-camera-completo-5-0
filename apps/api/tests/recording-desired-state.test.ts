@@ -47,6 +47,23 @@ function makeService(probeResult: any) {
 
 const NAME = '/rec/cam-1/2026-07-24_10-00-00.mp4';
 
+test('reinício da API finaliza processos sem desarmar a gravação escolhida', async () => {
+  const svc: any = Object.create(RecordingProcessManagerService.prototype);
+  const state = { watcher: setInterval(() => {}, 10000), process: { exitCode: 0 }, stopRequested: false };
+  svc.active = new Map([['cam-1', state]]);
+  let finalized = false;
+  svc.stopProcessAndWait = async (current: any) => { assert.equal(current.stopRequested, true); };
+  svc.finalizeRecordingState = async (id: string, current: any) => {
+    assert.equal(id, 'cam-1'); assert.equal(current, state); finalized = true;
+  };
+  svc.prisma = { camera: { update: () => { throw Error('não pode alterar estado desejado'); } } };
+  svc.stop = () => { throw Error('não pode pedir parada do operador'); };
+  try { await svc.stopLocalProcessesForShutdown(); } finally { clearInterval(state.watcher); }
+  assert.equal(finalized, true);
+  const src = readFileSync('src/recordings/recording-process-manager.service.ts', 'utf8');
+  assert.doesNotMatch(src.slice(src.indexOf('async onApplicationShutdown()')), /await this\.stopAll\(\)/);
+});
+
 test('segmento: arquivo SEM stream de vídeo é rejeitado (não vira linha READY)', async () => {
   const svc = makeService({ durationSecondsExact: 300, sizeBytes: 5_000_000, hasVideoStream: false });
   await assert.rejects(

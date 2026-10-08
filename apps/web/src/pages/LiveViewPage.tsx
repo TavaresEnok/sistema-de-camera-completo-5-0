@@ -58,6 +58,9 @@ import { useToast } from '../hooks/use-toast';
 import { useAutoHideControls } from '../hooks/use-auto-hide-controls';
 import { countVisibleGridCameras } from '../lib/live-grid-count';
 import { ToastAction } from '@/components/ui/toast';
+import { useIsMobile } from '../hooks/use-mobile';
+import { useCompactLayout } from '../hooks/use-compact-layout';
+import { ResponsiveSidePanel } from '../components/ResponsiveSidePanel';
 
 // Grades aprovadas para operação. Manter os formatos previsíveis evita layouts
 // improvisados que viram uma parede ilegível em monitores menores.
@@ -186,6 +189,9 @@ function persistSavedLayouts(layouts: SavedLayout[], userId = useAuthStore.getSt
 }
 
 export default function LiveViewPage({ pageActive = true }: { pageActive?: boolean }) {
+  const isPhone = useIsMobile();
+  const compact = useCompactLayout();
+  const [phoneGridSize, setPhoneGridSize] = useState<GridSize>('1x1');
   const API_URL = getApiBaseUrl();
   const { toast } = useToast();
   const accessToken = useAuthStore((state) => state.accessToken);
@@ -216,9 +222,9 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
   // (sincronização, cache legado, clique acidental). Guardamos o retrato exato
   // do operador antes do zoom para o botão Voltar sempre restaurar aquela grade.
   const focusReturnLayoutRef = useRef<{ gridSize: GridSize; cameraIds: string[] } | null>(null);
-  const gridSize = storedGridSize;
+  const gridSize = isPhone ? phoneGridSize : storedGridSize;
   const cameraIds = storedCameraIds;
-  const setGridSize = useCallback((size: GridSize) => { setFocusedCameraId(null); storeGridSize(size); }, [storeGridSize]);
+  const setGridSize = useCallback((size: GridSize) => { setFocusedCameraId(null); if (isPhone) setPhoneGridSize(size); else storeGridSize(size); }, [isPhone, storeGridSize]);
   const setCameraIds = useCallback((ids: string[]) => { setFocusedCameraId(null); storeCameraIds(ids); }, [storeCameraIds]);
   const removeCameraById = useCallback((cameraId: string) => {
     storeCameraIds(useGridStore.getState().cameraIds.map(id => id === cameraId ? '' : id));
@@ -616,12 +622,13 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
       .flatMap(item => item.cameraIds));
     const available = cameras.filter(camera => !usedOnOtherDisplays.has(camera.id));
     const ordered = [...available].sort((a, b) => Number(b.isOnline) - Number(a.isOnline));
-    const n = Math.min(ordered.length, FILL_GRID_MAX_CAMERAS);
+    const maximum = isPhone ? 4 : FILL_GRID_MAX_CAMERAS;
+    const n = Math.min(ordered.length, maximum);
     const size: GridSize = n <= 1 ? '1x1' : n <= 4 ? '2x2' : n <= 9 ? '3x3' : n <= 16 ? '4x4' : n <= 25 ? '5x5' : '6x6';
     const { cols, rows } = gridDims(size);
     setGridSize(size);
-    setCameraIds(ordered.slice(0, Math.min(cols * rows, FILL_GRID_MAX_CAMERAS)).map((c) => c.id));
-  }, [cameras, displayCoordination.displays, displayId, setGridSize, setCameraIds]);
+    setCameraIds(ordered.slice(0, Math.min(cols * rows, maximum)).map((c) => c.id));
+  }, [cameras, displayCoordination.displays, displayId, isPhone, setGridSize, setCameraIds]);
 
   const gridCameraCount = useMemo(
     () => countVisibleGridCameras(displayedCams, focusedCameraId),
@@ -633,24 +640,24 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
   const zoomToCamera = useCallback((cameraId: string) => {
     if (!focusedCameraId) {
       const current = useGridStore.getState();
-      const dims = gridDims(current.gridSize);
       focusReturnLayoutRef.current = {
-        gridSize: current.gridSize,
-        cameraIds: current.cameraIds.slice(0, dims.cols * dims.rows),
+        gridSize,
+        cameraIds: [...current.cameraIds],
       };
     }
     setFocusedCameraId(cameraId);
-  }, [focusedCameraId]);
+  }, [focusedCameraId, gridSize]);
 
   const restoreLayout = useCallback(() => {
     const previous = focusReturnLayoutRef.current;
     focusReturnLayoutRef.current = null;
     setFocusedCameraId(null);
     if (previous) {
-      storeGridSize(previous.gridSize);
+      if (isPhone) setPhoneGridSize(previous.gridSize);
+      else storeGridSize(previous.gridSize);
       storeCameraIds(previous.cameraIds);
     }
-  }, [storeGridSize, storeCameraIds]);
+  }, [isPhone, storeGridSize, storeCameraIds]);
 
   useEffect(() => {
     if (focusedCameraId && !displayedCams.some(cam => cam?.id === focusedCameraId)) restoreLayout();
@@ -816,7 +823,7 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
   }, [gridSize]);
 
   const placeCameraInGrid = useCallback((camId: string) => {
-    const currentGridSize = useGridStore.getState().gridSize;
+    const currentGridSize = gridSize;
     const currentCount = (() => { const d = gridDims(currentGridSize); return d.cols * d.rows; })();
     const currentCameraIds = useGridStore.getState().cameraIds;
     const newIds = [...currentCameraIds.slice(0, currentCount)];
@@ -837,7 +844,7 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
     const indiceFinal = targetIdx >= 0 ? targetIdx : currentCount - 1;
     const substituida = targetIdx >= 0 ? null : newIds[indiceFinal];
     newIds[indiceFinal] = camId;
-    storeCameraIds(newIds);
+    storeCameraIds([...newIds, ...currentCameraIds.slice(currentCount)]);
     setSelectedSlotIndex(null);
     if (substituida) {
       const anterior = cameras.find((camera) => camera.id === substituida);
@@ -852,7 +859,7 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
         ),
       });
     }
-  }, [cameras, selectedSlotIndex, storeCameraIds, toast]);
+  }, [cameras, gridSize, selectedSlotIndex, storeCameraIds, toast]);
 
   const addCameraToGrid = (camId: string) => {
     const other = displayCoordination.findCameraDisplay(camId);
@@ -1066,7 +1073,7 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
       <div className="flex-1 flex flex-col min-w-0 min-h-0">
         <div className={wallMode ? 'hidden' : 'toolbar'}>
           <div className="segment">
-            {GRID_PRESETS.map(({ size, icon }) => (
+            {GRID_PRESETS.filter(({ size }) => !isPhone || size === '1x1' || size === '2x2').map(({ size, icon }) => (
               <Tooltip key={size} delayDuration={0}>
                 <TooltipTrigger asChild>
                   <button
@@ -1223,23 +1230,26 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
             <TooltipTrigger asChild>
               <button
                 onClick={handleWallMode}
-                className="btn btn-secondary btn-sm btn-icon"
+                className="btn btn-secondary btn-sm"
                 data-testid="button-wall-mode"
-                aria-label="Abrir modo mural"
+                aria-label="Ampliar grade"
               >
                 <Maximize2 className="w-3.5 h-3.5" />
+                {compact && <span>Ampliar</span>}
               </button>
             </TooltipTrigger>
-            <TooltipContent className="text-xs">Abrir modo mural</TooltipContent>
+            <TooltipContent className="text-xs">Ampliar grade</TooltipContent>
           </Tooltip>
 
           <Tooltip delayDuration={0}>
             <TooltipTrigger asChild>
               <button
                 onClick={() => setPanelOpen(o => !o)}
-                className="btn btn-secondary btn-sm btn-icon"
+                aria-label={panelOpen ? 'Fechar lista de câmeras' : 'Escolher câmera'}
+                className="btn btn-secondary btn-sm"
               >
                 {panelOpen ? <PanelRightClose className="w-3.5 h-3.5" /> : <PanelRightOpen className="w-3.5 h-3.5" />}
+                {compact && <span>Câmeras</span>}
               </button>
             </TooltipTrigger>
             <TooltipContent className="text-xs">{panelOpen ? 'Ocultar painel de câmeras' : 'Mostrar painel de câmeras'}</TooltipContent>
@@ -1366,14 +1376,16 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
 
       <AnimatePresence>
         {panelOpen && !wallMode && (
-          <motion.aside
+          <ResponsiveSidePanel
+            title="Escolher câmera"
+            onClose={() => setPanelOpen(false)}
             initial={{ width: 0, opacity: 0 }}
             animate={{ width: panelWidth, opacity: 1 }}
             exit={{ width: 0, opacity: 0 }}
             transition={{ type: 'spring', stiffness: 300, damping: 32 }}
             className="relative border-l border-border bg-card flex flex-col overflow-hidden shrink-0"
           >
-            <div
+            {!compact && <div
               role="separator"
               aria-orientation="vertical"
               aria-label="Redimensionar painel de câmeras"
@@ -1394,7 +1406,7 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
               className="group absolute -left-1 top-0 z-50 flex h-full w-3 cursor-col-resize touch-none items-center justify-center"
             >
               <span className="h-20 w-1.5 rounded-full bg-[hsl(var(--primary)_/_0.82)] shadow-[0_0_8px_hsl(var(--primary)_/_0.3)] transition-all group-hover:h-24 group-hover:w-2 group-hover:bg-[hsl(var(--primary))] group-active:h-28 group-active:w-2 group-active:bg-[hsl(var(--primary))]" />
-            </div>
+            </div>}
             <div className="px-2 py-2.5 border-b border-border shrink-0 space-y-2.5">
               <div className="flex items-center justify-between">
                 <div>
@@ -1465,7 +1477,7 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
                     className={`group w-full text-left grid grid-cols-[56px_1fr_auto] items-center gap-2 px-2 py-1.5 hover:bg-[hsl(var(--accent)_/_0.7)] transition-colors ${
                       isInGrid ? 'bg-[hsl(var(--primary)_/_0.06)]' : ''
                     }`}
-                    onClick={() => addCameraToGrid(cam.id)}
+                    onClick={() => { addCameraToGrid(cam.id); if (compact) setPanelOpen(false); }}
                     title={`Adicionar ${cam.name} à grade`}
                   >
                     <span className="relative block h-9 w-14 overflow-hidden rounded border border-white/10 bg-black">
@@ -1506,7 +1518,7 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
                 Recolher <ChevronRight className="w-3 h-3" />
               </button>
             </div>
-          </motion.aside>
+          </ResponsiveSidePanel>
         )}
       </AnimatePresence>
 

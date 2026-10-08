@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type WheelEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent, type WheelEvent } from 'react';
 import axios from 'axios';
 import { useLocation } from 'wouter';
 import { Camera as CameraIcon, ChevronLeft, ChevronRight, Download, FastForward, FolderArchive, LoaderCircle, Maximize2, Minimize2, Pause, Play, Scissors, SkipBack, SkipForward, StepBack, StepForward, Trash2, VideoOff, Volume2, VolumeX } from 'lucide-react';
@@ -467,7 +467,7 @@ export default function PlaybackPage() {
   const [zoom, setZoom] = useState(1);
   const [viewCenter, setViewCenter] = useState(480);
   const timelineTrackRef = useRef<HTMLDivElement | null>(null);
-  const timelinePanRef = useRef<{ startX: number; startCenter: number; windowMins: number; moved: boolean } | null>(null);
+  const timelinePanRef = useRef<{ pointerId: number; startX: number; startCenter: number; windowMins: number; moved: boolean } | null>(null);
   const timelineDraggedRef = useRef(false);
   // Prévia ao passar o mouse na timeline: miniatura + hora do trecho sob o cursor.
   const [timelineHover, setTimelineHover] = useState<{ x: number; minute: number; recordingId: string | null } | null>(null);
@@ -583,23 +583,27 @@ export default function PlaybackPage() {
   // stall do meio do vídeo (token vencido num buffer longo, Wi-Fi caindo) —
   // antes, as duas situações deixavam o spinner girando para sempre.
   const minimapRef = useRef<HTMLDivElement | null>(null);
-  const minimapDragRef = useRef(false);
+  const minimapDragRef = useRef<number | null>(null);
   // O minimapa tem 20px de altura: arrastando, o mouse escorrega para fora
   // dele o tempo todo. Com o listener no próprio elemento o arraste morria no
   // meio — capturar na JANELA é o que todo scrubber sério faz.
   useEffect(() => {
-    const aoMover = (event: globalThis.MouseEvent) => {
-      if (!minimapDragRef.current || !minimapRef.current) return;
+    const aoMover = (event: globalThis.PointerEvent) => {
+      if (minimapDragRef.current !== event.pointerId || !minimapRef.current) return;
       const rect = minimapRef.current.getBoundingClientRect();
       const minuto = ((event.clientX - rect.left) / Math.max(1, rect.width)) * TOTAL_MINS;
       setViewCenterFromMinimap(minuto);
     };
-    const aoSoltar = () => { minimapDragRef.current = false; };
-    window.addEventListener('mousemove', aoMover);
-    window.addEventListener('mouseup', aoSoltar);
+    const aoSoltar = (event: globalThis.PointerEvent) => {
+      if (minimapDragRef.current === event.pointerId) minimapDragRef.current = null;
+    };
+    window.addEventListener('pointermove', aoMover);
+    window.addEventListener('pointerup', aoSoltar);
+    window.addEventListener('pointercancel', aoSoltar);
     return () => {
-      window.removeEventListener('mousemove', aoMover);
-      window.removeEventListener('mouseup', aoSoltar);
+      window.removeEventListener('pointermove', aoMover);
+      window.removeEventListener('pointerup', aoSoltar);
+      window.removeEventListener('pointercancel', aoSoltar);
     };
   }, []);
   const slowRetryRef = useRef<string | null>(null);
@@ -2057,24 +2061,29 @@ export default function PlaybackPage() {
     return () => el.removeEventListener('wheel', handleTimelineWheelZoom);
   }, [handleTimelineWheelZoom]);
 
-  const onTimelinePanStart = useCallback((event: MouseEvent<HTMLDivElement>) => {
-    timelinePanRef.current = { startX: event.clientX, startCenter: viewCenter, windowMins: zoomedWindow, moved: false };
+  const onTimelinePanStart = useCallback((event: PointerEvent<HTMLDivElement>) => {
+    if (!event.isPrimary || event.button !== 0) return;
+    // Capturing the parent on a simple tap would steal a segment's click.
+    // Capture only once the pointer has actually started a drag.
+    timelinePanRef.current = { pointerId: event.pointerId, startX: event.clientX, startCenter: viewCenter, windowMins: zoomedWindow, moved: false };
     timelineDraggedRef.current = false;
   }, [viewCenter, zoomedWindow]);
 
   useEffect(() => {
-    const onMove = (event: globalThis.MouseEvent) => {
+    const onMove = (event: globalThis.PointerEvent) => {
       const pan = timelinePanRef.current;
       const el = timelineTrackRef.current;
-      if (!pan || !el) return;
+      if (!pan || !el || event.pointerId !== pan.pointerId) return;
       const dx = event.clientX - pan.startX;
       if (!pan.moved && Math.abs(dx) < 5) return;
+      if (!pan.moved) el.setPointerCapture(event.pointerId);
       pan.moved = true;
       timelineDraggedRef.current = true;
       const deltaMins = (dx / el.getBoundingClientRect().width) * pan.windowMins;
       setViewCenter(clamp(pan.startCenter - deltaMins, pan.windowMins / 2, TOTAL_MINS - pan.windowMins / 2));
     };
-    const onUp = () => {
+    const onUp = (event: globalThis.PointerEvent) => {
+      if (timelinePanRef.current?.pointerId !== event.pointerId) return;
       if (timelinePanRef.current?.moved) {
         // O click dispara logo após o mouseup; limpa a flag só no próximo tick para
         // que o clique que encerrou o arraste não seja tratado como seek.
@@ -2084,11 +2093,13 @@ export default function PlaybackPage() {
       }
       timelinePanRef.current = null;
     };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
     return () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
     };
   }, []);
 
@@ -2149,7 +2160,8 @@ export default function PlaybackPage() {
     setPlayheadFromMinute(minute);
   };
 
-  const onTimelineHover = useCallback((event: MouseEvent<HTMLDivElement>) => {
+  const onTimelineHover = useCallback((event: PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === 'touch') return;
     if (timelinePanRef.current?.moved) { setTimelineHover(null); return; }
     const rect = event.currentTarget.getBoundingClientRect();
     const x = event.clientX - rect.left;
@@ -2817,13 +2829,15 @@ export default function PlaybackPage() {
     return () => document.removeEventListener('fullscreenchange', onFsChange);
   }, []);
 
-  const onVideoDragStart = useCallback((event: MouseEvent<HTMLDivElement>) => {
+  const onVideoDragStart = useCallback((event: PointerEvent<HTMLDivElement>) => {
     if (videoZoom <= 1) return;
+    if (!event.isPrimary || event.button !== 0) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
     setDraggingVideo(true);
     setDragStart({ x: event.clientX - videoPan.x, y: event.clientY - videoPan.y });
   }, [videoPan.x, videoPan.y, videoZoom]);
 
-  const onVideoDragMove = useCallback((event: MouseEvent<HTMLDivElement>) => {
+  const onVideoDragMove = useCallback((event: PointerEvent<HTMLDivElement>) => {
     if (!draggingVideo || !dragStart || videoZoom <= 1) return;
     setVideoPan({
       x: event.clientX - dragStart.x,
@@ -3153,7 +3167,7 @@ export default function PlaybackPage() {
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto xl:overflow-hidden">
-      <div className="toolbar">
+      <div className="toolbar flex-wrap">
         <SeletorDeCamera
           cameras={cameras}
           value={selectedCamId}
@@ -3361,11 +3375,12 @@ export default function PlaybackPage() {
                 className={`h-full w-full overflow-hidden ${videoZoom > 1 ? (draggingVideo ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-default'}`}
                 onWheel={handleVideoWheel}
                 onWheelCapture={handleVideoWheel}
-                onMouseDown={onVideoDragStart}
-                onMouseMove={onVideoDragMove}
-                onMouseUp={onVideoDragEnd}
-                onMouseLeave={onVideoDragEnd}
-                style={{ touchAction: 'none', overscrollBehavior: 'contain' }}
+                onPointerDown={onVideoDragStart}
+                onPointerMove={onVideoDragMove}
+                onPointerUp={onVideoDragEnd}
+                onPointerCancel={onVideoDragEnd}
+                onLostPointerCapture={onVideoDragEnd}
+                style={{ touchAction: videoZoom > 1 ? 'none' : 'pan-y', overscrollBehavior: 'contain' }}
               >
                 {/* Modo contínuo: dois elementos vivos (um toca, o outro aquece o
                     próximo segmento). Caminho antigo: UM elemento, remontado por
@@ -3516,11 +3531,13 @@ export default function PlaybackPage() {
             {zoomedWindow < TOTAL_MINS - 0.5 && (
             <div
               ref={minimapRef}
-              className="relative mb-1.5 h-5 cursor-pointer select-none overflow-hidden rounded-sm border border-[hsl(var(--border))] bg-[hsl(222,14%,12%)]"
+              className="playback-minimap relative mb-1.5 h-5 touch-none cursor-pointer select-none overflow-hidden rounded-sm border border-[hsl(var(--border))] bg-[hsl(222,14%,12%)]"
               title="Dia inteiro — clique para ir, arraste a janela para navegar"
-              onMouseDown={(event) => {
+              onPointerDown={(event) => {
+                if (!event.isPrimary || event.button !== 0) return;
+                event.currentTarget.setPointerCapture(event.pointerId);
                 const rect = event.currentTarget.getBoundingClientRect();
-                minimapDragRef.current = true;
+                minimapDragRef.current = event.pointerId;
                 setViewCenterFromMinimap(((event.clientX - rect.left) / Math.max(1, rect.width)) * TOTAL_MINS);
               }}
             >
@@ -3604,11 +3621,11 @@ export default function PlaybackPage() {
 
             <div
               ref={timelineTrackRef}
-              className="relative mb-2 h-9 cursor-pointer select-none overflow-hidden rounded-sm border border-[hsl(var(--border))] bg-[hsl(222,14%,15%)]"
+              className="playback-timeline relative mb-2 h-9 touch-none cursor-pointer select-none overflow-hidden rounded-sm border border-[hsl(var(--border))] bg-[hsl(222,14%,15%)]"
               title="Clique para posicionar · role para dar zoom · arraste para mover"
-              onMouseDown={onTimelinePanStart}
-              onMouseMove={onTimelineHover}
-              onMouseLeave={() => setTimelineHover(null)}
+              onPointerDown={onTimelinePanStart}
+              onPointerMove={onTimelineHover}
+              onPointerLeave={() => setTimelineHover(null)}
               onClick={(event) => onTimelineClick(event.clientX, event.currentTarget.getBoundingClientRect())}
             >
               {skeletonSpans.map((span, index) => {

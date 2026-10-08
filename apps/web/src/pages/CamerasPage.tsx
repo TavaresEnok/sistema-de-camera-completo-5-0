@@ -48,6 +48,8 @@ import { useClassesLiberadas } from '../hooks/use-classes-liberadas';
 import { rotuloDoGatilhoDeObjeto, podeUsarGatilhoDeObjeto } from '../lib/gatilho-de-objeto';
 import { cameraSourceProtocol, formatStorageBytes } from '../lib/camera-list-metadata';
 import { capturarLocalizacaoDoInstalador } from '../lib/localizacao-do-instalador';
+import { useCompactLayout } from '../hooks/use-compact-layout';
+import { ResponsiveSidePanel } from '../components/ResponsiveSidePanel';
 const STATUSES = ['all', 'online', 'recording', 'motion', 'alarm', 'offline', 'checking', 'no_signal', 'maintenance'] as const;
 const STATUS_LABEL: Record<(typeof STATUSES)[number], string> = {
   all: 'Todos os status',
@@ -631,7 +633,7 @@ function WizardModal({
         // depois da detecção (diagnóstico + confirmação visual 16:9 + faixas de
         // compatibilidade) o rodapé com "Voltar/Próximo" ficava CORTADO e sem
         // como rolar até ele — o cadastro travava sem mensagem de erro.
-        className="flex max-h-[90vh] w-full max-w-[560px] flex-col overflow-hidden rounded-lg border border-border bg-card shadow-sm"
+        className="responsive-form flex max-h-[90dvh] w-full max-w-[560px] flex-col overflow-hidden rounded-lg border border-border bg-card shadow-sm"
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-4 px-5 py-4 border-b border-border bg-background/40">
@@ -973,6 +975,7 @@ function WizardModal({
 }
 
 export default function CamerasPage() {
+  const compact = useCompactLayout();
   const API_URL = getApiBaseUrl();
   const [, setLocation] = useLocation();
   const accessToken = useAuthStore((state) => state.accessToken);
@@ -1433,11 +1436,11 @@ export default function CamerasPage() {
   const countFor = (s: (typeof STATUS_PILLS)[number]) => (s === 'all' ? cameras.length : cameras.filter((c) => c.status === s).length);
 
   return (
-    <div className="flex h-full min-h-0">
+    <div className="cameras-workspace flex h-full min-h-0">
       <div className="flex-1 flex flex-col min-w-0 min-h-0">
         {/* Page actions toolbar */}
-        <div className="px-6 py-3 border-b border-border shrink-0 flex items-center justify-end gap-2">
-          <div className="ops-segment flex items-center gap-0.5">
+        <div className="page-actions px-6 py-3 border-b border-border shrink-0 flex flex-wrap items-center justify-end gap-2">
+          <div className={`ops-segment items-center gap-0.5 ${compact ? 'hidden' : 'flex'}`}>
             <button onClick={() => setViewMode('table')} className={`w-7 h-7 flex items-center justify-center rounded-[6px] transition-colors ${viewMode === 'table' ? 'ops-segment-active' : 'text-[hsl(var(--muted-foreground))] hover:text-foreground'}`} title="Tabela"><List className="w-3.5 h-3.5" /></button>
             <button onClick={() => setViewMode('card')} className={`w-7 h-7 flex items-center justify-center rounded-[6px] transition-colors ${viewMode === 'card' ? 'ops-segment-active' : 'text-[hsl(var(--muted-foreground))] hover:text-foreground'}`} title="Cards"><LayoutGrid className="w-3.5 h-3.5" /></button>
           </div>
@@ -1477,7 +1480,7 @@ export default function CamerasPage() {
               </button>
             ))}
           </div>
-          <div className="ml-auto flex items-center gap-2">
+          <div className="camera-filters ml-auto flex min-w-0 flex-wrap items-center gap-2">
             <Select value={groupFilter} onValueChange={setGroupFilter}>
               <SelectTrigger className="w-40 h-8 text-xs"><SelectValue /></SelectTrigger>
               <SelectContent>{groups.map(g => <SelectItem key={g} value={g} className="text-xs">{g === 'all' ? 'Todos os grupos' : g}</SelectItem>)}</SelectContent>
@@ -1497,7 +1500,7 @@ export default function CamerasPage() {
 
         {/* Content */}
         <div className="flex-1 overflow-auto">
-          {viewMode === 'table' ? (
+          {!compact && viewMode === 'table' ? (
             <div className="p-5">
             <div className="ops-card overflow-x-auto">
             <table className="w-full min-w-[940px] text-xs border-collapse">
@@ -1602,7 +1605,7 @@ export default function CamerasPage() {
               <p className="text-sm">Nenhuma câmera encontrada</p>
             </div>
           ) : (
-            <div className="grid gap-4 p-5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))' }}>
+            <div className="grid gap-4 p-3 sm:p-5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 260px), 1fr))' }}>
               {filtered.map(cam => {
                 const isOffline = ['offline', 'no_signal'].includes(cam.status) && !posterLoaded.has(cam.id);
                 const isDisabled = cam.enabled === false;
@@ -1722,7 +1725,9 @@ export default function CamerasPage() {
           const recordingActive = isCameraRecording(liveCam);
           const motionActive = isMotionRecordingActive(liveCam);
           return (
-          <motion.div
+          <ResponsiveSidePanel
+            title={`Detalhes de ${liveCam.name}`}
+            onClose={() => setSelectedCam(null)}
             initial={{ width: 0, opacity: 0 }}
             animate={{ width: 320, opacity: 1 }}
             exit={{ width: 0, opacity: 0 }}
@@ -1731,7 +1736,7 @@ export default function CamerasPage() {
           >
             <div className="flex items-center justify-between px-5 py-4 border-b border-border shrink-0">
               <h3 className="text-sm font-semibold truncate">{liveCam.code}</h3>
-              <button onClick={() => setSelectedCam(null)} className="w-7 h-7 flex items-center justify-center rounded hover:bg-[hsl(var(--accent))] transition-colors shrink-0">
+              <button aria-label="Fechar detalhes da câmera" onClick={() => setSelectedCam(null)} className="w-7 h-7 flex items-center justify-center rounded hover:bg-[hsl(var(--accent))] transition-colors shrink-0">
                 <X className="w-4 h-4" />
               </button>
             </div>
@@ -1860,7 +1865,7 @@ export default function CamerasPage() {
                 </button>
               </div>
             </div>
-          </motion.div>
+          </ResponsiveSidePanel>
           );
         })()}
       </AnimatePresence>

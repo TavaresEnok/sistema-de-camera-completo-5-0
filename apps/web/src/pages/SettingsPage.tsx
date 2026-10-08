@@ -705,7 +705,7 @@ export default function ConfiguracoesPage() {
         </section>
 
         <div className="grid gap-6 lg:grid-cols-[280px_1fr]">
-          <aside className="h-fit rounded-lg border border-border/70 bg-card/80 p-2 shadow-sm">
+          <aside className="settings-sections h-fit rounded-lg border border-border/70 bg-card/80 p-2 shadow-sm">
             {SECTIONS.map((section) => (
               <button
                 key={section.id}
@@ -719,7 +719,7 @@ export default function ConfiguracoesPage() {
                 </span>
                 <span>
                   <span className="block text-sm font-semibold">{section.label}</span>
-                  <span className={`block text-xs ${activeSection === section.id ? 'text-background/70' : 'text-muted-foreground'}`}>{section.description}</span>
+                  <span className={`settings-section-description block text-xs ${activeSection === section.id ? 'text-background/70' : 'text-muted-foreground'}`}>{section.description}</span>
                 </span>
               </button>
             ))}

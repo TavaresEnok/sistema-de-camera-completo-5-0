@@ -1,0 +1,171 @@
+#!/usr/bin/env python3
+"""Signed API/web-only update; preserve media services and recording choices."""
+import argparse
+import base64
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import tempfile
+import time
+
+
+def command(args, **kwargs):
+    return subprocess.run(args, check=True, capture_output=True, **kwargs)
+
+
+def inspect(name):
+    return json.loads(command(['docker', 'inspect', name]).stdout)[0]
+
+
+def sql(statement):
+    return command(['docker', 'exec', '-i', 'vms-postgres', 'sh', '-c',
+                    'PGPASSWORD="$POSTGRES_PASSWORD" exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -X -v ON_ERROR_STOP=1 -At'],
+                   input=statement.encode()).stdout.decode().strip()
+
+
+def media_state():
+    return {name: {'image': inspect(name)['Image'], 'startedAt': inspect(name)['State']['StartedAt']}
+            for name in ['vms-ai-service', 'vms-mediamtx', 'vms-rtmp-ingest']}
+
+
+def restore_legacy_shutdown(snapshot):
+    # Only the OLD API desarms on shutdown. Restore eligible choices BEFORE
+    # starting the fixed API. Never override an operator action or expired timer.
+    restored = 0
+    for camera in snapshot['cameras']:
+        if not camera['recordingEnabled'] or not camera['enabled']:
+            continue
+        identity, mode = camera['id'], camera['recordingMode']
+        if not re.fullmatch(r'[a-f0-9-]{36}', identity) or mode not in ['manual', 'continuous', 'motion', 'object']:
+            raise ValueError('Unexpected recording snapshot')
+        timer = ('AND EXISTS (SELECT 1 FROM "ManualRecordingSession" WHERE "cameraId"=c.id AND "expiresAt">now())'
+                 if mode == 'manual' else '')
+        result = sql(f'''WITH restored AS (
+          UPDATE "Camera" c SET "recordingEnabled"=true
+          WHERE c.id='{identity}' AND c.enabled=true AND c."recordingEnabled"=false AND c."recordingMode"='{mode}'
+          {timer}
+          AND NOT EXISTS (SELECT 1 FROM "AuditLog" a WHERE a."entityId"=c.id
+            AND a."createdAt">='{snapshot['at']}'::timestamptz
+            AND (a.action LIKE 'recording.%' OR a.action LIKE 'camera.%'))
+          RETURNING c.id
+        ) SELECT count(*) FROM restored;''')
+        restored += int(result)
+    return restored
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('root', type=Path)
+    parser.add_argument('archive', type=Path)
+    parser.add_argument('manifest', type=Path)
+    args = parser.parse_args()
+    root = args.root.resolve()
+    signed = json.loads(args.manifest.read_text())
+    body = dict(signed)
+    signature = base64.b64decode(body.pop('signature'), validate=True)
+    if (body.get('v') != 1 or body.get('kind') != 'viewing-update-v1' or body.get('protection') != 'standard'
+            or not body.get('distributionApproval') or len(signature) != 64
+            or not re.fullmatch('[a-f0-9]{40}', body.get('commit', ''))
+            or not body.get('issuedAt', 0) - 120 <= time.time() < body.get('expiresAt', 0)
+            or set(body.get('images', {})) != {'api', 'web'}):
+        raise ValueError('Invalid signed viewing manifest')
+    payload = b'drac-runtime-manifest-v1\n' + json.dumps(body, sort_keys=True, separators=(',', ':')).encode()
+    with tempfile.TemporaryDirectory(prefix='drac-viewing-verify-') as directory:
+        message, sig = Path(directory) / 'message', Path(directory) / 'signature'
+        message.write_bytes(payload)
+        sig.write_bytes(signature)
+        command(['openssl', 'pkeyutl', '-verify', '-pubin', '-inkey', str(root / 'infra/release-public.pem'),
+                 '-rawin', '-in', str(message), '-sigfile', str(sig)])
+    digest = hashlib.sha256()
+    with args.archive.open('rb') as source:
+        while data := source.read(1024 * 1024):
+            digest.update(data)
+    if digest.hexdigest() != body['sha256'] or args.archive.stat().st_size != body['size']:
+        raise ValueError('Viewing archive integrity failed')
+    state = json.loads((root / '.runtime-release.json').read_text())
+    if state.get('databaseSchemaHash') != body['databaseSchemaHash']:
+        raise ValueError('Schema change is not allowed for a viewing update')
+    media_before, api_before = media_state(), inspect('vms-api')
+    files = []
+    for name in ['vms-api', 'vms-web']:
+        for value in inspect(name)['Config']['Labels']['com.docker.compose.project.config_files'].split(','):
+            path = Path(value).resolve()
+            if path not in files:
+                files.append(path)
+    if not files or any(not path.is_file() for path in files):
+        raise ValueError('Missing original deployment overlays')
+    persistent = root / 'infra/docker-compose.runtime-images.json'
+    original = persistent.read_bytes()
+    configuration = json.loads(original)
+    backup = root / 'infra/backups/viewing-updates' / body['commit']
+    backup.mkdir(mode=0o700, parents=True, exist_ok=False)
+    (backup / 'runtime-images-before.json').write_bytes(original)
+    (backup / 'manifest.json').write_text(json.dumps(signed))
+    os.chmod(backup / 'runtime-images-before.json', 0o600)
+    os.chmod(backup / 'manifest.json', 0o600)
+    with (backup / 'database.dump').open('xb') as output:
+        os.chmod(output.name, 0o600)
+        subprocess.run(['docker', 'exec', 'vms-postgres', 'sh', '-c',
+                        'PGPASSWORD="$POSTGRES_PASSWORD" exec pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc'],
+                       stdout=output, check=True)
+    with (backup / 'database.dump').open('rb') as source:
+        command(['docker', 'exec', '-i', 'vms-postgres', 'pg_restore', '--list'], stdin=source)
+    command(['docker', 'load', '-i', str(args.archive)])
+    for service, expected in body['images'].items():
+        if inspect(expected['image'])['Id'] != expected['imageId']:
+            raise ValueError('Loaded image differs from signed manifest')
+        configuration['services'][service]['image'] = expected['imageId']
+    configuration['services']['api'].setdefault('environment', {})['DRAC_VERSION'] = body['commit']
+    compose = ['docker', 'compose', '--project-name', api_before['Config']['Labels'].get('com.docker.compose.project', 'infra'),
+               '--env-file', str(root / 'infra/.env')]
+    for path in files:
+        compose += ['-f', str(path)]
+    if persistent not in files:
+        compose += ['-f', str(persistent)]
+    up = ['up', '-d', '--no-build', '--pull', 'never', '--no-deps', '--wait', '--wait-timeout', '180', 'api', 'web']
+    snapshot = json.loads(sql('''SELECT json_build_object('at',now(),'cameras',
+      COALESCE(json_agg(json_build_object('id',id,'enabled',enabled,'recordingMode',"recordingMode",
+      'recordingEnabled',"recordingEnabled")),'[]'::json)) FROM "Camera";'''))
+    (backup / 'recording-choices-before.json').write_text(json.dumps(snapshot))
+    os.chmod(backup / 'recording-choices-before.json', 0o600)
+    try:
+        command(['docker', 'stop', '--time', '45', 'vms-api'])
+        restored = restore_legacy_shutdown(snapshot)
+        persistent.write_text(json.dumps(configuration))
+        os.chmod(persistent, 0o600)
+        command(compose + up)
+        if media_state() != media_before:
+            raise ValueError('A media service changed unexpectedly')
+        readiness = json.loads(command(['docker', 'exec', 'vms-api', 'node', '-e',
+            "fetch('http://127.0.0.1:3000/health/ready').then(r=>r.json()).then(x=>console.log(JSON.stringify(x)))"]).stdout)
+        if not readiness.get('ready'):
+            raise ValueError('Updated API readiness failed')
+        styles = command(['docker', 'exec', 'vms-web', 'find', '/usr/share/nginx/html', '-name', '*.css']).stdout.decode().splitlines()
+        credit = b'/*! Feito por by Enok Tavares https://github.com/TavaresEnok/ */'
+        responsive = False
+        for stylesheet in styles:
+            data = command(['docker', 'exec', 'vms-web', 'cat', stylesheet]).stdout
+            if not data.startswith(credit):
+                raise ValueError('Stylesheet credit absent')
+            responsive |= b'investigation-workspace' in data
+        if not responsive:
+            raise ValueError('Responsive stylesheet absent')
+    except Exception:
+        persistent.write_bytes(original)
+        os.chmod(persistent, 0o600)
+        restore_legacy_shutdown(snapshot)
+        command(compose + up)
+        raise
+    result = {'commit': body['commit'], 'signed': True, 'ready': True, 'mediaServicesUnchanged': True,
+              'legacyRecordingChoicesRestored': restored, 'cssFilesVerified': len(styles)}
+    (backup / 'result.json').write_text(json.dumps(result))
+    (root / 'infra/viewing-release.json').write_text(json.dumps(signed))
+    os.chmod(root / 'infra/viewing-release.json', 0o600)
+    print(json.dumps(result))
+
+
+if __name__ == '__main__':
+    main()

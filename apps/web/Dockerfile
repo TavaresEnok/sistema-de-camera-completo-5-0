@@ -29,6 +29,8 @@ RUN pnpm install --prod=false
 COPY apps/web ./apps/web
 
 # Build
+ARG FRONTEND_BUILD_ID
+ENV VITE_FRONTEND_BUILD_ID=$FRONTEND_BUILD_ID
 RUN pnpm --filter web build
 
 # Production stage

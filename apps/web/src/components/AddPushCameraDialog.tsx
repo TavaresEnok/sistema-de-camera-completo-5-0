@@ -166,7 +166,7 @@ export function AddPushCameraDialog({
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) fechar(); }}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="responsive-form max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base">
             <Radio className="h-4 w-4" />
