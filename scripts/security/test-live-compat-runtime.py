@@ -178,10 +178,11 @@ if(!objectChange.ok||objectSaved.objectNoticeEnabled!==true||objectSaved.recordi
 let objectProcessor;
 for(let i=0;i<30;i++){
  await new Promise(r=>setTimeout(r,1000));const health=await(await fetch('http://ai-service:8000/health')).json();
- objectProcessor=health.processors?.[target.id];if(objectProcessor?.advanced_infer_runs>0)break;
+ objectProcessor=health.processors?.[target.id];if(objectProcessor?.performance?.object_model_runs>0)break;
 }
-if(!objectProcessor||objectProcessor.advanced_infer_runs<1||objectProcessor.advanced_infer_errors>0)throw Error('notice_object_inference_failed');
-const objectInference={runs:objectProcessor.advanced_infer_runs,errors:objectProcessor.advanced_infer_errors};
+const objectPerf=objectProcessor?.performance;
+if(objectProcessor?.advanced_analysis_type!=='general'||!Number.isFinite(objectPerf?.object_model_runs)||objectPerf.object_model_runs<1||objectPerf.advanced_infer_errors!==0)throw Error('notice_object_inference_failed');
+const objectInference={modelRuns:objectPerf.object_model_runs,runs:objectPerf.advanced_infer_runs,errors:objectPerf.advanced_infer_errors};
 const emit=async(label)=>{const r=await fetch(root+'/cameras/internal/'+target.id+'/events',{method:'POST',headers:{'x-service-token':process.env.INTERNAL_SERVICE_TOKEN,'Content-Type':'application/json'},body:JSON.stringify({type:'OBJECT_DETECTED',metadata:{label,confidence:0.95,bbox:[100,100,200,250],frameWidth:640,frameHeight:360,fixture:true}})});if(!r.ok)throw Error('notice_object_fixture_failed');return(await r.json()).id;};
 const personId=await emit('pessoa');const carId=await emit('carro');
 const combined=await(await fetch(root+'/cameras/detection-notices?since='+encodeURIComponent(combinedBaseline.cursor),{headers:auth})).json();

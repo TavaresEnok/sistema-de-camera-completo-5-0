@@ -10,6 +10,8 @@ import { useAuthStore } from '../store/authStore';
 import { toast } from '../hooks/use-toast';
 import { getApiBaseUrl } from '../lib/api-base';
 import { capturarLocalizacaoDoInstalador } from '../lib/localizacao-do-instalador';
+import { CameraDetectionNotices } from './CameraDetectionNotices';
+import { useClassesLiberadas } from '../hooks/use-classes-liberadas';
 
 // ── CADASTRO DE CÂMERA QUE PUBLICA ─────────────────────────────────────────
 //
@@ -53,7 +55,8 @@ export function AddPushCameraDialog({
 }) {
   const accessToken = useAuthStore((s) => s.accessToken);
   const [nome, setNome] = useState('');
-  const [motionNoticeEnabled, setMotionNoticeEnabled] = useState(false);
+  const [notices, setNotices] = useState({ motionNoticeEnabled: false, objectNoticeEnabled: false, objectNoticeClasses: [] as string[] });
+  const { classes: allowed, motionAllowed, carregando: loadingCapabilities } = useClassesLiberadas();
   const [salvando, setSalvando] = useState(false);
   const [copiado, setCopiado] = useState<string | null>(null);
   const [alvo, setAlvo] = useState<RtmpTarget | null>(null);
@@ -84,7 +87,7 @@ export function AddPushCameraDialog({
   }, [open, alvo, cameraId, accessToken]);
 
   const fechar = () => {
-    setMotionNoticeEnabled(false);
+    setNotices({ motionNoticeEnabled: false, objectNoticeEnabled: false, objectNoticeClasses: [] });
     setNome(''); setAlvo(null); setCopiado(null); setCameraId(null); setPendentes([]); setCaminhoManual('');
     onClose();
   };
@@ -113,7 +116,7 @@ export function AddPushCameraDialog({
           // só é armada depois, conscientemente, na página de Gravações.
           recordingEnabled: false,
           recordingMode: 'manual',
-          motionNoticeEnabled,
+          ...notices,
           ...(localizacaoDoInstalador ?? {}),
         },
         { headers: { Authorization: `Bearer ${accessToken}` } },
@@ -196,10 +199,8 @@ export function AddPushCameraDialog({
               />
             </div>
 
-            <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border p-3">
-              <input type="checkbox" checked={motionNoticeEnabled} onChange={e => setMotionNoticeEnabled(e.target.checked)} className="mt-1" />
-              <span><span className="block text-xs font-semibold">Avisar quando houver movimento</span><span className="block text-xs text-muted-foreground">Mostra um aviso na tela quando a câmera estiver online. Não inicia gravação.</span></span>
-            </label>
+            <CameraDetectionNotices motion={notices.motionNoticeEnabled} object={notices.objectNoticeEnabled} classes={notices.objectNoticeClasses}
+              allowed={allowed} motionAllowed={motionAllowed} loading={loadingCapabilities} onChange={setNotices} />
           </div>
         ) : (
           <div className="space-y-3 py-1">
