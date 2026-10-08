@@ -194,6 +194,10 @@ export class UpdateCameraDto {
   motionNoticeEnabled?: boolean;
 
   @IsOptional()
+  @IsBoolean()
+  showDetectorPercentage?: boolean;
+
+  @IsOptional()
   @IsInt()
   @Min(1)
   retentionDays?: number;

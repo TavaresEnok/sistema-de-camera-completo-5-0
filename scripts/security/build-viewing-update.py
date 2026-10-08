@@ -16,6 +16,7 @@ parser.add_argument('--output', type=Path, required=True)
 parser.add_argument('--api', required=True)
 parser.add_argument('--web', required=True)
 parser.add_argument('--key', type=Path, required=True)
+parser.add_argument('--approve-detector-percentage-schema', action='store_true')
 args = parser.parse_args()
 root = args.root.resolve()
 git = ['git', '-c', 'safe.directory=' + str(root), '-C', str(root)]
@@ -43,6 +44,27 @@ body = {'v': 1, 'kind': 'viewing-update-v1', 'commit': commit, 'protection': 'st
         'distributionApproval': 'approved-production-maintenance', 'issuedAt': now, 'expiresAt': now + 30 * 86400,
         'databaseSchemaHash': package.database_schema_hash(root / 'apps/api/prisma'),
         'images': images, 'sha256': package.sha(archive), 'size': archive.stat().st_size}
+if args.approve_detector_percentage_schema:
+    migration = '20261008173000_camera_detector_percentage'
+    prisma = root / 'apps/api/prisma'
+    expected = '-- Preferência visual. Padrão sem texto no grid; não muda detecção/gravação.\nALTER TABLE "Camera" ADD COLUMN "showDetectorPercentage" BOOLEAN NOT NULL DEFAULT false;\n'
+    if (prisma / 'migrations' / migration / 'migration.sql').read_text() != expected:
+        raise SystemExit('Only the reviewed detector-label migration is allowed')
+    previous = hashlib.sha256()
+    addition = ('  /// Só altera o texto sobre as caixas no grid, nunca a análise da IA.\n'
+                '  showDetectorPercentage Boolean      @default(false)\n').encode()
+    for path in sorted([prisma / 'schema.prisma', *(prisma / 'migrations').rglob('*.sql')]):
+        relative = path.relative_to(prisma).as_posix()
+        if relative == f'migrations/{migration}/migration.sql':
+            continue
+        content = path.read_bytes()
+        if relative == 'schema.prisma':
+            if content.count(addition) != 1:
+                raise SystemExit('Reviewed camera preference missing or duplicated')
+            content = content.replace(addition, b'')
+        previous.update(relative.encode())
+        previous.update(content)
+    body['reviewedSchemaTransition'] = {'from': previous.hexdigest(), 'kind': 'additive', 'migration': migration}
 payload = b'drac-runtime-manifest-v1\n' + json.dumps(body, sort_keys=True, separators=(',', ':')).encode()
 signature = subprocess.check_output(['python3', '/opt/ajustcam-management/runtime-tools/sign-release.py', '--key', str(args.key)], input=payload)
 body['signature'] = base64.b64encode(signature).decode()

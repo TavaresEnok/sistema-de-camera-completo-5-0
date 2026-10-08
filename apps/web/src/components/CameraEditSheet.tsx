@@ -57,6 +57,7 @@ type Form = EquipmentForm & {
   recordingObjectClasses: string[];
   motionSensitivity: 'baixa' | 'media' | 'alta';
   motionNoticeEnabled: boolean;
+  showDetectorPercentage: boolean;
   aiConfidence: number;
   aiSensitivity: 'sensitive' | 'balanced' | 'precise';
   retentionDays: string;
@@ -223,6 +224,7 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
           recordingObjectClasses: Array.isArray(data.recordingObjectClasses) ? data.recordingObjectClasses : [],
           motionSensitivity: data.motionSensitivity ?? 'media',
           motionNoticeEnabled: data.motionNoticeEnabled === true,
+          showDetectorPercentage: data.showDetectorPercentage === true,
           aiConfidence: data.aiConfidence ?? 70,
           aiSensitivity: data.aiSensitivity ?? 'balanced',
           retentionDays: String(data.retentionDays ?? 7),
@@ -439,6 +441,7 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
           recordingObjectClasses: form.recordingObjectClasses,
           motionSensitivity: form.motionSensitivity,
           motionNoticeEnabled: form.motionNoticeEnabled,
+          showDetectorPercentage: form.showDetectorPercentage,
           aiConfidence: form.aiConfidence,
           aiSensitivity: form.aiSensitivity,
           retentionDays: Number(form.retentionDays),
@@ -570,6 +573,7 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
                     <Input value={form.name} onChange={(e) => upd('name', e.target.value)} className="text-sm" />
                   </FormField>
                   <ToggleRow label="Avisar quando houver movimento" desc="Mostra um aviso discreto na tela, mesmo com gravação manual. Não inicia gravação nem envia mensagens." value={form.motionNoticeEnabled} onChange={v => upd('motionNoticeEnabled', v)} />
+                  <ToggleRow label="Mostrar porcentagem do detector" desc="No grid, mostra o nome e a porcentagem acima do quadrado." value={form.showDetectorPercentage} onChange={v => upd('showDetectorPercentage', v)} />
                   <div className="space-y-3 rounded-lg border border-border bg-background/55 p-3">
                     <div className="flex items-center gap-2">
                       <MapPin className="h-4 w-4 text-primary" />

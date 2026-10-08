@@ -377,6 +377,7 @@ export class CamerasService implements OnApplicationBootstrap {
           motionNoticeEnabled: dto.motionNoticeEnabled,
         }),
         motionNoticeEnabled: dto.motionNoticeEnabled ?? false,
+        showDetectorPercentage: dto.showDetectorPercentage ?? false,
         aiObjectClasses: dto.aiObjectClasses ?? [],
         aiSensitivity: dto.aiSensitivity ?? 'balanced',
         aiConfidence: dto.aiConfidence ?? 70,
@@ -805,6 +806,7 @@ export class CamerasService implements OnApplicationBootstrap {
           motionNoticeEnabled: dto.motionNoticeEnabled ?? existing.motionNoticeEnabled,
         }),
         motionNoticeEnabled: dto.motionNoticeEnabled,
+        showDetectorPercentage: dto.showDetectorPercentage,
         motionTrigger: migrarGatilhoParaZonas ? 'SYSTEM' : (dto.motionTrigger ?? existing.motionTrigger),
         // A migração de gatilho (comentário acima) também ARMA a análise: sem
         // aiEnabled o startCamera devolve 'camera_disabled' e o detector com
@@ -2018,6 +2020,7 @@ export class CamerasService implements OnApplicationBootstrap {
           motionNoticeEnabled: dto.motionNoticeEnabled,
         }),
         motionNoticeEnabled: dto.motionNoticeEnabled ?? false,
+        showDetectorPercentage: dto.showDetectorPercentage ?? false,
         alarmsEnabled: dto.alarmsEnabled ?? true,
         hasEdgeAi: dto.hasEdgeAi ?? false,
         motionTrigger: dto.motionTrigger ?? (dto.hasEdgeAi ? 'CAMERA' : 'SYSTEM'),

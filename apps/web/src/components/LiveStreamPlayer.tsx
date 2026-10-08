@@ -10,6 +10,7 @@ import { streamUrlsCache } from '../lib/stream-urls-cache';
 import { liveDetectionsPoller } from '../lib/live-detections-poller';
 import { nextLiveOverlayState } from '../lib/live-overlay-state';
 import { SmoothDetectionOverlay } from './SmoothDetectionOverlay';
+import { shouldShowDetectorLabel } from '../lib/detector-label';
 import { useRedeStore } from '../store/redeStore';
 import { classificarFalhaDePlayer } from '../lib/qualidade-de-rede';
 import {
@@ -34,6 +35,8 @@ type LiveStreamPlayerProps = {
   autoPlay?: boolean;
   muted?: boolean;
   showOverlay?: boolean;
+  showDetectorPercentage?: boolean;
+  detectionDisplayMode?: 'selected' | 'grid';
   aiEnabled?: boolean;
   liveViewMode?: 'selected' | 'grid';
   startDelayMs?: number;
@@ -321,6 +324,8 @@ export function LiveStreamPlayer({
   autoPlay = true,
   muted = true,
   showOverlay = true,
+  showDetectorPercentage = false,
+  detectionDisplayMode = 'selected',
   aiEnabled = true,
   liveViewMode = 'selected',
   startDelayMs = 0,
@@ -2626,7 +2631,7 @@ export function LiveStreamPlayer({
           playsInline
           autoPlay={autoPlay}
         />
-        {aiOverlayEnabled && <SmoothDetectionOverlay detections={detections} videoRef={videoRef} containerRef={containerRef} />}
+        {aiOverlayEnabled && <SmoothDetectionOverlay detections={detections} videoRef={videoRef} containerRef={containerRef} showLabels={shouldShowDetectorLabel(detectionDisplayMode, showDetectorPercentage)} />}
       </div>
 
       {/* MÃOZINHA — só existe quando ampliado. Fica ACIMA do botão de seleção

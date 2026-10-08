@@ -8,6 +8,18 @@ spec.loader.exec_module(viewing)
 
 
 class RecordingChoiceMigrationTests(unittest.TestCase):
+    def test_additive_schema_needs_exact_signed_transition_and_explicit_approval(self):
+        body = {'databaseSchemaHash': 'new', 'reviewedSchemaTransition': {
+            'from': 'old', 'kind': 'additive', 'migration': '20261008173000_camera_detector_percentage'}}
+        self.assertFalse(viewing.allow_schema_transition('new', body))
+        self.assertTrue(viewing.allow_schema_transition('old', body, True))
+        for current, approved in [('old', False), ('other', True)]:
+            with self.assertRaises(ValueError):
+                viewing.allow_schema_transition(current, body, approved)
+        body['reviewedSchemaTransition']['migration'] = 'unreviewed'
+        with self.assertRaises(ValueError):
+            viewing.allow_schema_transition('old', body, True)
+
     def test_legacy_shutdown_restore_is_conditional_and_manual_requires_active_timer(self):
         statements = []
         viewing.sql = lambda statement: statements.append(statement) or '1'

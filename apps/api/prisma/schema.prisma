@@ -161,6 +161,8 @@ model Camera {
   recordingMode          String       @default("continuous")
   motionSensitivity      String       @default("media")
   motionNoticeEnabled    Boolean      @default(false)
+  /// Só altera o texto sobre as caixas no grid, nunca a análise da IA.
+  showDetectorPercentage Boolean      @default(false)
   /// Dias que ESTA câmera guarda, quando NÃO segue o grupo.
   retentionDays          Int          @default(3)
   /// Segue a retenção do grupo? Nasce ligado: câmera nova herda a política do

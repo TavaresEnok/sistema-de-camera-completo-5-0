@@ -53,6 +53,7 @@ export interface Camera {
   signalStrength: number;
   recordingMode: 'continuous' | 'motion' | 'object' | 'schedule' | 'manual';
   motionNoticeEnabled?: boolean;
+  showDetectorPercentage?: boolean;
   retentionDays: number;
   effectiveRetentionDays: number;
   /** Segue a política do grupo? Ausente em API antiga = segue (o padrão). */
@@ -178,6 +179,9 @@ interface SystemSummary {
     freeMemoryBytes: number;
     cpuCount: number;
     loadAverage: number[];
+    cpuUsagePercent?: number | null;
+    cpuUsageSampledAt?: string;
+    cpuUsageWindowMs?: number;
   };
   disk: {
     totalBytes: number;
@@ -358,6 +362,7 @@ function mapCameraItems(
       storageCloudBytes: Number(camera.storageCloudBytes ?? 0),
       lastEvent: lastEvent ?? previous?.lastEvent,
       motionNoticeEnabled: camera.motionNoticeEnabled === true,
+      showDetectorPercentage: camera.showDetectorPercentage === true,
       // PTZ vem SONDADO da API (Camera.ptzCapable), não deduzido aqui.
       //
       // Isto era `Boolean(camera.onvifPath || camera.onvifProfileToken)`: ou

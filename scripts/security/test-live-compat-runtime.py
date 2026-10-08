@@ -106,6 +106,24 @@ const input=JSON.parse(fs.readFileSync(0,'utf8'));const root='http://127.0.0.1:3
 const l=await fetch(root+'/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:'labadmin',password:input.password})});
 const login=await l.json();if(!l.ok)throw Error('bootstrap_login_failed');
 const cameras=await(await fetch(root+'/cameras',{headers:{Authorization:'Bearer '+login.accessToken}})).json();
+const preferenceHeaders={Authorization:'Bearer '+login.accessToken,'Content-Type':'application/json'};
+const preferenceCamera=cameras.find(c=>c.name==='healthy');
+if(cameras.some(c=>c.showDetectorPercentage!==false))throw Error('detector_label_default_failed');
+for(const enabled of [true,false]){
+ const changed=await fetch(root+'/cameras/'+preferenceCamera.id,{method:'PATCH',headers:preferenceHeaders,body:JSON.stringify({showDetectorPercentage:enabled})});
+ const saved=await changed.json();
+ const persisted=await(await fetch(root+'/cameras/'+preferenceCamera.id,{headers:preferenceHeaders})).json();
+ const listed=await(await fetch(root+'/cameras',{headers:preferenceHeaders})).json();
+ if(!changed.ok||saved.showDetectorPercentage!==enabled||persisted.showDetectorPercentage!==enabled
+    ||listed.find(c=>c.id===preferenceCamera.id)?.showDetectorPercentage!==enabled
+    ||listed.filter(c=>c.id!==preferenceCamera.id).some(c=>c.showDetectorPercentage!==false)
+    ||persisted.aiEnabled!==false||persisted.recordingEnabled!==false)throw Error('detector_label_persistence_failed');
+}
+const invalidPreference=await fetch(root+'/cameras/'+preferenceCamera.id,{method:'PATCH',headers:preferenceHeaders,body:JSON.stringify({showDetectorPercentage:'true'})});
+if(invalidPreference.status!==400)throw Error('detector_label_validation_failed');
+const summary=await(await fetch(root+'/health/system',{headers:preferenceHeaders})).json();
+if(typeof summary.server.cpuUsagePercent!=='number'||summary.server.cpuUsagePercent<0||summary.server.cpuUsagePercent>100
+   ||summary.server.cpuUsageWindowMs<900)throw Error('cpu_measurement_failed');
 const cases=[];
 for(const name of ['healthy','bframes','bad-audio']){
  const camera=cameras.find(c=>c.name===name);
@@ -147,7 +165,7 @@ const stopped=await fetch(root+'/cameras/'+target.id,{method:'PATCH',headers:aut
 if(!stopped.ok)throw Error('notice_disable_failed');
 const after=await(await fetch('http://ai-service:8000/health')).json();
 if(after.active_processors?.includes(target.id))throw Error('notice_detector_not_stopped');
-console.log(JSON.stringify({bootstrapLogin:{status:l.status,tokenPresent:!!login.accessToken},cases,hls:{status:200},motionNotices:{realMotionEvent:true,manualPreserved:true,recordingNotStarted:true,authenticationRequired:true,disabledDetectorStopped:true}}));
+console.log(JSON.stringify({bootstrapLogin:{status:l.status,tokenPresent:!!login.accessToken},cases,hls:{status:200},detectorLabel:{defaultHidden:true,persistedPerCamera:true,invalidBooleanRejected:true,noAiOrRecordingChange:true},cpuMeasurement:{percent:summary.server.cpuUsagePercent,windowMs:summary.server.cpuUsageWindowMs},motionNotices:{realMotionEvent:true,manualPreserved:true,recordingNotStarted:true,authenticationRequired:true,disabledDetectorStopped:true}}));
 })().catch(e=>{console.error(e.message);process.exitCode=1});
 '''
         report.update(json.loads(node(script, input=json.dumps({'password': password}))))

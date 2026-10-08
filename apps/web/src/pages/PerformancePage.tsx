@@ -19,11 +19,12 @@ import { useAuthStore } from '@/store/authStore';
 import { useVmsDataStore } from '@/store/vmsDataStore';
 import { toast } from '../hooks/use-toast';
 import { analysisMetrics, formatAnalysisRate } from '@/lib/analysis-metrics';
+import { measuredCpuPercent } from '@/lib/measured-cpu';
 
 const API_URL = getApiBaseUrl();
 const HISTORY = 40; // samples in sparkline
 
-type Sample = { cpu: number; ram: number; disk: number };
+type Sample = { cpu: number | null; ram: number; disk: number };
 
 type OptimizationReport = {
   optimizationPlan?: { safeActionCount?: number; manualActionCount?: number; canApplySafely?: boolean };
@@ -122,7 +123,7 @@ export default function PerformancePage() {
   const [confirmApplyOpen, setConfirmApplyOpen] = useState(false);
   const refreshRef = useRef(false);
 
-  const cpu = system ? Math.min(100, Math.round(((system.server.loadAverage[0] ?? 0) / Math.max(system.server.cpuCount, 1)) * 100)) : 0;
+  const cpu = measuredCpuPercent(system?.server.cpuUsagePercent);
   const ram = system ? Math.min(100, Math.round(((system.server.totalMemoryBytes - system.server.freeMemoryBytes) / Math.max(system.server.totalMemoryBytes, 1)) * 100)) : 0;
   const disk = system?.disk.usagePercent ?? 0;
   const onlineCams = cameras.filter((c) => c.isOnline).length;
@@ -182,7 +183,7 @@ export default function PerformancePage() {
     }
   };
 
-  const cpuHist = history.map((h) => h.cpu);
+  const cpuHist = history.map((h) => h.cpu).filter((value): value is number => value !== null);
   const ramHist = history.map((h) => h.ram);
   const diskHist = history.map((h) => h.disk);
   const prev = history.length > 1 ? history[history.length - 2] : { cpu, ram, disk };
@@ -191,7 +192,7 @@ export default function PerformancePage() {
   const usedRamGB = system ? ((system.server.totalMemoryBytes - system.server.freeMemoryBytes) / 1024 / 1024 / 1024).toFixed(1) : '0';
 
   const METRICS = [
-    { key: 'cpu', label: 'Processamento', value: cpu, sub: `${system?.server.cpuCount ?? '—'} núcleos · uso estimado agora`, hist: cpuHist, icon: Cpu },
+    { key: 'cpu', label: 'Processamento', value: cpu, sub: `${system?.server.cpuCount ?? '—'} núcleos · ${cpu === null ? 'aguardando medição' : 'uso medido no servidor'}`, hist: cpuHist, icon: Cpu },
     { key: 'ram', label: 'Memória', value: ram, sub: `${usedRamGB} / ${totalRamGB} GB`, hist: ramHist, icon: MemoryStick },
     { key: 'disk', label: 'Disco', value: disk, sub: system ? `${(system.disk.usedBytes / 1024 ** 4).toFixed(1)} / ${(system.disk.totalBytes / 1024 ** 4).toFixed(1)} TB` : '—', hist: diskHist, icon: HardDrive },
   ];
@@ -242,7 +243,7 @@ export default function PerformancePage() {
       <div className="grid gap-4 lg:grid-cols-3">
         {METRICS.map((m) => {
           const Icon = m.icon;
-          const tone = toneFor(m.value);
+          const tone = toneFor(m.value ?? 0);
           return (
             <div key={m.key} className="rounded-xl border border-border bg-card p-5">
               <div className="flex items-start justify-between">
@@ -256,8 +257,8 @@ export default function PerformancePage() {
                   </div>
                 </div>
                 <div className="text-right">
-                  <div className="text-3xl font-semibold tabular-nums leading-none" style={{ color: tone }}>{m.value}<span className="text-base">%</span></div>
-                  <div className="mt-1 text-[10px]"><Trend now={m.value} prev={(prev as any)[m.key]} /></div>
+                  <div className="text-3xl font-semibold tabular-nums leading-none" style={{ color: tone }}>{m.value === null ? '—' : <>{m.value}<span className="text-base">%</span></>}</div>
+                  {m.value !== null && (prev as any)[m.key] !== null && <div className="mt-1 text-[10px]"><Trend now={m.value} prev={(prev as any)[m.key]} /></div>}
                 </div>
               </div>
               <div className="mt-3"><Sparkline data={m.hist} color={tone} /></div>

@@ -31,6 +31,31 @@ def media_state():
             for name in ['vms-ai-service', 'vms-mediamtx', 'vms-rtmp-ingest']}
 
 
+def verify_signature(signed, public_key):
+    body = dict(signed)
+    signature = base64.b64decode(body.pop('signature'), validate=True)
+    if len(signature) != 64:
+        raise ValueError('Invalid manifest signature')
+    payload = b'drac-runtime-manifest-v1\n' + json.dumps(body, sort_keys=True, separators=(',', ':')).encode()
+    with tempfile.TemporaryDirectory(prefix='drac-viewing-verify-') as directory:
+        message, sig = Path(directory) / 'message', Path(directory) / 'signature'
+        message.write_bytes(payload)
+        sig.write_bytes(signature)
+        command(['openssl', 'pkeyutl', '-verify', '-pubin', '-inkey', str(public_key),
+                 '-rawin', '-in', str(message), '-sigfile', str(sig)])
+    return body
+
+
+def allow_schema_transition(current_hash, body, approved=False):
+    if current_hash == body.get('databaseSchemaHash'):
+        return False
+    transition = body.get('reviewedSchemaTransition') or {}
+    if (approved and transition.get('from') == current_hash and transition.get('kind') == 'additive'
+            and transition.get('migration') == '20261008173000_camera_detector_percentage'):
+        return True
+    raise ValueError('Schema change requires the reviewed detector-label migration approval')
+
+
 def restore_legacy_shutdown(snapshot):
     # Only the OLD API desarms on shutdown. Restore eligible choices BEFORE
     # starting the fixed API. Never override an operator action or expired timer.
@@ -61,6 +86,7 @@ def main():
     parser.add_argument('root', type=Path)
     parser.add_argument('archive', type=Path)
     parser.add_argument('manifest', type=Path)
+    parser.add_argument('--approve-detector-percentage-schema', action='store_true')
     args = parser.parse_args()
     root = args.root.resolve()
     signed = json.loads(args.manifest.read_text())
@@ -72,13 +98,7 @@ def main():
             or not body.get('issuedAt', 0) - 120 <= time.time() < body.get('expiresAt', 0)
             or set(body.get('images', {})) != {'api', 'web'}):
         raise ValueError('Invalid signed viewing manifest')
-    payload = b'drac-runtime-manifest-v1\n' + json.dumps(body, sort_keys=True, separators=(',', ':')).encode()
-    with tempfile.TemporaryDirectory(prefix='drac-viewing-verify-') as directory:
-        message, sig = Path(directory) / 'message', Path(directory) / 'signature'
-        message.write_bytes(payload)
-        sig.write_bytes(signature)
-        command(['openssl', 'pkeyutl', '-verify', '-pubin', '-inkey', str(root / 'infra/release-public.pem'),
-                 '-rawin', '-in', str(message), '-sigfile', str(sig)])
+    verify_signature(signed, root / 'infra/release-public.pem')
     digest = hashlib.sha256()
     with args.archive.open('rb') as source:
         while data := source.read(1024 * 1024):
@@ -86,8 +106,10 @@ def main():
     if digest.hexdigest() != body['sha256'] or args.archive.stat().st_size != body['size']:
         raise ValueError('Viewing archive integrity failed')
     state = json.loads((root / '.runtime-release.json').read_text())
-    if state.get('databaseSchemaHash') != body['databaseSchemaHash']:
-        raise ValueError('Schema change is not allowed for a viewing update')
+    installed_viewing = root / 'infra/viewing-release.json'
+    if installed_viewing.exists():
+        state = verify_signature(json.loads(installed_viewing.read_text()), root / 'infra/release-public.pem')
+    migration_approved = allow_schema_transition(state.get('databaseSchemaHash'), body, args.approve_detector_percentage_schema)
     media_before, api_before = media_state(), inspect('vms-api')
     files = []
     for name in ['vms-api', 'vms-web']:
@@ -121,6 +143,13 @@ def main():
         if inspect(expected['imageId'])['Id'] != expected['imageId']:
             raise ValueError('Loaded image differs from signed manifest')
         configuration['services'][service]['image'] = expected['imageId']
+    if migration_approved:
+        migration = body['reviewedSchemaTransition']['migration']
+        statement = command(['docker', 'run', '--rm', '--network', 'none', '--entrypoint', 'cat',
+                             body['images']['api']['imageId'], f'/app/apps/api/prisma/migrations/{migration}/migration.sql']).stdout
+        expected_sql = '-- Preferência visual. Padrão sem texto no grid; não muda detecção/gravação.\nALTER TABLE "Camera" ADD COLUMN "showDetectorPercentage" BOOLEAN NOT NULL DEFAULT false;\n'.encode()
+        if statement != expected_sql:
+            raise ValueError('Image does not contain the narrowly reviewed additive migration')
     configuration['services']['api'].setdefault('environment', {})['DRAC_VERSION'] = body['commit']
     compose = ['docker', 'compose', '--project-name', api_before['Config']['Labels'].get('com.docker.compose.project', 'infra'),
                '--env-file', str(root / 'infra/.env')]
@@ -163,7 +192,7 @@ def main():
         command(compose + up)
         raise
     result = {'commit': body['commit'], 'signed': True, 'ready': True, 'mediaServicesUnchanged': True,
-              'legacyRecordingChoicesRestored': restored, 'cssFilesVerified': len(styles)}
+              'legacyRecordingChoicesRestored': restored, 'cssFilesVerified': len(styles), 'reviewedAdditiveMigration': migration_approved}
     (backup / 'result.json').write_text(json.dumps(result))
     (root / 'infra/viewing-release.json').write_text(json.dumps(signed))
     os.chmod(root / 'infra/viewing-release.json', 0o600)

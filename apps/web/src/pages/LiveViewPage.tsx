@@ -1298,6 +1298,7 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
                     }}
                     selected={selectedCam === cam.id}
                     showDetectionOverlay={!wallMode || selectedCam === cam.id}
+                    detectionDisplayMode={focusedCameraId === cam.id ? 'selected' : 'grid'}
                     // Full HD só quando há exatamente 1 câmera na tela.
                     // Em grade 2x2 ou maior, até a câmera selecionada permanece
                     // no perfil reduzido para preservar CPU/banda.

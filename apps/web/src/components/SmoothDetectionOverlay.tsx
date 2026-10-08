@@ -55,10 +55,12 @@ export function SmoothDetectionOverlay({
   detections,
   videoRef,
   containerRef,
+  showLabels = true,
 }: {
   detections: LiveDetection[];
   videoRef: VideoRefLike;
   containerRef: ContainerRefLike;
+  showLabels?: boolean;
 }) {
   const visibleDetections = useMemo(() => detections.filter(d =>
     d.label !== 'motion' && !d.type.startsWith('MOTION')), [detections]);
@@ -152,13 +154,13 @@ export function SmoothDetectionOverlay({
             } ${detection.stationary ? 'border-dashed opacity-80' : ''}`}
             style={style}
           >
-            <span
+            {showLabels && <span
               className={`absolute -top-6 left-0 max-w-40 truncate rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-black ${
                 isFace ? 'bg-[hsl(var(--status-online))]' : 'bg-[hsl(var(--status-warning))]'
               }`}
             >
               {label}
-            </span>
+            </span>}
           </div>
         );
       })}

@@ -21,6 +21,7 @@ interface CameraTileProps {
   playbackEnabled?: boolean;
   showDetectionOverlay?: boolean;
   liveViewMode?: 'selected' | 'grid';
+  detectionDisplayMode?: 'selected' | 'grid';
   wallMode?: boolean;
   onGridSourceIsOriginal?: (cameraId: string, isOriginal: boolean) => void;
 }
@@ -48,6 +49,7 @@ export function CameraTile({
   playbackEnabled = true,
   showDetectionOverlay = false,
   liveViewMode = 'grid',
+  detectionDisplayMode = 'grid',
   wallMode: wallModeProp,
   onGridSourceIsOriginal,
 }: CameraTileProps) {
@@ -110,6 +112,8 @@ export function CameraTile({
             showOverlay={showDetectionOverlay && !wallMode && !showOfflineOverlay}
             showEssentialStatus
             aiEnabled={camera.aiEnabled}
+            showDetectorPercentage={camera.showDetectorPercentage}
+            detectionDisplayMode={detectionDisplayMode}
             liveViewMode={liveViewMode}
             className="h-full w-full"
             muted

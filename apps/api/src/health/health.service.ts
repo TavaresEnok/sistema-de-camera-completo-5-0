@@ -8,9 +8,11 @@ import { ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
 import { envNumber } from '../common/config/env-number.helper';
 import { avaliarEstadoDaIa } from './helpers/estado-da-ia.helper';
+import { CpuUsageSampler } from './helpers/cpu-usage.helper';
 
 @Injectable()
 export class HealthService {
+  private readonly cpuUsageSampler = new CpuUsageSampler();
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
@@ -181,13 +183,14 @@ export class HealthService {
     const storageBackend = process.env.STORAGE_BACKEND ?? 'local';
     const writeProbeEnabled = String(process.env.STORAGE_WRITE_PROBE_ENABLED ?? 'true') !== 'false';
 
-    const [disk, recordings] = await Promise.all([
+    const [disk, recordings, cpuUsage] = await Promise.all([
       statfs(recordingsRoot),
       this.prisma.recording.aggregate({
         _count: { id: true },
         _sum: { sizeBytes: true },
         _max: { startedAt: true },
       }),
+      this.cpuUsageSampler.sample(),
     ]);
 
     const totalBytes = Number(disk.blocks) * Number(disk.bsize);
@@ -227,6 +230,9 @@ export class HealthService {
         freeMemoryBytes: os.freemem(),
         cpuCount: os.cpus().length,
         loadAverage: os.loadavg(),
+        cpuUsagePercent: cpuUsage.percent,
+        cpuUsageSampledAt: cpuUsage.sampledAt,
+        cpuUsageWindowMs: cpuUsage.windowMs,
       },
       disk: {
         totalBytes,
