@@ -44,6 +44,7 @@ export type CameraParaEscopo = {
    * ligado na tela e um recurso que funciona.
    */
   recordingMode?: string | null;
+  objectNoticeEnabled?: boolean | null;
 };
 
 export type DecisaoDeObjeto = {
@@ -57,6 +58,7 @@ export type DecisaoDeObjeto = {
     | 'desligado-pelo-operador'
     | 'linha-de-perimetro'
     | 'gravacao-por-objeto'
+    | 'aviso-por-objeto'
     | 'sempre-ligado'
     | 'sem-linha-desenhada';
 };
@@ -89,6 +91,8 @@ export function decidirObjetoDaCamera(
   if (camera.aiEnabled === false) return { cameraId, roda: false, motivo: 'ia-desligada-na-camera' };
 
   const modo = normalizarModoDeObjeto(camera.objectMode);
+  // Um pedido explícito de aviso exige o mesmo detector, sem armar gravação.
+  if (camera.objectNoticeEnabled === true) return { cameraId, roda: true, motivo: 'aviso-por-objeto' };
 
   // ── GRAVAÇÃO POR OBJETO VEM ANTES DE "NUNCA", e a ordem é o conserto ──────
   //
@@ -193,6 +197,7 @@ export function explicarDecisao(decisao: DecisaoDeObjeto): string {
     case 'desligado-pelo-operador': return 'Desligado manualmente para esta câmera.';
     case 'linha-de-perimetro': return 'Ligado automaticamente: há linha de perímetro desenhada.';
     case 'gravacao-por-objeto': return 'Ligado automaticamente: a câmera grava por objeto.';
+    case 'aviso-por-objeto': return 'Ligado para avisar na tela, sem iniciar gravação.';
     case 'sempre-ligado': return 'Ligado manualmente para esta câmera.';
     case 'sem-linha-desenhada': return 'Sem linha de perímetro — desenhe uma linha para ativar, ou marque "sempre".';
   }

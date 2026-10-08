@@ -37,6 +37,7 @@ function rodaObjetoDe(info: Record<string, unknown>): boolean {
 import { envNumber } from '../common/config/env-number.helper';
 import { modoArmado } from '../cameras/helpers/gatilho-de-gravacao.helper';
 import { MOTION_NOTICE_DEMAND, needsSystemMotion } from '../cameras/helpers/motion-notice.helper';
+import { noticeClasses } from '../cameras/helpers/detection-notice.helper';
 import { isPushSourced } from '../cameras/helpers/rtmp-ingest.helper';
 import { decidirSincronizacaoDeIa } from './helpers/decisao-de-sincronizacao.helper';
 
@@ -627,7 +628,7 @@ export class AiManagerService implements OnModuleInit {
       modoGlobal: settings.mode,
       motionTrigger: (cam as any).motionTrigger,
       rodaObjeto: rodaObjetoDe(source.info),
-      permitirGatilhoDaCamera: options?.allowCameraTrigger || Boolean(options?.simulationMode) || cam.motionNoticeEnabled,
+      permitirGatilhoDaCamera: options?.allowCameraTrigger || Boolean(options?.simulationMode) || cam.motionNoticeEnabled || cam.objectNoticeEnabled,
     })) {
       return { status: 'camera_self_detection', cameraId };
     }
@@ -674,6 +675,7 @@ export class AiManagerService implements OnModuleInit {
         motionTrigger: true,
         detectionZones: true,
         recordingMode: true,
+        objectNoticeEnabled: true,
       },
       orderBy: { name: 'asc' },
     });
@@ -1223,11 +1225,17 @@ export class AiManagerService implements OnModuleInit {
     // se pode; a regra por câmera diz ONDE vale a pena pagar por isso.
     const politica = await this.commercialPolicy.getPolicy().catch(() => null);
     const classesPermitidasNaInstalacao = classesPermitidas({ aiObjectClasses: politica?.aiObjectClasses });
-    const classesDeObjeto = classesEfetivasDaCamera(classesPermitidasNaInstalacao, cam.aiObjectClasses);
+    const otherObjectDemand = decidirObjetoDaCamera({ ...cam, objectNoticeEnabled: false }, {
+      politicaLiberaObjeto: classesPermitidasNaInstalacao.length > 0,
+    }).roda;
+    const classesDeObjeto = [...new Set([
+      ...(otherObjectDemand || !cam.objectNoticeEnabled ? classesEfetivasDaCamera(classesPermitidasNaInstalacao, cam.aiObjectClasses) : []),
+      ...(cam.objectNoticeEnabled ? noticeClasses(classesPermitidasNaInstalacao, cam.objectNoticeClasses) : []),
+    ])];
     const sensibilidade = normalizarSensibilidadeDaIa(cam.aiSensitivity);
     const confirmacao = politicaDeConfirmacaoDaIa(sensibilidade, cam.aiConfidence);
     const decisaoDeObjeto = decidirObjetoDaCamera(cam, {
-      politicaLiberaObjeto: classesPermitidasNaInstalacao.length > 0,
+      politicaLiberaObjeto: classesDeObjeto.length > 0,
     });
     const rawSubtype = String(process.env.AI_RTSP_SUBTYPE ?? '').trim().toLowerCase();
     const configuredSubtype = rawSubtype === '' || rawSubtype === 'auto'

@@ -46,12 +46,15 @@ def verify_signature(signed, public_key):
     return body
 
 
-def allow_schema_transition(current_hash, body, approved=False):
+def allow_schema_transition(current_hash, body, approved=False, object_notice_approved=False):
     if current_hash == body.get('databaseSchemaHash'):
         return False
     transition = body.get('reviewedSchemaTransition') or {}
     if (approved and transition.get('from') == current_hash and transition.get('kind') == 'additive'
             and transition.get('migration') == '20261008173000_camera_detector_percentage'):
+        return True
+    if (object_notice_approved and transition.get('from') == current_hash and transition.get('kind') == 'additive'
+            and transition.get('migration') == '20261008210000_camera_object_notice'):
         return True
     raise ValueError('Schema change requires the reviewed detector-label migration approval')
 
@@ -87,6 +90,7 @@ def main():
     parser.add_argument('archive', type=Path)
     parser.add_argument('manifest', type=Path)
     parser.add_argument('--approve-detector-percentage-schema', action='store_true')
+    parser.add_argument('--approve-object-notice-schema', action='store_true')
     args = parser.parse_args()
     root = args.root.resolve()
     signed = json.loads(args.manifest.read_text())
@@ -109,7 +113,7 @@ def main():
     installed_viewing = root / 'infra/viewing-release.json'
     if installed_viewing.exists():
         state = verify_signature(json.loads(installed_viewing.read_text()), root / 'infra/release-public.pem')
-    migration_approved = allow_schema_transition(state.get('databaseSchemaHash'), body, args.approve_detector_percentage_schema)
+    migration_approved = allow_schema_transition(state.get('databaseSchemaHash'), body, args.approve_detector_percentage_schema, args.approve_object_notice_schema)
     media_before, api_before = media_state(), inspect('vms-api')
     files = []
     for name in ['vms-api', 'vms-web']:
@@ -148,6 +152,8 @@ def main():
         statement = command(['docker', 'run', '--rm', '--network', 'none', '--entrypoint', 'cat',
                              body['images']['api']['imageId'], f'/app/apps/api/prisma/migrations/{migration}/migration.sql']).stdout
         expected_sql = '-- Preferência visual. Padrão sem texto no grid; não muda detecção/gravação.\nALTER TABLE "Camera" ADD COLUMN "showDetectorPercentage" BOOLEAN NOT NULL DEFAULT false;\n'.encode()
+        if migration == '20261008210000_camera_object_notice':
+            expected_sql = '-- Avisos independentes desligados por padrão; preserva gravações e alertas existentes.\nALTER TABLE "Camera" ADD COLUMN "objectNoticeEnabled" BOOLEAN NOT NULL DEFAULT false;\nALTER TABLE "Camera" ADD COLUMN "objectNoticeClasses" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];\n'.encode()
         if statement != expected_sql:
             raise ValueError('Image does not contain the narrowly reviewed additive migration')
     configuration['services']['api'].setdefault('environment', {})['DRAC_VERSION'] = body['commit']

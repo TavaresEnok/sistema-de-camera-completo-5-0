@@ -8,6 +8,14 @@ spec.loader.exec_module(viewing)
 
 
 class RecordingChoiceMigrationTests(unittest.TestCase):
+    def test_notice_transition_requires_separate_explicit_approval(self):
+        body = {'databaseSchemaHash': 'new', 'reviewedSchemaTransition': {
+            'from': 'old', 'kind': 'additive', 'migration': '20261008210000_camera_object_notice'}}
+        self.assertTrue(viewing.allow_schema_transition('old', body, object_notice_approved=True))
+        for approved, object_approved in [(False, False), (True, False)]:
+            with self.assertRaises(ValueError):
+                viewing.allow_schema_transition('old', body, approved, object_approved)
+
     def test_additive_schema_needs_exact_signed_transition_and_explicit_approval(self):
         body = {'databaseSchemaHash': 'new', 'reviewedSchemaTransition': {
             'from': 'old', 'kind': 'additive', 'migration': '20261008173000_camera_detector_percentage'}}

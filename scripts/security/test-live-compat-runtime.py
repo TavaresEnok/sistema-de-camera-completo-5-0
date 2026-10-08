@@ -47,7 +47,9 @@ def run(args):
         start('redis', 'redis:7-alpine')
         media = start('mediamtx', 'bluenviron/mediamtx:1-ffmpeg', extra=[
             '-v', str(Path(__file__).parent / 'tests/live-compat-mediamtx.yml') + ':/mediamtx.yml:ro'])
-        start('ai-service', args.ai, {'API_BASE_URL': 'http://api:3000', 'INTERNAL_SERVICE_TOKEN': secret}, extra=['--cpus', '2'])
+        ai_extra = ['--cpus', '2']
+        if args.models: ai_extra += ['-v', str(args.models.resolve()) + ':/app/models:ro']
+        start('ai-service', args.ai, {'API_BASE_URL': 'http://api:3000', 'INTERNAL_SERVICE_TOKEN': secret}, extra=ai_extra)
         for _ in range(60):
             check = subprocess.run(['docker', 'exec', postgres, 'pg_isready', '-U', 'lab'], capture_output=True)
             if check.returncode == 0: break
@@ -165,7 +167,40 @@ const stopped=await fetch(root+'/cameras/'+target.id,{method:'PATCH',headers:aut
 if(!stopped.ok)throw Error('notice_disable_failed');
 const after=await(await fetch('http://ai-service:8000/health')).json();
 if(after.active_processors?.includes(target.id))throw Error('notice_detector_not_stopped');
-console.log(JSON.stringify({bootstrapLogin:{status:l.status,tokenPresent:!!login.accessToken},cases,hls:{status:200},detectorLabel:{defaultHidden:true,persistedPerCamera:true,invalidBooleanRejected:true,noAiOrRecordingChange:true},cpuMeasurement:{percent:summary.server.cpuUsagePercent,windowMs:summary.server.cpuUsageWindowMs},motionNotices:{realMotionEvent:true,manualPreserved:true,recordingNotStarted:true,authenticationRequired:true,disabledDetectorStopped:true}}));
+// Object notices: genuine model startup/inference, controlled event fixtures for feed semantics.
+const {PrismaClient}=require('@prisma/client');const p=new PrismaClient();
+await p.systemSetting.upsert({where:{key:'cloud.restrictions'},create:{key:'cloud.restrictions',value:JSON.stringify({aiMotion:true,aiAdvanced:true,aiObject:true,aiObjectClasses:['person','car']})},update:{value:JSON.stringify({aiMotion:true,aiAdvanced:true,aiObject:true,aiObjectClasses:['person','car']})}});
+const combinedBaseline=await(await fetch(root+'/cameras/detection-notices',{headers:auth})).json();
+if(combinedBaseline.items.length)throw Error('notice_object_replayed_history');
+const objectChange=await fetch(root+'/cameras/'+target.id,{method:'PATCH',headers:auth,body:JSON.stringify({objectNoticeEnabled:true,objectNoticeClasses:['person'],objectMode:'nunca'})});
+const objectSaved=await objectChange.json();
+if(!objectChange.ok||objectSaved.objectNoticeEnabled!==true||objectSaved.recordingMode!=='manual'||objectSaved.recordingEnabled!==false||objectSaved.aiEnabled!==true)throw Error('notice_object_configuration_failed');
+let objectProcessor;
+for(let i=0;i<30;i++){
+ await new Promise(r=>setTimeout(r,1000));const health=await(await fetch('http://ai-service:8000/health')).json();
+ objectProcessor=health.processors?.[target.id];if(objectProcessor?.advanced_infer_runs>0)break;
+}
+if(!objectProcessor||objectProcessor.advanced_infer_runs<1||objectProcessor.advanced_infer_errors>0)throw Error('notice_object_inference_failed');
+const objectInference={runs:objectProcessor.advanced_infer_runs,errors:objectProcessor.advanced_infer_errors};
+const emit=async(label)=>{const r=await fetch(root+'/cameras/internal/'+target.id+'/events',{method:'POST',headers:{'x-service-token':process.env.INTERNAL_SERVICE_TOKEN,'Content-Type':'application/json'},body:JSON.stringify({type:'OBJECT_DETECTED',metadata:{label,confidence:0.95,bbox:[100,100,200,250],frameWidth:640,frameHeight:360,fixture:true}})});if(!r.ok)throw Error('notice_object_fixture_failed');return(await r.json()).id;};
+const personId=await emit('pessoa');const carId=await emit('carro');
+const combined=await(await fetch(root+'/cameras/detection-notices?since='+encodeURIComponent(combinedBaseline.cursor),{headers:auth})).json();
+if(!combined.items.some(e=>e.id===personId&&e.objectClass==='person')||combined.items.some(e=>e.id===carId))throw Error('notice_object_filter_failed');
+const invalidNotice=await fetch(root+'/cameras/'+target.id,{method:'PATCH',headers:auth,body:JSON.stringify({objectNoticeEnabled:'false'})});
+if(invalidNotice.status!==400)throw Error('notice_object_boolean_validation_failed');
+const rejected=await fetch(root+'/cameras/'+target.id,{method:'PATCH',headers:auth,body:JSON.stringify({objectNoticeClasses:['motorcycle']})});
+if(rejected.status!==403)throw Error('notice_object_plan_validation_failed');
+await fetch(root+'/cameras/'+target.id,{method:'PATCH',headers:auth,body:JSON.stringify({recordingMode:'motion',recordingEnabled:false,motionNoticeEnabled:true})});
+const preserved=await(await fetch(root+'/cameras/'+target.id,{headers:auth})).json();
+if(preserved.recordingMode!=='motion'||preserved.recordingEnabled!==false||!preserved.objectNoticeEnabled||!preserved.motionNoticeEnabled)throw Error('notice_object_changed_recording');
+const finalRecordings=await(await fetch(root+'/recordings?cameraId='+target.id,{headers:auth})).json();
+if((Array.isArray(finalRecordings)?finalRecordings:finalRecordings.items||[]).length)throw Error('notice_object_started_recording');
+if((await fetch(root+'/cameras/detection-notices')).status!==401)throw Error('notice_object_requires_authentication');
+await fetch(root+'/cameras/'+target.id,{method:'PATCH',headers:auth,body:JSON.stringify({recordingMode:'manual',motionNoticeEnabled:false,objectNoticeEnabled:false})});
+const finalAi=await(await fetch('http://ai-service:8000/health')).json();
+if(finalAi.active_processors?.includes(target.id))throw Error('notice_object_detector_not_stopped');
+await p.$disconnect();
+console.log(JSON.stringify({bootstrapLogin:{status:l.status,tokenPresent:!!login.accessToken},cases,hls:{status:200},detectorLabel:{defaultHidden:true,persistedPerCamera:true,invalidBooleanRejected:true,noAiOrRecordingChange:true},cpuMeasurement:{percent:summary.server.cpuUsagePercent,windowMs:summary.server.cpuUsageWindowMs},motionNotices:{realMotionEvent:true,manualPreserved:true,recordingNotStarted:true,authenticationRequired:true,disabledDetectorStopped:true},objectNotices:{realModelInference:objectInference,controlledEventFixtures:true,selectedClassesFiltered:true,unlicensedSelectionRejected:true,manualAndMotionRecordingPreserved:true,recordingNotStarted:true,authenticationRequired:true,disabledDetectorStopped:true}}));
 })().catch(e=>{console.error(e.message);process.exitCode=1});
 '''
         report.update(json.loads(node(script, input=json.dumps({'password': password}))))
@@ -196,4 +231,5 @@ if __name__ == '__main__':
     for name in ['api', 'web', 'ai', 'commit']: parser.add_argument('--' + name, required=True)
     parser.add_argument('--output', type=Path)
     parser.add_argument('--keep-failed', action='store_true')
+    parser.add_argument('--models', type=Path)
     run(parser.parse_args())

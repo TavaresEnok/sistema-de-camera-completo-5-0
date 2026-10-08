@@ -5,12 +5,12 @@ import { Radar, X } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
 import { useVmsDataStore } from '../store/vmsDataStore';
 import { getApiBaseUrl } from '../lib/api-base';
-import { selectMotionNotices, type MotionNotice } from '../lib/motion-notices';
+import { detectionNoticeMessage, selectMotionNotices, type MotionNotice } from '../lib/motion-notices';
 
 /** Mounted once, outside page layouts (including retained live layouts). */
 export function MotionNotices() {
   const token = useAuthStore(s => s.accessToken);
-  const enabled = useVmsDataStore(s => s.cameras.some(c => c.enabled !== false && c.motionNoticeEnabled));
+  const enabled = useVmsDataStore(s => s.cameras.some(c => c.enabled !== false && (c.motionNoticeEnabled || c.objectNoticeEnabled)));
   const [notices, setNotices] = useState<MotionNotice[]>([]);
   const [portal, setPortal] = useState<Element>(() => document.fullscreenElement ?? document.body);
 
@@ -32,7 +32,7 @@ export function MotionNotices() {
     const poll = async () => {
       try {
         if (document.visibilityState !== 'visible') { cursor = undefined; return; }
-        const { data } = await axios.get<{ items: MotionNotice[]; cursor: string }>(`${getApiBaseUrl()}/cameras/motion-notices`, {
+        const { data } = await axios.get<{ items: MotionNotice[]; cursor: string }>(`${getApiBaseUrl()}/cameras/detection-notices`, {
           params: { since: cursor }, headers: { Authorization: `Bearer ${token}` }, signal: controller.signal, timeout: 10_000,
         });
         if (cancelled) return;
@@ -57,8 +57,8 @@ export function MotionNotices() {
       {notices.map(notice => (
         <div key={notice.id} className="pointer-events-auto flex items-start gap-3 rounded-lg border border-border bg-card p-3 text-card-foreground shadow-lg">
           <Radar className="mt-0.5 h-5 w-5 shrink-0 text-primary" aria-hidden="true" />
-          <p className="min-w-0 flex-1 break-words text-sm">{notice.cameraName} detectou movimento.</p>
-          <button type="button" aria-label="Fechar aviso de movimento" onClick={() => setNotices(previous => previous.filter(n => n.id !== notice.id))} className="rounded p-1 text-muted-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><X className="h-4 w-4" /></button>
+          <p className="min-w-0 flex-1 break-words text-sm">{detectionNoticeMessage(notice)}</p>
+          <button type="button" aria-label="Fechar aviso" onClick={() => setNotices(previous => previous.filter(n => n.id !== notice.id))} className="rounded p-1 text-muted-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><X className="h-4 w-4" /></button>
         </div>
       ))}
     </div>, portal,

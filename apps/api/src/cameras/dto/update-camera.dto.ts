@@ -191,7 +191,19 @@ export class UpdateCameraDto {
 
   @IsOptional()
   @IsBoolean()
+  @Transform(({ obj, key }) => obj[key])
   motionNoticeEnabled?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  @Transform(({ obj, key }) => obj[key])
+  objectNoticeEnabled?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(6)
+  @IsIn(['person', 'car', 'motorcycle', 'bicycle', 'bus', 'truck'], { each: true })
+  objectNoticeClasses?: string[];
 
   @IsOptional()
   @IsBoolean()

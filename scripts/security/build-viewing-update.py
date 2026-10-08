@@ -17,6 +17,7 @@ parser.add_argument('--api', required=True)
 parser.add_argument('--web', required=True)
 parser.add_argument('--key', type=Path, required=True)
 parser.add_argument('--approve-detector-percentage-schema', action='store_true')
+parser.add_argument('--approve-object-notice-schema', action='store_true')
 args = parser.parse_args()
 root = args.root.resolve()
 git = ['git', '-c', 'safe.directory=' + str(root), '-C', str(root)]
@@ -44,15 +45,23 @@ body = {'v': 1, 'kind': 'viewing-update-v1', 'commit': commit, 'protection': 'st
         'distributionApproval': 'approved-production-maintenance', 'issuedAt': now, 'expiresAt': now + 30 * 86400,
         'databaseSchemaHash': package.database_schema_hash(root / 'apps/api/prisma'),
         'images': images, 'sha256': package.sha(archive), 'size': archive.stat().st_size}
-if args.approve_detector_percentage_schema:
-    migration = '20261008173000_camera_detector_percentage'
+if args.approve_detector_percentage_schema or args.approve_object_notice_schema:
+    if args.approve_detector_percentage_schema and args.approve_object_notice_schema:
+        raise SystemExit('Approve only one narrowly reviewed migration')
+    migration = '20261008210000_camera_object_notice' if args.approve_object_notice_schema else '20261008173000_camera_detector_percentage'
     prisma = root / 'apps/api/prisma'
     expected = '-- Preferência visual. Padrão sem texto no grid; não muda detecção/gravação.\nALTER TABLE "Camera" ADD COLUMN "showDetectorPercentage" BOOLEAN NOT NULL DEFAULT false;\n'
+    if args.approve_object_notice_schema:
+        expected = '-- Avisos independentes desligados por padrão; preserva gravações e alertas existentes.\nALTER TABLE "Camera" ADD COLUMN "objectNoticeEnabled" BOOLEAN NOT NULL DEFAULT false;\nALTER TABLE "Camera" ADD COLUMN "objectNoticeClasses" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];\n'
     if (prisma / 'migrations' / migration / 'migration.sql').read_text() != expected:
         raise SystemExit('Only the reviewed detector-label migration is allowed')
     previous = hashlib.sha256()
     addition = ('  /// Só altera o texto sobre as caixas no grid, nunca a análise da IA.\n'
                 '  showDetectorPercentage Boolean      @default(false)\n').encode()
+    if args.approve_object_notice_schema:
+        addition = ('  /// Avisos independentes: nunca armam nem alteram a gravação.\n'
+                    '  objectNoticeEnabled    Boolean      @default(false)\n'
+                    '  objectNoticeClasses    String[]     @default([])\n').encode()
     for path in sorted([prisma / 'schema.prisma', *(prisma / 'migrations').rglob('*.sql')]):
         relative = path.relative_to(prisma).as_posix()
         if relative == f'migrations/{migration}/migration.sql':

@@ -25,6 +25,7 @@ export type EstadoDeteccao = {
   motionTrigger: string | null | undefined;
   aiEnabled: boolean | null | undefined;
   motionNoticeEnabled?: boolean | null;
+  objectNoticeEnabled?: boolean | null;
 };
 
 /**
@@ -35,7 +36,8 @@ export type EstadoDeteccao = {
  * o MOG2 nesses casos gastaria CPU sem nada em troca.
  */
 export function detectorObrigatorio(estado: EstadoDeteccao): boolean {
-  return estado.motionNoticeEnabled === true || (modoArmado(estado.recordingMode) && estado.motionTrigger === 'SYSTEM');
+  return estado.motionNoticeEnabled === true || estado.objectNoticeEnabled === true
+    || (modoArmado(estado.recordingMode) && estado.motionTrigger === 'SYSTEM');
 }
 
 /**

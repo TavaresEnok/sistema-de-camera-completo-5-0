@@ -10,6 +10,8 @@ import * as http from 'http';
 import { stat, statfs } from 'node:fs/promises';
 import { join } from 'node:path';
 import { aiEnabledEfetivo } from './helpers/motion-detector.helper';
+import { noticeClasses, noticeObjectClass } from './helpers/detection-notice.helper';
+import { CommercialPolicyService } from '../commercial-policy/commercial-policy.service';
 import { escolherGrupoDoCliente, type VinculoDeGrupo } from './helpers/grupo-do-cliente.helper';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { CryptoService } from '../common/crypto/crypto.service';
@@ -283,6 +285,7 @@ export class CamerasService implements OnApplicationBootstrap {
   }
 
   async create(dto: CreateCameraDto, privacy?: { isPrivate: boolean; ownerUserId: string | null }) {
+    await this.validateDetectionNotices(dto);
     // ── CÂMERA QUE PUBLICA NÃO TEM ENDEREÇO NOSSO ────────────────────────────
     //
     // No modo push é a câmera que disca. Não existe IP para alcançá-la, porta
@@ -375,8 +378,11 @@ export class CamerasService implements OnApplicationBootstrap {
           motionTrigger: dto.motionTrigger ?? (dto.hasEdgeAi ? 'CAMERA' : 'SYSTEM'),
           aiEnabled: dto.aiEnabled ?? true,
           motionNoticeEnabled: dto.motionNoticeEnabled,
+          objectNoticeEnabled: dto.objectNoticeEnabled,
         }),
         motionNoticeEnabled: dto.motionNoticeEnabled ?? false,
+        objectNoticeEnabled: dto.objectNoticeEnabled ?? false,
+        objectNoticeClasses: dto.objectNoticeClasses ?? [],
         showDetectorPercentage: dto.showDetectorPercentage ?? false,
         aiObjectClasses: dto.aiObjectClasses ?? [],
         aiSensitivity: dto.aiSensitivity ?? 'balanced',
@@ -663,6 +669,7 @@ export class CamerasService implements OnApplicationBootstrap {
 
   async update(id: string, dto: UpdateCameraDto) {
     const existing = await this.getCameraOrThrow(id);
+    await this.validateDetectionNotices(dto, existing);
     // Em RTMP push o IP é apenas um marcador inerte criado pelo próprio sistema
     // (`0.0.0.0`): nunca é discado. Validá-lo como alvo RTSP impedia salvar até
     // mudanças sem relação com rede (nome, retenção, áudio etc.). A política de
@@ -804,8 +811,11 @@ export class CamerasService implements OnApplicationBootstrap {
           motionTrigger: dto.motionTrigger ?? existing.motionTrigger,
           aiEnabled: dto.aiEnabled,
           motionNoticeEnabled: dto.motionNoticeEnabled ?? existing.motionNoticeEnabled,
+          objectNoticeEnabled: dto.objectNoticeEnabled ?? existing.objectNoticeEnabled,
         }),
         motionNoticeEnabled: dto.motionNoticeEnabled,
+        objectNoticeEnabled: dto.objectNoticeEnabled,
+        objectNoticeClasses: dto.objectNoticeClasses,
         showDetectorPercentage: dto.showDetectorPercentage,
         motionTrigger: migrarGatilhoParaZonas ? 'SYSTEM' : (dto.motionTrigger ?? existing.motionTrigger),
         // A migração de gatilho (comentário acima) também ARMA a análise: sem
@@ -986,6 +996,60 @@ export class CamerasService implements OnApplicationBootstrap {
       occurredAt: event.occurredAt,
     });
     return event;
+  }
+
+  private async validateDetectionNotices(dto: CreateCameraDto | UpdateCameraDto, existing?: { objectNoticeEnabled?: boolean; objectNoticeClasses?: string[] }) {
+    // Unrelated edits and turning notices off remain possible after a plan change.
+    const objectEnabled = dto.objectNoticeEnabled ?? existing?.objectNoticeEnabled ?? false;
+    const checkObject = objectEnabled && (dto.objectNoticeEnabled !== undefined || dto.objectNoticeClasses !== undefined);
+    if (!checkObject && dto.motionNoticeEnabled !== true) return;
+    const policy = this.moduleRef.get(CommercialPolicyService, { strict: false });
+    if (dto.motionNoticeEnabled === true && !(await policy.isAllowed('aiMotion'))) {
+      throw new ForbiddenException('Avisos de movimento não estão disponíveis neste plano.');
+    }
+    if (checkObject) {
+      const licensed = await policy.getPolicy();
+      const allowed = licensed.aiObjectClasses;
+      if (!(await policy.isAllowed('aiObject')) || !allowed.length) {
+        throw new ForbiddenException('Avisos de pessoas ou veículos não estão disponíveis neste plano.');
+      }
+      const selected = dto.objectNoticeClasses ?? existing?.objectNoticeClasses ?? [];
+      if (selected.some(c => !allowed.includes(c))) {
+        throw new ForbiddenException('Escolha apenas as detecções disponíveis no plano.');
+      }
+    }
+  }
+
+  async listDetectionNotices(accessibleCameraIds: string[], since?: string) {
+    const now = new Date();
+    const parsed = since ? new Date(since).getTime() : NaN;
+    if (!accessibleCameraIds.length || !Number.isFinite(parsed) || parsed > now.getTime()) {
+      return { items: [], cursor: now.toISOString() };
+    }
+    const policy = this.moduleRef.get(CommercialPolicyService, { strict: false });
+    const [licensed, motionAllowed, objectAllowed] = await Promise.all([
+      policy.getPolicy(), policy.isAllowed('aiMotion'), policy.isAllowed('aiObject'),
+    ]);
+    const allowed = objectAllowed ? licensed.aiObjectClasses : [];
+    const conditions: Prisma.CameraEventWhereInput[] = [];
+    if (motionAllowed) conditions.push({ type: 'MOTION_DETECTED', camera: { motionNoticeEnabled: true } });
+    if (allowed.length) conditions.push({ type: 'OBJECT_DETECTED', camera: { objectNoticeEnabled: true } });
+    if (!conditions.length) return { items: [], cursor: now.toISOString() };
+    const events = await this.prisma.cameraEvent.findMany({
+      where: { cameraId: { in: accessibleCameraIds }, camera: { enabled: true }, OR: conditions,
+        createdAt: { gte: new Date(Math.max(parsed - 1000, now.getTime() - 30_000)), lte: now },
+        occurredAt: { gte: new Date(now.getTime() - 30_000), lte: now } },
+      select: { id: true, cameraId: true, type: true, metadata: true, occurredAt: true,
+        camera: { select: { name: true, objectNoticeClasses: true } } },
+      orderBy: { createdAt: 'desc' }, take: 200,
+    });
+    const items = events.flatMap(e => {
+      const objectClass = e.type === 'OBJECT_DETECTED' ? noticeObjectClass(e.metadata) : null;
+      if (e.type === 'OBJECT_DETECTED' && (!objectClass || !noticeClasses(allowed, e.camera.objectNoticeClasses).includes(objectClass))) return [];
+      return [{ id: e.id, cameraId: e.cameraId, cameraName: e.camera.name,
+        occurredAt: e.occurredAt, detectionType: e.type === 'OBJECT_DETECTED' ? 'object' : 'motion', objectClass }];
+    });
+    return { items, cursor: now.toISOString() };
   }
 
   async listMotionNotices(accessibleCameraIds: string[], since?: string) {
@@ -2018,8 +2082,11 @@ export class CamerasService implements OnApplicationBootstrap {
           motionTrigger: dto.motionTrigger ?? (dto.hasEdgeAi ? 'CAMERA' : 'SYSTEM'),
           aiEnabled: dto.aiEnabled ?? true,
           motionNoticeEnabled: dto.motionNoticeEnabled,
+          objectNoticeEnabled: dto.objectNoticeEnabled,
         }),
         motionNoticeEnabled: dto.motionNoticeEnabled ?? false,
+        objectNoticeEnabled: dto.objectNoticeEnabled ?? false,
+        objectNoticeClasses: dto.objectNoticeClasses ?? [],
         showDetectorPercentage: dto.showDetectorPercentage ?? false,
         alarmsEnabled: dto.alarmsEnabled ?? true,
         hasEdgeAi: dto.hasEdgeAi ?? false,

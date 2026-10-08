@@ -161,6 +161,9 @@ model Camera {
   recordingMode          String       @default("continuous")
   motionSensitivity      String       @default("media")
   motionNoticeEnabled    Boolean      @default(false)
+  /// Avisos independentes: nunca armam nem alteram a gravação.
+  objectNoticeEnabled    Boolean      @default(false)
+  objectNoticeClasses    String[]     @default([])
   /// Só altera o texto sobre as caixas no grid, nunca a análise da IA.
   showDetectorPercentage Boolean      @default(false)
   /// Dias que ESTA câmera guarda, quando NÃO segue o grupo.

@@ -20,6 +20,7 @@ import { normalizeVideoCodec, normalizePreferredLiveProtocol } from '../lib/came
 import { SeletorDeClassesDeGravacao } from './SeletorDeClassesDeGravacao';
 import { useClassesLiberadas } from '../hooks/use-classes-liberadas';
 import { CameraConnectionCheck } from './CameraConnectionCheck';
+import { CameraDetectionNotices } from './CameraDetectionNotices';
 import { equipmentFields, equipmentError, equipmentPayload, readEquipment, type EquipmentForm } from '../lib/camera-edit';
 import { getRequestErrorMessage } from '../lib/request-error';
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction } from './ui/alert-dialog';
@@ -57,6 +58,8 @@ type Form = EquipmentForm & {
   recordingObjectClasses: string[];
   motionSensitivity: 'baixa' | 'media' | 'alta';
   motionNoticeEnabled: boolean;
+  objectNoticeEnabled: boolean;
+  objectNoticeClasses: string[];
   showDetectorPercentage: boolean;
   aiConfidence: number;
   aiSensitivity: 'sensitive' | 'balanced' | 'precise';
@@ -131,7 +134,7 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [form, setForm] = useState<Form | null>(null);
-  const { classes: classesLiberadas } = useClassesLiberadas();
+  const { classes: classesLiberadas, motionAllowed, carregando: noticeCapabilitiesLoading } = useClassesLiberadas();
   const [ingest, setIngest] = useState<IngestTarget | null>(null);
   const [ingestBusy, setIngestBusy] = useState(false);
   const [confirmarVoltarRtsp, setConfirmarVoltarRtsp] = useState(false);
@@ -224,6 +227,8 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
           recordingObjectClasses: Array.isArray(data.recordingObjectClasses) ? data.recordingObjectClasses : [],
           motionSensitivity: data.motionSensitivity ?? 'media',
           motionNoticeEnabled: data.motionNoticeEnabled === true,
+          objectNoticeEnabled: data.objectNoticeEnabled === true,
+          objectNoticeClasses: Array.isArray(data.objectNoticeClasses) ? data.objectNoticeClasses : [],
           showDetectorPercentage: data.showDetectorPercentage === true,
           aiConfidence: data.aiConfidence ?? 70,
           aiSensitivity: data.aiSensitivity ?? 'balanced',
@@ -441,6 +446,8 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
           recordingObjectClasses: form.recordingObjectClasses,
           motionSensitivity: form.motionSensitivity,
           motionNoticeEnabled: form.motionNoticeEnabled,
+          objectNoticeEnabled: form.objectNoticeEnabled,
+          objectNoticeClasses: form.objectNoticeClasses,
           showDetectorPercentage: form.showDetectorPercentage,
           aiConfidence: form.aiConfidence,
           aiSensitivity: form.aiSensitivity,
@@ -463,8 +470,8 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
         { headers: { Authorization: `Bearer ${accessToken}` } },
       );
       await loadData();
-      if (changes.motionNoticeEnabled === true && ['failed', 'disabled', 'camera_disabled'].includes(saved.aiApplyStatus)) {
-        toast({ title: 'Opção salva', description: 'O aviso ainda não está ativo. Verifique se a detecção de movimento está disponível.', variant: 'destructive' });
+      if ((changes.motionNoticeEnabled === true || changes.objectNoticeEnabled === true || (changes.objectNoticeClasses !== undefined && form.objectNoticeEnabled)) && ['failed', 'disabled', 'camera_disabled'].includes(saved.aiApplyStatus)) {
+        toast({ title: 'Opção salva', description: 'O aviso ainda não está ativo. Verifique a conexão da câmera e a detecção disponível no plano.', variant: 'destructive' });
         onClose();
         return;
       }
@@ -572,7 +579,9 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
                   <FormField label="Nome da câmera" required>
                     <Input value={form.name} onChange={(e) => upd('name', e.target.value)} className="text-sm" />
                   </FormField>
-                  <ToggleRow label="Avisar quando houver movimento" desc="Mostra um aviso discreto na tela, mesmo com gravação manual. Não inicia gravação nem envia mensagens." value={form.motionNoticeEnabled} onChange={v => upd('motionNoticeEnabled', v)} />
+                  <CameraDetectionNotices motion={form.motionNoticeEnabled} object={form.objectNoticeEnabled} classes={form.objectNoticeClasses}
+                    allowed={classesLiberadas} motionAllowed={motionAllowed} loading={noticeCapabilitiesLoading}
+                    onChange={values => { setDirty(true); setForm(current => current ? { ...current, ...values } : current); }} />
                   <ToggleRow label="Mostrar porcentagem do detector" desc="No grid, mostra o nome e a porcentagem acima do quadrado." value={form.showDetectorPercentage} onChange={v => upd('showDetectorPercentage', v)} />
                   <div className="space-y-3 rounded-lg border border-border bg-background/55 p-3">
                     <div className="flex items-center gap-2">
@@ -926,6 +935,9 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
                 <TabsContent value="gravacao" className="px-5 py-4 space-y-4 mt-0">
                   <ToggleRow label="Permitir gravação" desc="Autoriza o armazenamento de vídeo conforme o modo escolhido abaixo." value={form.recordingEnabled} onChange={v => upd('recordingEnabled', v)} />
                   <ToggleRow label="Alertas desta câmera" desc="Permite os alertas configurados para esta câmera." value={form.alarmsEnabled} onChange={v => upd('alarmsEnabled', v)} />
+                  <CameraDetectionNotices motion={form.motionNoticeEnabled} object={form.objectNoticeEnabled} classes={form.objectNoticeClasses}
+                    allowed={classesLiberadas} motionAllowed={motionAllowed} loading={noticeCapabilitiesLoading}
+                    onChange={values => { setDirty(true); setForm(current => current ? { ...current, ...values } : current); }} />
                   {!form.recordingEnabled && <p role="status" className="text-xs text-muted-foreground">A gravação está desativada. Escolher um modo não a ativa; ligue “Permitir gravação” para gravar.</p>}
                   <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Modo de gravação</p>
                   {form.recordingMode === 'schedule' && (
@@ -968,7 +980,7 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
                       classesLiberadas={classesLiberadas}
                     />
                   )}
-                  {(form.recordingMode === 'motion' || form.recordingMode === 'object' || form.motionNoticeEnabled) && (
+                  {(form.recordingMode === 'motion' || form.recordingMode === 'object' || form.motionNoticeEnabled || form.objectNoticeEnabled) && (
                     <div className="space-y-2">
                       <Label htmlFor="recording-sensitivity">Sensibilidade da detecção</Label>
                       <Select

@@ -373,6 +373,13 @@ export class CamerasController {
   }
 
   @Roles(UserRole.VIEWER)
+  @Get('detection-notices')
+  async detectionNotices(@CurrentUser() user: AuthUser, @Query('since') since?: string) {
+    const ids = await this.accessControlService.getAccessibleCameraIds(user);
+    return this.camerasService.listDetectionNotices(ids, since);
+  }
+
+  @Roles(UserRole.VIEWER)
   @Get('events-feed')
   async listEventsFeed(
     @CurrentUser() user: AuthUser,
@@ -1049,6 +1056,8 @@ export class CamerasController {
       || dto.aiSensitivity !== undefined
       || dto.motionSensitivity !== undefined
       || dto.motionNoticeEnabled !== undefined
+      || dto.objectNoticeEnabled !== undefined
+      || dto.objectNoticeClasses !== undefined
       || dto.recordingMode !== undefined
     ) {
       // Uma configuração operacional da IA mudou: a análise precisa recarregar
@@ -1059,7 +1068,7 @@ export class CamerasController {
         const aiService = this.moduleRef.get(AiService, { strict: false });
         await aiService.stopAnalysis(id).catch(() => undefined);
         const aiManager = this.moduleRef.get(AiManagerService, { strict: false });
-        const result = await aiManager.startCamera(id, { allowCameraTrigger: dto.motionNoticeEnabled === undefined });
+        const result = await aiManager.startCamera(id, { allowCameraTrigger: dto.motionNoticeEnabled === undefined && dto.objectNoticeEnabled === undefined && dto.objectNoticeClasses === undefined });
         aiApplyStatus = String((result as { status?: string })?.status ?? 'requested');
       } catch {
         // A configuração permanece salva e a tela diferencia isso de aplicada.
