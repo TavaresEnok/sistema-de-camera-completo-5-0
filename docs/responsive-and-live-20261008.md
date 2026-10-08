@@ -32,6 +32,22 @@ Comparação visual em 320, 360, 390, 768, 1024 e 1440 pixels. Foram inspecionad
 
 Teste de interação Chromium: grade de desktop de 16 câmeras não abre 16 players no celular; Preencher abre quatro; seleção ampliada volta a quatro mantendo fullscreen; toque nativo move a linha do tempo e cancelamento encerra arraste; troca de orientação não cria rolagem horizontal da página.
 
-Publicação prevista por imagens assinadas API/web, com backup, mesma estrutura de banco e sem reiniciar AI, MediaMTX ou ingestão RTMP. Evidências de reprodução e saúde pós-publicação ficam separadas dos testes de layout. Não se afirma certificação WCAG completa nem teste físico em todos os aparelhos.
+Publicação concluída em Vibe, Dguardian e IB Telecom por imagens assinadas API/web, com backup e mesma estrutura de banco. AI, MediaMTX e ingestão RTMP mantiveram suas imagens e horários de início. Build servido nas três: `3fdd3d3-responsive-live`. Não se afirma certificação WCAG completa nem teste físico em todos os aparelhos.
+
+WebKit: 24 combinações de rota/largura com navegação SPA, sem controles cortados nem erros JavaScript. A navegação real foi usada para não confundir cancelamento de requisições ao recarregar documentos com falha do aplicativo.
+
+Após publicar, teste no navegador contra os domínios reais, com uma câmera por instalação e reprodução avançando. JWT de manutenção temporário apenas em memória; nenhum login/senha do cliente alterado; nenhuma gravação ou licença alterada para o teste.
+
+| Instalação / câmera de amostra | Máxima resolução recebida | Instantâneo recebido | FPS decodificados na amostra de 3 segundos | Quadros descartados |
+| --- | --- | --- | --- | --- |
+| Vibe / VIBE NOBRE FRENTE | 1920×1080 | 640×360 | 20 | 0 |
+| Dguardian / Camera Frente | 1920×1080 | 640×360 | 10 | 0 |
+| IB Telecom / Grupo Flash Cam-06 | 640×480 | 640×480 | 30,3 | 0 |
+
+Essas são amostras de entrega de vídeo, não FPS da detecção nem garantia para toda a frota. Instantâneo pode manter a resolução de origem quando não há imagem menor ou orçamento de conversão; não é forçada conversão adicional em todas as câmeras. Nos testes, as duas escolhas retornaram HTTP 200, o selo “Qualidade original” não apareceu e a página coube em 390 pixels.
+
+O código compilado efetivamente instalado foi verificado: carga alta com CPU em 68% é admitida com orçamento/memória livres; CPU em 90% continua recusada com motivo `cpu`; comando de mídia mede `/proc/stat`, não `/proc/loadavg`. A recusa real por CPU/memória/orçamento permanece possível — a correção não remove proteção contra sobrecarga.
+
+Na Vibe, contagem de 35 câmeras, modos (34 manual/1 objeto), digest das escolhas/configurações e digest das credenciais da instalação foram idênticos antes/depois. A inspeção do arquivo de imagens verificou 22 camadas e nenhum arquivo-fonte proibido. Backups e resultados por instalação em `infra/backups/viewing-updates/`; evidências de navegador protegidas na Management.
 
 Referências: [WCAG Reflow](https://www.w3.org/WAI/WCAG22/Understanding/reflow.html), [tamanho mínimo de alvos](https://www.w3.org/WAI/WCAG22/Understanding/target-size-minimum.html), [Playwright Docker](https://playwright.dev/docs/docker).
