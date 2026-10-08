@@ -21,6 +21,8 @@ import { SeletorDeClassesDeGravacao } from './SeletorDeClassesDeGravacao';
 import { useClassesLiberadas } from '../hooks/use-classes-liberadas';
 import { CameraConnectionCheck } from './CameraConnectionCheck';
 import { CameraDetectionNotices } from './CameraDetectionNotices';
+import { CameraPrivacyFields } from './CameraPrivacyFields';
+import { cameraPrivacyChanged, cameraPrivacyError, cameraPrivacyPayload, type CameraPrivacyForm } from '../lib/camera-privacy';
 import { equipmentFields, equipmentError, equipmentPayload, readEquipment, type EquipmentForm } from '../lib/camera-edit';
 import { getRequestErrorMessage } from '../lib/request-error';
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction } from './ui/alert-dialog';
@@ -37,7 +39,7 @@ interface CameraEditSheetProps {
   onDeleted?: (id: string) => void;
 }
 
-type Form = EquipmentForm & {
+type Form = EquipmentForm & CameraPrivacyForm & {
   recordingEnabled: boolean;
   name: string;
   ip: string;
@@ -129,6 +131,9 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
   const [dirty, setDirty] = useState(false);
   const [pendingClose, setPendingClose] = useState<string | null>(null);
   const initialForm = useRef<Form | null>(null);
+  const privacyRevision = useRef<string | undefined>(undefined);
+  const privacyAccessRevision = useRef<string | undefined>(undefined);
+  const [confirmPrivacy, setConfirmPrivacy] = useState(false);
   const loadData = useVmsDataStore((s) => s.load);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -182,6 +187,9 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
     if (!open || !canEdit || !cameraId || !accessToken || !selectedCamera) return;
     let cancelled = false;
     setForm(null);
+    setConfirmPrivacy(false);
+    privacyRevision.current = undefined;
+    privacyAccessRevision.current = undefined;
     setDirty(false);
     setPendingClose(null);
     setSourceMode('');
@@ -206,6 +214,9 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
         if (cancelled) return;
         setSourceMode(data.sourceMode ?? 'rtsp_pull');
         const loaded: Form = {
+          isPrivate: data.isPrivate === true,
+          ownerUserId: data.ownerUserId ?? '',
+          privateViewerIds: Array.isArray(data.privateViewerIds) ? data.privateViewerIds : [],
           ...readEquipment(data),
           recordingEnabled: data.recordingEnabled !== false,
           name: data.name ?? selectedCamera.name,
@@ -241,6 +252,8 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
           enabled: data.enabled !== false,
         };
         initialForm.current = loaded;
+        privacyRevision.current = data.updatedAt;
+        privacyAccessRevision.current = data.privacyRevision;
         setForm(loaded);
       })
       .catch((err) => {
@@ -382,8 +395,12 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
     }
   };
 
-  const handleSave = async () => {
+  const handleSave = async (privacyConfirmed = false) => {
     if (!accessToken || !form || saving || ingestBusy) return;
+    const privacyChanged = initialForm.current ? cameraPrivacyChanged(form, initialForm.current) : false;
+    const privacyError = cameraPrivacyError(form);
+    if (privacyChanged && privacyError) { toast({ title: 'Confira a privacidade', description: privacyError, variant: 'destructive' }); return; }
+    if (privacyChanged && !privacyConfirmed) { setConfirmPrivacy(true); return; }
     const invalidEquipment = equipmentError(form);
     const invalidPort = !modoPush && [form.rtspPort, ...(form.onvifPort.trim() ? [form.onvifPort] : [])]
       .some(value => !Number.isInteger(Number(value)) || Number(value) < 1 || Number(value) > 65535);
@@ -463,6 +480,7 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
       // A polling refresh or another editor must not have unrelated fields overwritten.
       const changes = Object.fromEntries(Object.entries(payload).filter(([key]) =>
         JSON.stringify(form[key as keyof Form]) !== JSON.stringify(initialForm.current?.[key as keyof Form])));
+      if (privacyChanged) Object.assign(changes, cameraPrivacyPayload(form), { privacyConfirmed: true, expectedUpdatedAt: privacyRevision.current, expectedPrivacyRevision: privacyAccessRevision.current });
       if (!Object.keys(changes).length) { onClose(); return; }
       const { data: saved } = await axios.patch(
         `${getApiBaseUrl()}/cameras/${camera.id}`,
@@ -470,6 +488,10 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
         { headers: { Authorization: `Bearer ${accessToken}` } },
       );
       await loadData();
+      if (saved.privacyApplyStatus === 'reconnect_pending') {
+        toast({ title: 'Privacidade salva', description: 'Novos acessos já seguem a privacidade. Não foi possível confirmar o encerramento de todas as visualizações abertas; avise o administrador.', variant: 'destructive' });
+        onClose(); return;
+      }
       if ((changes.motionNoticeEnabled === true || changes.objectNoticeEnabled === true || (changes.objectNoticeClasses !== undefined && form.objectNoticeEnabled)) && ['failed', 'disabled', 'camera_disabled'].includes(saved.aiApplyStatus)) {
         toast({ title: 'Opção salva', description: 'O aviso ainda não está ativo. Verifique a conexão da câmera e a detecção disponível no plano.', variant: 'destructive' });
         onClose();
@@ -579,6 +601,7 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
                   <FormField label="Nome da câmera" required>
                     <Input value={form.name} onChange={(e) => upd('name', e.target.value)} className="text-sm" />
                   </FormField>
+                  <CameraPrivacyFields value={form} onChange={privacy => { setDirty(true); setForm(current => current ? { ...current, ...privacy } : current); }} />
                   <CameraDetectionNotices motion={form.motionNoticeEnabled} object={form.objectNoticeEnabled} classes={form.objectNoticeClasses}
                     allowed={classesLiberadas} motionAllowed={motionAllowed} loading={noticeCapabilitiesLoading}
                     onChange={values => { setDirty(true); setForm(current => current ? { ...current, ...values } : current); }} />
@@ -1121,6 +1144,16 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
             </SheetFooter>
           </>
         )}
+        <AlertDialog open={confirmPrivacy} onOpenChange={setConfirmPrivacy}>
+          <AlertDialogContent>
+            <AlertDialogHeader><AlertDialogTitle>Confirmar alteração de privacidade?</AlertDialogTitle>
+              <AlertDialogDescription>{form?.isPrivate
+                ? 'Somente o proprietário escolhido e as pessoas autorizadas terão acesso às imagens, inclusive às gravações antigas. Visualizações abertas serão reconectadas. Grupos não concedem acesso.'
+                : 'A câmera e suas gravações antigas voltarão a seguir as permissões normais de grupos e usuários. Administradores poderão visualizar as imagens.'}</AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter><AlertDialogCancel>Voltar</AlertDialogCancel><AlertDialogAction onClick={() => { setConfirmPrivacy(false); void handleSave(true); }}>Confirmar e salvar</AlertDialogAction></AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
         <AlertDialog open={pendingClose !== null} onOpenChange={value => { if (!value) setPendingClose(null); }}>
           <AlertDialogContent>
             <AlertDialogHeader><AlertDialogTitle>Descartar as alterações?</AlertDialogTitle><AlertDialogDescription>As alterações que ainda não foram salvas serão perdidas. Ações de publicação já confirmadas não serão desfeitas.</AlertDialogDescription></AlertDialogHeader>

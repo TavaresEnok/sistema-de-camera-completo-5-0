@@ -27,6 +27,10 @@ RUN pnpm install --prod=false
 
 # Copy source
 COPY apps/web ./apps/web
+# Source fixtures are used only by builder-stage cross-layer regression tests.
+# The nginx runner below still receives only compiled public assets.
+COPY apps/api/src ./apps/api/src
+COPY apps/mobile/src ./apps/mobile/src
 
 # Build
 ARG FRONTEND_BUILD_ID

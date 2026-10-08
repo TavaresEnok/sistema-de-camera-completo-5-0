@@ -22,7 +22,7 @@ def run(args):
         result = subprocess.run(['docker', *cmd], input=input, text=True, capture_output=True, timeout=timeout)
         if result.returncode:
             # Docker stderr can contain environment values: never echo it.
-            safe_error = re.search(r'(?m)^(bootstrap_login_failed|urls_failed_[a-z0-9_-]+|hls_failed_[a-z0-9_-]+|media_not_advancing_[a-z0-9_-]+|encode_policy_wrong_[a-z0-9_-]+|bad_audio_not_isolated|healthy_audio_not_preserved|notice_[a-z0-9_-]+|detector_label_[a-z0-9_-]+|cpu_measurement_failed|real_motion_did_not_generate_notice)\s*$', result.stderr)
+            safe_error = re.search(r'(?m)^(bootstrap_login_failed|private_flow_[a-z0-9_-]+|urls_failed_[a-z0-9_-]+|hls_failed_[a-z0-9_-]+|media_not_advancing_[a-z0-9_-]+|encode_policy_wrong_[a-z0-9_-]+|bad_audio_not_isolated|healthy_audio_not_preserved|notice_[a-z0-9_-]+|detector_label_[a-z0-9_-]+|cpu_measurement_failed|real_motion_did_not_generate_notice)\s*$', result.stderr)
             if safe_error: print('fixture_failure: ' + safe_error.group(1), flush=True)
             raise RuntimeError('lab_operation_failed_' + str(result.returncode) + '_' + cmd[0])
         return result.stdout
@@ -205,6 +205,8 @@ console.log(JSON.stringify({bootstrapLogin:{status:l.status,tokenPresent:!!login
 })().catch(e=>{console.error(e.message);process.exitCode=1});
 '''
         report.update(json.loads(node(script, input=json.dumps({'password': password}))))
+        privacy_script = (Path(__file__).parent / 'tests/web-private-camera-flow.cjs').read_text()
+        report['privacy'] = json.loads(node(privacy_script, input=json.dumps({'password': password, 'mediaIp': media_ip})))
         for case in report['cases']:
             path = case.pop('path')
             probe = json.loads(docker('exec', media, 'ffprobe', '-v', 'error', '-rtsp_transport', 'tcp',

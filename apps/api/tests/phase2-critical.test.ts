@@ -803,6 +803,7 @@ test('cameras controller: admin lê metadados da câmera privada sem receber ace
   const user: AuthUser = { id: 'admin', email: 'admin@test.local', name: 'Admin', role: UserRole.ADMIN };
   const camerasService = {
     findOne: async () => ({ id: 'cam-private', name: 'Privada', isPrivate: true, ownerUserId: 'owner' }),
+    privacySnapshot: async () => ({ privateViewerIds: [], privacyRevision: 'a'.repeat(64) }),
   };
   const access = {
     canViewCamera: async () => false,

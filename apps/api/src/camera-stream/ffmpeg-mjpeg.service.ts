@@ -741,6 +741,13 @@ export class FfmpegMjpegService {
     });
   }
 
+  private readonly cameraViewerClosers = new Map<string, Set<() => void>>();
+
+  closeCameraViewers(cameraId: string) {
+    for (const close of this.cameraViewerClosers.get(cameraId) ?? []) close();
+    this.cameraViewerClosers.delete(cameraId);
+  }
+
   async startFlvStream(cameraId: string, req: Request, res: Response) {
     const metric = this.getOrCreateMetrics(cameraId);
     metric.totalRequests += 1;
@@ -783,6 +790,8 @@ export class FfmpegMjpegService {
     const closeAll = () => {
       if (closed) return;
       closed = true;
+      this.cameraViewerClosers.get(cameraId)?.delete(revoke);
+      if (!this.cameraViewerClosers.get(cameraId)?.size) this.cameraViewerClosers.delete(cameraId);
       if (streamOpenedForMetrics) {
         metric.activeStreams = Math.max(0, metric.activeStreams - 1);
         metric.lastEndAt = new Date().toISOString();
@@ -791,6 +800,11 @@ export class FfmpegMjpegService {
       this.killProcessSafely(activeProc);
       activeProc = null;
     };
+
+    const revoke = () => { closeAll(); if (!res.writableEnded) res.end(); };
+    const viewers = this.cameraViewerClosers.get(cameraId) ?? new Set<() => void>();
+    viewers.add(revoke);
+    this.cameraViewerClosers.set(cameraId, viewers);
 
     req.on('close', closeAll);
     res.on('close', closeAll);

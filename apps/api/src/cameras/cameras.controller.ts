@@ -19,6 +19,8 @@ import { UpdateCameraDto } from './dto/update-camera.dto';
 import { UpdateDetectionZonesDto } from './dto/update-detection-zones.dto';
 import { UpdateMyCameraDto } from './dto/update-my-camera.dto';
 import { TransferCameraOwnerDto } from './dto/transfer-camera-owner.dto';
+import { hasPrivacyFields } from './helpers/camera-privacy.helper';
+import { FfmpegMjpegService } from '../camera-stream/ffmpeg-mjpeg.service';
 import { Public } from '../auth/decorators/public.decorator';
 import { ServiceTokenGuard } from '../auth/guards/service-token.guard';
 import { RequirePermission } from '../role-permissions/require-permission.decorator';
@@ -111,10 +113,17 @@ export class CamerasController {
     // Teto contratado: a Central define quantas câmeras esta instalação pode ter.
     await this.commercialPolicy.assertCameraQuota(1, user);
     await this.commercialPolicy.assertRetentionQuota(dto.retentionDays);
-    const camera = await this.camerasService.create(dto);
-    await this.auditService.log(user.id, 'camera.create', 'Camera', camera.id, { name: camera.name }, req);
+    const camera = await this.camerasService.createForBrowser(dto);
+    await this.auditService.log(user.id, 'camera.create', 'Camera', camera.id, { name: camera.name, isPrivate: camera.isPrivate, ownerUserId: camera.ownerUserId, privateViewerIds: dto.privateViewerIds ?? [] }, req);
     this.schedulePostCreateProvisioning(camera.id);
     return camera;
+  }
+
+  @Roles(UserRole.ADMIN)
+  @RequirePermission('cameraConfig')
+  @Get('privacy-users')
+  privacyUsers() {
+    return this.camerasService.privacyUsers();
   }
 
   /**
@@ -943,7 +952,9 @@ export class CamerasController {
       throw new ForbiddenException('Sem permissão para consultar esta câmera.');
     }
     const camera = await this.camerasService.findOne(id);
-    return this.withCapabilities(user, camera);
+    const isAdmin = user.role === UserRole.ADMIN || user.role === UserRole.SUPER_ADMIN;
+    const privacy = isAdmin ? await this.camerasService.privacySnapshot(id) : {};
+    return this.withCapabilities(user, { ...camera, ...privacy });
   }
 
   @Roles(UserRole.ADMIN)
@@ -957,15 +968,16 @@ export class CamerasController {
   ) {
     await this.accessControlService.assertCanAdminCamera(user, id);
     const camera = await this.camerasService.transferPrivateCameraOwner(id, dto.ownerUserId);
+    const privacyApplyStatus = await this.reconnectPrivacyViewers(id);
     await this.auditService.log(
       user.id,
       'camera.owner.transfer',
       'Camera',
       id,
-      { ownerUserId: dto.ownerUserId },
+      { ownerUserId: dto.ownerUserId, privacyApplyStatus },
       req,
     );
-    return camera;
+    return { ...camera, privacyApplyStatus };
   }
 
   /**
@@ -1035,6 +1047,10 @@ export class CamerasController {
     await this.commercialPolicy.assertRetentionQuota(dto.retentionDays);
     const wasEnabled = (await this.camerasService.getCameraOrThrow(id)).enabled !== false;
     const camera = await this.camerasService.update(id, dto);
+    let privacyApplyStatus: 'applied' | 'reconnect_pending' | undefined;
+    if (hasPrivacyFields(dto)) {
+      privacyApplyStatus = await this.reconnectPrivacyViewers(id);
+    }
     let aiApplyStatus: string | undefined;
     if (dto.enabled === false && wasEnabled) {
       // Desativada: derruba gravação e live AGORA (sem esperar closeAfter/watchdog).
@@ -1080,10 +1096,20 @@ export class CamerasController {
       'camera.update',
       'Camera',
       camera.id,
-      { name: camera.name, siteId: camera.siteId, areaId: camera.areaId, groupId: camera.groupId, enabled: (camera as { enabled?: boolean }).enabled },
+      { name: camera.name, siteId: camera.siteId, areaId: camera.areaId, groupId: camera.groupId, enabled: (camera as { enabled?: boolean }).enabled,
+        ...(hasPrivacyFields(dto) ? { isPrivate: camera.isPrivate, ownerUserId: camera.ownerUserId, privateViewerIds: dto.privateViewerIds, privacyApplyStatus } : {}) },
       req,
     );
-    return aiApplyStatus ? { ...camera, aiApplyStatus } : camera;
+    return { ...camera, ...(aiApplyStatus ? { aiApplyStatus } : {}), ...(privacyApplyStatus ? { privacyApplyStatus } : {}) };
+  }
+
+  private async reconnectPrivacyViewers(id: string): Promise<'applied' | 'reconnect_pending'> {
+    // Revoke existing viewers, never the camera's publisher/source or files.
+    try {
+      this.moduleRef.get(FfmpegMjpegService, { strict: false }).closeCameraViewers(id);
+      const result = await this.moduleRef.get(MediamtxProxyService, { strict: false }).revokeCameraViewers(id);
+      return result.complete ? 'applied' : 'reconnect_pending';
+    } catch { return 'reconnect_pending'; }
   }
 
   @Roles(UserRole.ADMIN)

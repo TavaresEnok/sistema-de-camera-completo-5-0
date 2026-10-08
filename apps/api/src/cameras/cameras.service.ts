@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { aiEnabledEfetivo } from './helpers/motion-detector.helper';
 import { noticeClasses, noticeObjectClass } from './helpers/detection-notice.helper';
 import { CommercialPolicyService } from '../commercial-policy/commercial-policy.service';
+import { applyCameraPrivacy, cameraPrivacyRevision, hasPrivacyFields, privateCreation, privacyGrants, type PrivateCreation } from './helpers/camera-privacy.helper';
 import { escolherGrupoDoCliente, type VinculoDeGrupo } from './helpers/grupo-do-cliente.helper';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { CryptoService } from '../common/crypto/crypto.service';
@@ -284,7 +285,26 @@ export class CamerasService implements OnApplicationBootstrap {
     throw new BadRequestException('Não foi possível confirmar o vídeo RTSP. Confira o caminho do vídeo, a porta e se a câmera está transmitindo antes de salvar.');
   }
 
-  async create(dto: CreateCameraDto, privacy?: { isPrivate: boolean; ownerUserId: string | null }) {
+  async createForBrowser(dto: CreateCameraDto) {
+    return this.create(dto, await privateCreation(this.prisma, dto));
+  }
+
+  async privacyUsers() {
+    return this.prisma.user.findMany({ where: { isActive: true }, select: { id: true, name: true, username: true }, orderBy: { name: 'asc' } });
+  }
+
+  async privacySnapshot(id: string) {
+    return this.prisma.$transaction(async db => {
+      const camera = await db.camera.findUniqueOrThrow({ where: { id }, select: { isPrivate: true, ownerUserId: true, updatedAt: true } });
+      const grants = await db.cameraPermission.findMany({ where: { cameraId: id }, select: { userId: true, level: true } });
+      return {
+        privateViewerIds: camera.isPrivate ? grants.map(grant => grant.userId).filter(userId => userId !== camera.ownerUserId) : [],
+        privacyRevision: cameraPrivacyRevision(camera, grants),
+      };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
+  }
+
+  async create(dto: CreateCameraDto, privacy?: PrivateCreation) {
     await this.validateDetectionNotices(dto);
     // ── CÂMERA QUE PUBLICA NÃO TEM ENDEREÇO NOSSO ────────────────────────────
     //
@@ -394,6 +414,7 @@ export class CamerasService implements OnApplicationBootstrap {
         // Privacidade (LGPD): câmera do cliente. Conteúdo só do dono.
         isPrivate: privacy?.isPrivate ?? false,
         ownerUserId: privacy?.ownerUserId ?? null,
+        ...(privacy?.viewerUserIds !== undefined ? { permissions: { create: privacyGrants(privacy) } } : {}),
         status: CameraStatus.ONLINE,
         lastSeenAt: new Date(),
       },
@@ -737,9 +758,12 @@ export class CamerasService implements OnApplicationBootstrap {
     const normalizedProfile = this.normalizeProfileToDetected(dto, existing);
     let camera: any;
     try {
-      camera = await this.prisma.camera.update({
+      const persist = async (db: Prisma.TransactionClient) => {
+      const privacy = hasPrivacyFields(dto) ? await applyCameraPrivacy(db, id, dto) : {};
+      return db.camera.update({
         where: { id, ...(dto.expectedUpdatedAt ? { updatedAt: new Date(dto.expectedUpdatedAt) } : {}) },
         data: {
+        ...privacy,
         name: dto.name,
         // Não aceite transformar o marcador de uma câmera push em configuração
         // de rede parcialmente preenchida. Ao voltar para RTSP pull, a tela
@@ -847,9 +871,16 @@ export class CamerasService implements OnApplicationBootstrap {
         },
         include: { site: true, area: true, group: true },
       });
+      };
+      camera = hasPrivacyFields(dto)
+        ? await this.prisma.$transaction(persist, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable })
+        : await persist(this.prisma);
     } catch (error) {
       if (dto.expectedUpdatedAt && (error as { code?: string })?.code === 'P2025') {
         throw new ConflictException('Esta câmera foi alterada por outra pessoa. Recarregue a configuração antes de salvar.');
+      }
+      if (hasPrivacyFields(dto) && (error as { code?: string })?.code === 'P2034') {
+        throw new ConflictException('Os acessos foram alterados ao mesmo tempo. Reabra a câmera e tente novamente.');
       }
       throw error;
     }
@@ -2036,7 +2067,7 @@ export class CamerasService implements OnApplicationBootstrap {
    */
   private async createPushSourcedCamera(
     dto: CreateCameraDto,
-    privacy?: { isPrivate: boolean; ownerUserId: string | null },
+    privacy?: PrivateCreation,
   ) {
     await this.validateReferences(dto.siteId, dto.areaId, dto.groupId);
     const key = generateIngestKey();
@@ -2092,6 +2123,7 @@ export class CamerasService implements OnApplicationBootstrap {
         hasEdgeAi: dto.hasEdgeAi ?? false,
         motionTrigger: dto.motionTrigger ?? (dto.hasEdgeAi ? 'CAMERA' : 'SYSTEM'),
         ...(privacy?.isPrivate ? { isPrivate: true, ownerUserId: privacy.ownerUserId } : {}),
+        ...(privacy?.viewerUserIds !== undefined ? { permissions: { create: privacyGrants(privacy) } } : {}),
       },
     });
     this.logger.log(`Câmera ${camera.name} criada em modo de publicação (RTMP).`);

@@ -1,5 +1,6 @@
 import { ArrayMaxSize, IsArray, IsBoolean, IsIP, IsIn, IsInt, IsNumber, IsOptional, IsString, Max, MaxLength, Min, ValidateIf } from 'class-validator';
 import { Transform } from 'class-transformer';
+import { CameraPrivacyDto } from './camera-privacy.dto';
 
 const SOURCE_MODES = ['rtsp_pull', 'rtmp_push'] as const;
 // Agenda não é aceita enquanto não houver persistência de janelas, fuso e
@@ -11,7 +12,7 @@ const STREAM_VIDEO_CODECS = ['original', 'h264', 'h265', 'hevc', 'mjpeg'] as con
 const RTSP_TRANSPORTS = ['tcp', 'udp'] as const;
 const LIVE_PROTOCOLS = ['auto', 'flv', 'hls', 'llhls', 'webrtc', 'mjpeg'] as const;
 
-export class CreateCameraDto {
+export class CreateCameraDto extends CameraPrivacyDto {
   @IsString()
   name!: string;
 

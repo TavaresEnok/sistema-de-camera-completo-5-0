@@ -330,6 +330,11 @@ export class CameraStreamController {
       if (tokenCameraId !== match[1].toLowerCase()) {
         return deny('Token não corresponde à câmera.');
       }
+      // A previously issued token cannot retain access after a privacy change.
+      const tokenUser = await this.authService.me(payload.sub);
+      await this.accessControlService.assertCanViewCamera(tokenUser, payload.cameraId);
+      const camera = await this.camerasService.findOneInternal(payload.cameraId);
+      if (!camera || camera.enabled === false) return deny('Câmera indisponível.');
       return res.status(200).json({ authorized: true });
     } catch {
       return deny('Token de mídia inválido ou expirado.');

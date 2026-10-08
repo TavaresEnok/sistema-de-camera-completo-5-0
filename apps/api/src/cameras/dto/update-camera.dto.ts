@@ -1,6 +1,7 @@
 import { ArrayMaxSize, IsArray, IsBoolean, IsIP, IsIn, IsInt, IsISO8601, IsNumber, IsOptional, IsString, Max, MaxLength, Min, ValidateNested } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { DetectionZoneDto } from './detection-zone.dto';
+import { CameraPrivacyDto } from './camera-privacy.dto';
 
 const RECORDING_MODES = ['continuous', 'motion', 'object', 'manual'] as const;
 const VIDEO_CODECS = ['original', 'h264', 'h265', 'hevc', 'mjpeg'] as const;
@@ -8,7 +9,7 @@ const STREAM_VIDEO_CODECS = ['original', 'h264', 'h265', 'hevc', 'mjpeg'] as con
 const RTSP_TRANSPORTS = ['tcp', 'udp'] as const;
 const LIVE_PROTOCOLS = ['auto', 'flv', 'hls', 'llhls', 'webrtc', 'mjpeg'] as const;
 
-export class UpdateCameraDto {
+export class UpdateCameraDto extends CameraPrivacyDto {
   /** Revisão lida pelo editor; impede sobrescrever outra edição silenciosamente. */
   @IsOptional()
   @IsISO8601()

@@ -831,6 +831,29 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
    * são um caso legítimo — e indistinguíveis daqui, já que todos chegam pelo IP
    * do proxy — então a janela de graça evita matar quem acabou de conectar.
    */
+  /** Disconnect content readers only. Ingest, sources and recording files stay intact. */
+  async revokeCameraViewers(cameraId: string): Promise<{ complete: boolean }> {
+    if (!this.isEnabled()) return { complete: true };
+    const base = `cam_${cameraId.replace(/-/g, '').toLowerCase()}`;
+    const publicPath = new RegExp(`^${base}(?:_grid|_grid_audio|_grid_hevc|_orig|_orig_audio)?$`, 'i');
+    const routes: Record<string, string> = {
+      webRTCSession: 'webrtcsessions', rtspSession: 'rtspsessions', rtmpConn: 'rtmpconns',
+    };
+    if (this.runtimePathListInFlight) await this.runtimePathListInFlight;
+    this.runtimePathListCache = null; // Revocation cannot use a stale reader list.
+    const paths = await this.getRuntimePathItems();
+    let complete = true;
+    for (const path of paths.filter(item => publicPath.test(String(item.name)))) {
+      for (const reader of Array.isArray(path.readers) ? path.readers : []) {
+        const route = routes[reader.type];
+        if (!route || !reader.id) continue; // HLS requests re-check the current ACL.
+        try { await this.apiRequest('POST', `/v3/${route}/kick/${encodeURIComponent(reader.id)}`); }
+        catch { complete = false; }
+      }
+    }
+    return { complete };
+  }
+
   private async reapDuplicateWebrtcSessions() {
     if (!this.isEnabled()) return;
     if (!this.reapDuplicateSessionsEnabled) return;

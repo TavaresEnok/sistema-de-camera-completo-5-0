@@ -12,6 +12,8 @@ import { getApiBaseUrl } from '../lib/api-base';
 import { capturarLocalizacaoDoInstalador } from '../lib/localizacao-do-instalador';
 import { CameraDetectionNotices } from './CameraDetectionNotices';
 import { useClassesLiberadas } from '../hooks/use-classes-liberadas';
+import { CameraPrivacyFields } from './CameraPrivacyFields';
+import { cameraPrivacyError, cameraPrivacyPayload, emptyCameraPrivacy } from '../lib/camera-privacy';
 
 // ── CADASTRO DE CÂMERA QUE PUBLICA ─────────────────────────────────────────
 //
@@ -55,6 +57,7 @@ export function AddPushCameraDialog({
 }) {
   const accessToken = useAuthStore((s) => s.accessToken);
   const [nome, setNome] = useState('');
+  const [privacy, setPrivacy] = useState(emptyCameraPrivacy);
   const [notices, setNotices] = useState({ motionNoticeEnabled: false, objectNoticeEnabled: false, objectNoticeClasses: [] as string[] });
   const { classes: allowed, motionAllowed, carregando: loadingCapabilities } = useClassesLiberadas();
   const [salvando, setSalvando] = useState(false);
@@ -87,6 +90,8 @@ export function AddPushCameraDialog({
   }, [open, alvo, cameraId, accessToken]);
 
   const fechar = () => {
+    if (salvando || vinculando) return;
+    setPrivacy(emptyCameraPrivacy());
     setNotices({ motionNoticeEnabled: false, objectNoticeEnabled: false, objectNoticeClasses: [] });
     setNome(''); setAlvo(null); setCopiado(null); setCameraId(null); setPendentes([]); setCaminhoManual('');
     onClose();
@@ -103,7 +108,9 @@ export function AddPushCameraDialog({
   };
 
   const criar = async () => {
-    if (!accessToken || !nome.trim()) return;
+    if (!accessToken || !nome.trim() || salvando) return;
+    const privacyError = cameraPrivacyError(privacy);
+    if (privacyError) { toast({ title: 'Confira a privacidade', description: privacyError, variant: 'destructive' }); return; }
     setSalvando(true);
     try {
       const localizacaoDoInstalador = await capturarLocalizacaoDoInstalador();
@@ -111,6 +118,7 @@ export function AddPushCameraDialog({
         `${getApiBaseUrl()}/cameras`,
         {
           name: nome.trim(),
+          ...cameraPrivacyPayload(privacy),
           sourceMode: 'rtmp_push',
           // RTMP nasce cadastrada, mas sem consumir armazenamento. A gravação
           // só é armada depois, conscientemente, na página de Gravações.
@@ -199,6 +207,7 @@ export function AddPushCameraDialog({
               />
             </div>
 
+            <fieldset disabled={salvando}><CameraPrivacyFields value={privacy} onChange={setPrivacy} /></fieldset>
             <CameraDetectionNotices motion={notices.motionNoticeEnabled} object={notices.objectNoticeEnabled} classes={notices.objectNoticeClasses}
               allowed={allowed} motionAllowed={motionAllowed} loading={loadingCapabilities} onChange={setNotices} />
           </div>

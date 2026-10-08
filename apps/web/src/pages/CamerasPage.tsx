@@ -46,6 +46,8 @@ import {
 import { CLASSE_CONEXAO, CLASSE_MODO_GRAVACAO, PONTO_CONEXAO, ROTULO_CONEXAO, estadoConexao } from '../lib/camera-status';
 import { useClassesLiberadas } from '../hooks/use-classes-liberadas';
 import { CameraDetectionNotices } from '../components/CameraDetectionNotices';
+import { CameraPrivacyFields } from '../components/CameraPrivacyFields';
+import { cameraPrivacyError, cameraPrivacyPayload, emptyCameraPrivacy } from '../lib/camera-privacy';
 import { rotuloDoGatilhoDeObjeto, podeUsarGatilhoDeObjeto } from '../lib/gatilho-de-objeto';
 import { cameraSourceProtocol, formatStorageBytes } from '../lib/camera-list-metadata';
 import { capturarLocalizacaoDoInstalador } from '../lib/localizacao-do-instalador';
@@ -185,6 +187,9 @@ function WizardModal({
   sites: LocationOption[];
   areas: LocationOption[];
   onCreated: (payload: {
+    isPrivate?: boolean;
+    ownerUserId?: string;
+    privateViewerIds?: string[];
     siteId?: string;
     areaId?: string;
     locationAddress?: string;
@@ -337,6 +342,7 @@ function WizardModal({
   } | null>(null);
   const steps = ['Conexão', 'Identidade', 'Gravação', 'Confirmar'];
   const [form, setForm] = useState({
+    ...emptyCameraPrivacy(),
     ip: '',
     port: '554',
     onvifPort: '',
@@ -398,7 +404,7 @@ function WizardModal({
         && form.password.trim().length > 0;
     }
     if (step === 1) {
-      return form.name.trim().length > 0;
+      return form.name.trim().length > 0 && !cameraPrivacyError(form);
     }
     if (step === 2) {
       return form.retentionDays.trim().length > 0;
@@ -420,6 +426,8 @@ function WizardModal({
       return;
     }
 
+    const privacyError = cameraPrivacyError(form);
+    if (privacyError) { toast({ title: 'Confira a privacidade', description: privacyError, variant: 'destructive' }); return; }
     setIsSaving(true);
     try {
       const clampToDetected = (
@@ -464,6 +472,7 @@ function WizardModal({
 
       const localizacaoDoInstalador = await capturarLocalizacaoDoInstalador();
       await onCreated({
+        ...cameraPrivacyPayload(form),
         name: form.name.trim(),
         siteId: form.siteId || undefined,
         areaId: form.areaId || undefined,
@@ -803,6 +812,7 @@ function WizardModal({
           )}
           {step === 1 && (
             <div className="space-y-3">
+              <CameraPrivacyFields value={form} onChange={privacy => setForm(current => ({ ...current, ...privacy }))} />
               <div className="space-y-1">
                 <label className="text-[11px] font-medium text-[hsl(var(--muted-foreground))]">Nome da câmera</label>
                 <input value={form.name} onChange={(e) => updateField('name', e.target.value)} className="w-full h-9 px-3 rounded border border-border bg-background text-sm focus:outline-none focus:ring-1 focus:ring-[hsl(var(--primary))]" placeholder="Ex.: Legacy Camera - Canal 1" />
@@ -935,6 +945,7 @@ function WizardModal({
               <div className="rounded-lg border border-border bg-background p-4 space-y-2 text-xs">
                 <div className="flex justify-between"><span className="text-[hsl(var(--muted-foreground))]">Endereço IP</span><span className="font-mono">{form.ip || '-'}</span></div>
                 <div className="flex justify-between"><span className="text-[hsl(var(--muted-foreground))]">Nome</span><span>{form.name || '-'}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Privacidade</span><span>{form.isPrivate ? 'Privada — acesso individual' : 'Permissões normais'}</span></div>
                 <div className="flex justify-between"><span className="text-[hsl(var(--muted-foreground))]">Live</span><span>Grid até 720p / 20 FPS · individual original</span></div>
                 <div className="flex justify-between"><span className="text-[hsl(var(--muted-foreground))]">Gravação</span><span>{formatRecordingMode(form.recordingMode)}</span></div>
                 <div className="flex justify-between"><span className="text-[hsl(var(--muted-foreground))]">Retenção</span><span className="font-mono">{form.retentionDays || '-'} dias</span></div>
@@ -1200,6 +1211,9 @@ export default function CamerasPage() {
   };
 
   const createCamera = async (payload: {
+    isPrivate?: boolean;
+    ownerUserId?: string;
+    privateViewerIds?: string[];
     name: string;
     siteId?: string;
     areaId?: string;
