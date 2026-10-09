@@ -17,6 +17,8 @@ import {
 } from 'react-native';
 import { LiveVideo } from '../../components/VideoPlayers';
 import { CameraManagementSheet } from '../../components/CameraManagementSheet';
+import { GridAudioButton } from '../../components/GridAudioButton';
+import { useGridAudio } from '../../hooks/useGridAudio';
 import { useTheme } from '../../theme/ThemeProvider';
 import { useLibrary } from '../../state/LibraryProvider';
 import { Icon } from '../../components/Icon';
@@ -92,6 +94,7 @@ export function CamerasRedesign({ cameras, streamPosters, streamUrls, streamWhep
     () => (view === 'mosaic' ? filtered.filter((c) => isOnlineStatus(c.status)).slice(0, 4).map((c) => c.id) : []),
     [view, filtered],
   );
+  const audio = useGridAudio(apiUrl, token, managedCamera ? [] : liveIds);
   useEffect(() => {
     if (liveIds.length) onRequestStreams(liveIds);
   }, [liveIds.join('|')]);
@@ -180,7 +183,8 @@ export function CamerasRedesign({ cameras, streamPosters, streamUrls, streamWhep
                 live={liveIds.includes(cam.id)}
                 hlsUrl={streamUrls[cam.id] ?? null}
                 whepUrl={streamWhep[cam.id] ?? null}
-                onRefreshStream={() => onRefreshStream(cam.id)}
+                audio={audio}
+                onRefreshStream={() => { if (audio.selection?.id === cam.id) audio.refresh(cam.id); else onRefreshStream(cam.id); }}
                 theme={theme} s={s}
                 fav={favs.includes(cam.id)} onToggleFav={() => toggleFav(cam.id)} onOpen={() => onOpenCamera(cam)} onManage={() => setManagedCamera(cam)}
               />
@@ -258,20 +262,23 @@ function t2(theme: any): string {
   return theme.surfaceAlt;
 }
 
-function MosaicTile({ cam, poster, live, hlsUrl, whepUrl, onRefreshStream, theme, s, fav, onToggleFav, onOpen, onManage }: any) {
+function MosaicTile({ cam, poster, live, hlsUrl, whepUrl, audio, onRefreshStream, theme, s, fav, onToggleFav, onOpen, onManage }: any) {
   const isOn = isOnlineStatus(cam.status);
+  const chosen = audio.selection?.id === cam.id;
+  const playingAudio = chosen && !audio.selection.loading;
   return (
     <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Abrir câmera ${cam.name}. ${isOn ? 'Online' : 'Offline'}`} style={s.tile} activeOpacity={0.85} onPress={onOpen}>
       {live && (hlsUrl || whepUrl) ? (
         <LiveVideo
-          uri={hlsUrl}
-          whepUri={whepUrl}
+          uri={playingAudio ? audio.selection.uri : hlsUrl}
+          whepUri={playingAudio ? audio.selection.whepUri : whepUrl}
           posterUri={poster}
           // flex:1 (NÃO absoluteFill): o wrapper interno do player força
           // position:relative e os offsets do absoluteFill são ignorados → o
           // container colapsa p/ altura 0 e o vídeo não renderiza ("No surface").
           videoStyle={s.tileVideo}
-          muted
+          muted={!playingAudio}
+          onAudioAvailable={playingAudio ? (available: boolean) => audio.audioAvailable(cam.id, available) : undefined}
           contentFit="cover"
           emptyStyle={[StyleSheet.absoluteFill, s.thumbEmpty]}
           posterStyle={StyleSheet.absoluteFill}
@@ -285,6 +292,7 @@ function MosaicTile({ cam, poster, live, hlsUrl, whepUrl, onRefreshStream, theme
         <View style={[StyleSheet.absoluteFill, s.thumbEmpty]}><Icon name="camera" size={18} color={theme.textMuted} /></View>
       )}
       <View style={s.tileShade} />
+      {live ? <GridAudioButton name={cam.name} selected={chosen} loading={chosen && audio.selection.loading} onPress={() => audio.toggle(cam.id)} /> : null}
       {isOn ? <View style={[s.liveBadgeSm, { top: 8, left: 8 }]}><View style={s.liveDotSm} /><Text style={s.liveTextSm}>AO VIVO</Text></View> : null}
       <TouchableOpacity accessibilityRole="button" accessibilityLabel={fav ? `Remover ${cam.name} dos favoritos` : `Favoritar ${cam.name}`} accessibilityState={{ selected: fav }} style={s.tileStar} onPress={(event) => { event.stopPropagation(); onToggleFav(); }} hitSlop={8}>
         <Icon name="star" size={16} color={fav ? theme.warning : '#fff'} />

@@ -9,7 +9,7 @@ export type IconName =
   | 'home' | 'grid' | 'play' | 'bell' | 'settings'
   | 'mail' | 'lock' | 'eye'
   | 'chevronLeft' | 'chevronRight' | 'chevronDown'
-  | 'camera' | 'mic' | 'volume' | 'expand'
+  | 'camera' | 'mic' | 'volume' | 'volumeOff' | 'expand'
   | 'plus' | 'minus' | 'crosshair'
   | 'arrowUp' | 'arrowDown' | 'arrowLeft' | 'arrowRight'
   | 'download' | 'check' | 'server' | 'logout' | 'cloud' | 'smartphone' | 'info' | 'share'
@@ -123,6 +123,8 @@ export function Icon({ name, size = 22, color = '#fff', strokeWidth = 1.9, fill 
           <Path {...common} d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12" />
         </Svg>
       );
+    case 'volumeOff':
+      return (<Svg width={size} height={size} viewBox="0 0 24 24"><Path {...common} d="M4 9v6h4l5 4V5L8 9zM17 9l5 6M22 9l-5 6" /></Svg>);
     case 'expand':
     case 'maximize':
       return (<Svg width={size} height={size} viewBox="0 0 24 24"><Path {...common} d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" /></Svg>);

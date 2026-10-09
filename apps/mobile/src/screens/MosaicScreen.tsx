@@ -6,11 +6,15 @@ import { GroupEditorSheet } from '../components/GroupEditorSheet';
 import { Icon } from '../components/Icon';
 import { CameraGridSkeleton } from '../components/Skeleton';
 import { LiveVideo } from '../components/VideoPlayers';
+import { GridAudioButton } from '../components/GridAudioButton';
+import { useGridAudio } from '../hooks/useGridAudio';
 import { useLibrary } from '../state/LibraryProvider';
 import { useTheme } from '../theme/ThemeProvider';
 import type { Camera, CameraGroup } from '../types';
 
 interface MosaicScreenProps {
+  apiUrl: string;
+  token: string | null;
   cameras: Camera[];
   streamUrls: Record<string, string | null>;
   streamWhep: Record<string, string | null>;
@@ -25,7 +29,7 @@ interface MosaicScreenProps {
 }
 
 export function MosaicScreen({
-  cameras, streamUrls, streamWhep, streamPosters, refreshing, canLiveView, onRefresh, onOpenCamera, onRequestStreams, onRefreshStream, onPosterError,
+  apiUrl, token, cameras, streamUrls, streamWhep, streamPosters, refreshing, canLiveView, onRefresh, onOpenCamera, onRequestStreams, onRefreshStream, onPosterError,
 }: MosaicScreenProps) {
   const { theme } = useTheme();
   const { groups, isFavorite, toggleFavorite } = useLibrary();
@@ -42,6 +46,7 @@ export function MosaicScreen({
   );
   const liveCameras = useMemo(() => list.filter((camera) => camera.status?.toUpperCase() === 'ONLINE').slice(0, 4), [list]);
   const liveCameraIds = useMemo(() => liveCameras.map((camera) => camera.id), [liveCameras]);
+  const audio = useGridAudio(apiUrl, token, canLiveView && liveMode && !editorOpen ? liveCameraIds : []);
   const requestStreamsRef = useRef(onRequestStreams);
 
   useEffect(() => {
@@ -141,8 +146,9 @@ export function MosaicScreen({
                   hlsUrl={streamUrls[cam.id] ?? null}
                   whepUrl={streamWhep[cam.id] ?? null}
                   posterUrl={streamPosters[cam.id] ?? null}
+                  audio={audio}
                   onPress={() => onOpenCamera(cam)}
-                  onRefresh={() => onRefreshStream(cam.id)}
+                  onRefresh={() => { if (audio.selection?.id === cam.id) audio.refresh(cam.id); else onRefreshStream(cam.id); }}
                 />
               ) : (
                 <CameraTile
@@ -169,22 +175,26 @@ export function MosaicScreen({
   );
 }
 
-function MosaicLiveTile({ camera, hlsUrl, whepUrl, posterUrl, onPress, onRefresh }: {
+function MosaicLiveTile({ camera, hlsUrl, whepUrl, posterUrl, audio, onPress, onRefresh }: {
   camera: Camera;
   hlsUrl: string | null;
   whepUrl: string | null;
   posterUrl: string | null;
+  audio: ReturnType<typeof useGridAudio>;
   onPress: () => void;
   onRefresh: () => void;
 }) {
+  const chosen = audio.selection?.id === camera.id;
+  const playingAudio = chosen && !audio.selection!.loading;
   return (
     <Pressable style={styles.liveTile} onPress={onPress} accessibilityRole="button" accessibilityLabel={`${camera.name}, ao vivo`}>
       <LiveVideo
-        uri={hlsUrl}
-        whepUri={whepUrl}
+        uri={playingAudio ? audio.selection!.uri : hlsUrl}
+        whepUri={playingAudio ? audio.selection!.whepUri : whepUrl}
         posterUri={posterUrl}
         videoStyle={StyleSheet.absoluteFill}
-        muted
+        muted={!playingAudio}
+        onAudioAvailable={playingAudio ? available => audio.audioAvailable(camera.id, available) : undefined}
         contentFit="cover"
         emptyStyle={styles.liveEmpty}
         posterStyle={StyleSheet.absoluteFill}
@@ -192,6 +202,7 @@ function MosaicLiveTile({ camera, hlsUrl, whepUrl, posterUrl, onPress, onRefresh
         emptyTextStyle={styles.liveEmptyText}
         onNeedRefresh={onRefresh}
       />
+      <GridAudioButton name={camera.name} selected={chosen} loading={chosen && audio.selection!.loading} onPress={() => audio.toggle(camera.id)} />
       <View style={styles.liveBadge}><View style={styles.liveBadgeDot} /><Text style={styles.liveBadgeText}>AO VIVO</Text></View>
       <Text style={styles.liveName} numberOfLines={1}>{camera.name}</Text>
     </Pressable>

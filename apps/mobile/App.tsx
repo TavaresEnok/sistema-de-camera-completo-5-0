@@ -1924,6 +1924,8 @@ function AppInner() {
             />
           ) : (
           <MosaicScreen
+            apiUrl={session.apiUrl}
+            token={session.token}
             cameras={cameras}
             streamUrls={streamUrls}
             streamWhep={streamWhep}
