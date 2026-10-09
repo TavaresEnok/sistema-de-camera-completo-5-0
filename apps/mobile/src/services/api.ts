@@ -24,7 +24,9 @@ export function setTokenRefreshHandler(handler: ((expiredToken: string, apiUrl: 
   if (!handler) tokenRefreshInFlight.clear();
 }
 
-export async function request<T>(apiUrl: string, path: string, token?: string, init?: RequestInit): Promise<T> {
+export type ApiRequestInit = RequestInit & { timeoutMs?: number };
+
+export async function request<T>(apiUrl: string, path: string, token?: string, init?: ApiRequestInit): Promise<T> {
   return requestInternal<T>(apiUrl, path, token, init, true);
 }
 
@@ -72,7 +74,7 @@ export async function authenticatedTransfer<T extends { status: number }>(
   } finally { clearTimeout(timeout); activeRequests.delete(controller); }
 }
 
-async function requestInternal<T>(apiUrl: string, path: string, token: string | undefined, init: RequestInit | undefined, allowRefresh: boolean): Promise<T> {
+async function requestInternal<T>(apiUrl: string, path: string, token: string | undefined, init: ApiRequestInit | undefined, allowRefresh: boolean): Promise<T> {
   const controller = new AbortController();
   const generation = sessionGeneration;
   const refreshHandler = tokenRefreshHandler;
@@ -81,11 +83,12 @@ async function requestInternal<T>(apiUrl: string, path: string, token: string | 
   const abortFromExternal = () => controller.abort();
   if (externalSignal?.aborted) controller.abort();
   else externalSignal?.addEventListener('abort', abortFromExternal, { once: true });
-  const timeout = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+  const { timeoutMs = DEFAULT_TIMEOUT_MS, ...fetchInit } = init ?? {};
+  const timeout = setTimeout(() => controller.abort(), Math.max(1, Math.min(timeoutMs, 120_000)));
 
   try {
     const response = await fetch(`${apiUrl}${path}`, {
-      ...init,
+      ...fetchInit,
       signal: controller.signal,
       headers: {
         'Content-Type': 'application/json',

@@ -36,20 +36,20 @@ test('android security: build bloqueia permissões e backup inseguros', () => {
   assert(plugin.includes("android:requestLegacyExternalStorage'] = 'false'"), 'storage legado deve ser desativado');
 });
 
-test('cadastro de câmera: porta RTSP é automática e o preenchimento manual só aparece após falha', () => {
+test('cadastro de câmera: porta automática e correção manual acessível antes e depois da falha', () => {
   const source = readFileSync('src/components/AddCameraSheet.tsx', 'utf8');
   assert(!source.includes('Configuração avançada'), 'não deve esconder dados necessários em Configuração avançada');
   assert(source.includes("const RTSP_PORT_DEFAULT = '';"), 'porta deve iniciar em modo automático, sem fingir que 554 já foi detectada');
   assert(source.includes('Porta e vídeo automáticos'), 'a tela deve explicar a detecção automática');
-  assert(source.includes('manualConnectionNeeded ?'), 'falha automática deve revelar a correção manual');
+  assert(source.includes('props.showConnectionOptions || manualConnectionNeeded'), 'as portas devem estar disponíveis antes do teste e abrir quando ele falhar');
   assert(source.includes('Porta RTSP'), 'a correção manual deve permitir informar a porta RTSP');
   assert(source.includes('Caminho do vídeo (se houver)'), 'a correção manual deve permitir informar o caminho do stream');
 });
 
 test('provisionamento Wi-Fi não promete pareamento proprietário inexistente', () => {
   const source = readFileSync('src/components/AddCameraSheet.tsx', 'utf8');
-  assert(source.includes('Isto não é pareamento Wi-Fi automático'), 'tela deve separar guia de instalação de pareamento real');
-  assert(source.includes('SDK oficial de cada fabricante'), 'dependência de driver oficial deve ficar explícita');
+  assert(source.includes('A conexão inicial ao Wi-Fi é feita pelo aplicativo do fabricante'), 'tela deve explicar o pareamento em linguagem simples');
+  assert(!source.includes('Segure o botão RESET'), 'cadastro não deve recomendar apagar a configuração de uma câmera em uso');
   assert(source.includes('QR com endereço IP ou RTSP'), 'QR genérico não pode fingir aceitar QR proprietário');
 });
 
@@ -133,7 +133,9 @@ test('release do app exige checkout aprovado e código commitado', () => {
 
 test('build-agent limpa cache CMake compartilhado e expõe a causa da falha', () => {
   const agent = readFileSync('scripts/build-agent.mjs', 'utf8');
-  assert(agent.includes("git(['fetch', '--prune', 'origin']"), 'agente deve buscar uma release recém-aprovada antes de recusá-la');
+  const maintenance = readFileSync('scripts/build-maintenance.mjs', 'utf8');
+  assert(agent.includes('ensureApprovedCommit(REPO_ROOT, commit'), 'agente deve importar o commit aprovado antes de criar o checkout');
+  assert(maintenance.includes("['fetch', '--quiet', '--prune', 'origin']"), 'a importação deve manter a busca remota como alternativa');
   assert(agent.includes("'-name', '.cxx'"), 'agente deve remover todo cache .cxx contaminado, inclusive dentro de android/build');
   assert(agent.includes("path.join(worktree, 'node_modules')"), 'limpeza deve alcançar dependências hoisted na raiz do monorepo');
   assert(agent.includes("'install', '--frozen-lockfile', '--prefer-offline'"), 'cada release deve sincronizar dependências pelo próprio lockfile antes de compilar');

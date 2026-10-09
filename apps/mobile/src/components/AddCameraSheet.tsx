@@ -2,7 +2,7 @@
  * Jornada de instalação de câmera privada.
  *
  * Começa pela intenção do usuário. IP e credenciais ficam claros no cadastro
- * manual; porta/caminho só são pedidos quando a detecção automática falha.
+ * manual; portas e caminho podem ser informados antes do teste.
  * A busca acontece no telefone (LAN do cliente) e combina ONVIF
  * WS-Discovery com mDNS. O backend valida credenciais/perfis e efetiva o
  * cadastro privado/LGPD.
@@ -12,7 +12,7 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import { LinearGradient } from 'expo-linear-gradient';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator, Image, KeyboardAvoidingView, Modal, Platform, Pressable,
+  ActivityIndicator, Alert, Image, KeyboardAvoidingView, Modal, Platform, Pressable,
   PermissionsAndroid, ScrollView, StyleSheet, Text, TextInput, View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -22,6 +22,8 @@ import { captureInstallerLocation } from '../services/installer-location';
 import { discoverCameras, scanLocalNetwork, type ScanProgress } from '../services/camera-discovery';
 import { mergeDiscoveredCameras, parseCameraQr, type DiscoveredCamera } from '../services/camera-discovery-core';
 import { useTheme } from '../theme/ThemeProvider';
+import type { Theme } from '../theme/theme';
+import { cameraConnectionError, cameraConnectionPayload } from '../services/camera-setup';
 import { Icon, type IconName } from './Icon';
 
 interface AddCameraSheetProps {
@@ -77,10 +79,13 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
   const [onvifToken, setOnvifToken] = useState<string | null>(null);
   const [showPass, setShowPass] = useState(false);
   const [manualConnectionNeeded, setManualConnectionNeeded] = useState(false);
+  const [showConnectionOptions, setShowConnectionOptions] = useState(false);
+  const [includeLocation, setIncludeLocation] = useState(false);
   const [torch, setTorch] = useState(false);
   const [qrLocked, setQrLocked] = useState(false);
   const [quota, setQuota] = useState<Quota | null>(null);
   const [quotaLoading, setQuotaLoading] = useState(false);
+  const [quotaError, setQuotaError] = useState(false);
   const [discovering, setDiscovering] = useState(false);
   const [scanProgress, setScanProgress] = useState<ScanProgress | null>(null);
   const [devices, setDevices] = useState<DiscoveredCamera[]>([]);
@@ -92,28 +97,48 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [rtmpTarget, setRtmpTarget] = useState<RtmpTarget | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
   const historyRef = useRef<Screen[]>([]);
   const clipboardTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clipboardValueRef = useRef<string | null>(null);
   // Invalida resultados assíncronos quando o usuário volta/fecha. Descoberta,
   // permissão, teste RTSP e cadastro não podem reabrir uma etapa já abandonada.
   const operationRef = useRef(0);
+  const requestRef = useRef<AbortController | null>(null);
+  const submittingRef = useRef(false);
+  const qrLockRef = useRef(false);
+  const qrTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const quotaGenerationRef = useRef(0);
+  const scrollRef = useRef<ScrollView>(null);
 
   const quotaFull = !!quota && !quota.canAdd;
-  const canSave = !submitting && !quotaFull && name.trim().length > 0 && (
-    sourceMode === 'rtmp_push' || (ip.trim().length > 0 && username.trim().length > 0 && password.length > 0 && Number(httpPort) > 0 && Number(httpPort) <= 65535)
+  const draft = { ip, username, password, rtspPort, httpPort, onvifPort, rtspPath };
+  const connectionError = cameraConnectionError(draft);
+  const planReady = !!quota?.canAdd && !quotaLoading && !quotaError;
+  const canSave = !submitting && planReady && name.trim().length > 0 && (
+    sourceMode === 'rtmp_push' || (!connectionError && !!connection?.rtspAuthOk)
   );
+
+  const invalidateConnection = () => {
+    operationRef.current += 1; requestRef.current?.abort();
+    setConnection(null); setPreview(null); setChecking(false); setPreviewLoading(false); setError(null);
+    setOnvifPath(null); setOnvifToken(null);
+  };
 
   const reset = () => {
     operationRef.current += 1;
+    quotaGenerationRef.current += 1;
+    requestRef.current?.abort(); submittingRef.current = false;
+    qrLockRef.current = false;
+    if (qrTimerRef.current) clearTimeout(qrTimerRef.current);
     historyRef.current = [];
     setScreen('home'); setSourceMode('rtsp_pull'); setName(''); setIp('');
     setRtspPort(RTSP_PORT_DEFAULT); setHttpPort('80'); setUsername('admin'); setPassword(''); setRtspPath('');
     setOnvifPort(''); setOnvifPath(null); setOnvifToken(null);
     setShowPass(false); setManualConnectionNeeded(false); setTorch(false); setQrLocked(false);
+    setShowConnectionOptions(false); setIncludeLocation(false);
     setDevices([]); setDiscoveryWarnings([]); setConnection(null); setPreview(null); setPreviewLoading(false); setError(null);
-    setRtmpTarget(null); setCopied(false); setDiscovering(false); setScanProgress(null); setChecking(false); setSubmitting(false);
+    setRtmpTarget(null); setCopied(null); setDiscovering(false); setScanProgress(null); setChecking(false); setSubmitting(false);
   };
 
   const navigate = (next: Screen) => {
@@ -127,13 +152,18 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
   const closeSheet = () => {
     // O POST de criação pode já ter sido aceito pelo servidor. Fechar no meio
     // criaria câmera sem atualizar a lista e induziria cadastro duplicado.
-    if (submitting) return;
-    operationRef.current += 1;
-    setDiscovering(false); setScanProgress(null); setChecking(false); setSubmitting(false);
-    if (clipboardTimerRef.current) clearTimeout(clipboardTimerRef.current);
-    clipboardTimerRef.current = null;
-    void clearSensitiveClipboard();
-    onClose();
+    if (submittingRef.current) return;
+    const finish = () => {
+      reset();
+      if (clipboardTimerRef.current) clearTimeout(clipboardTimerRef.current);
+      clipboardTimerRef.current = null;
+      void clearSensitiveClipboard(); onClose();
+    };
+    if (screen !== 'success' && (name.trim() || ip.trim() || password)) {
+      Alert.alert('Sair do cadastro?', 'Os dados preenchidos serão descartados.', [
+        { text: 'Continuar cadastro', style: 'cancel' }, { text: 'Sair', style: 'destructive', onPress: finish },
+      ]);
+    } else finish();
   };
 
   const clearSensitiveClipboard = async () => {
@@ -148,6 +178,8 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
   };
 
   useEffect(() => () => {
+    operationRef.current += 1; requestRef.current?.abort();
+    if (qrTimerRef.current) clearTimeout(qrTimerRef.current);
     if (clipboardTimerRef.current) clearTimeout(clipboardTimerRef.current);
     void clearSensitiveClipboard();
   }, []);
@@ -155,14 +187,27 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
   useEffect(() => {
     if (!visible) return;
     reset();
-    setQuota(null); setQuotaLoading(true);
+    setQuota(null); setQuotaError(false); setQuotaLoading(true);
     let cancelled = false;
     void request<Quota>(apiUrl, '/cameras/mine/quota', token ?? undefined)
       .then((value) => { if (!cancelled) setQuota(value); })
-      .catch(() => { if (!cancelled) setQuota(null); })
+      .catch(() => { if (!cancelled) { setQuota(null); setQuotaError(true); } })
       .finally(() => { if (!cancelled) setQuotaLoading(false); });
     return () => { cancelled = true; };
   }, [visible, apiUrl, token]);
+
+  useEffect(() => { scrollRef.current?.scrollTo({ y: 0, animated: false }); }, [screen]);
+  useEffect(() => { if (error) scrollRef.current?.scrollTo({ y: 0, animated: true }); }, [error]);
+
+  const retryQuota = async () => {
+    const generation = quotaGenerationRef.current;
+    setQuotaLoading(true); setQuotaError(false);
+    try {
+      const value = await request<Quota>(apiUrl, '/cameras/mine/quota', token ?? undefined);
+      if (generation === quotaGenerationRef.current) setQuota(value);
+    } catch { if (generation === quotaGenerationRef.current) setQuotaError(true); }
+    finally { if (generation === quotaGenerationRef.current) setQuotaLoading(false); }
+  };
 
   const ensureLocalNetworkPermission = async () => {
     if (Platform.OS !== 'android' || Number(Platform.Version) < 37) return true;
@@ -219,16 +264,20 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
   };
 
   const chooseDevice = (device: DiscoveredCamera) => {
+    operationRef.current += 1;
+    invalidateConnection();
     setSourceMode('rtsp_pull'); setIp(device.ip);
     setName(/^(Câmera|Possível câmera) /.test(device.name) ? '' : device.name);
+    setRtspPort(''); setHttpPort('80'); setOnvifPort(''); setRtspPath('');
+    setUsername('admin'); setPassword('');
     if (device.port === 554 || device.port === 8554) setRtspPort(String(device.port));
     else if (device.port) setHttpPort(String(device.port));
-    setManualConnectionNeeded(false); setConnection(null); setError(null); navigate('details');
+    setManualConnectionNeeded(false); setShowConnectionOptions(false); setError(null); navigate('details');
   };
 
   const openQr = async () => {
     const operation = ++operationRef.current;
-    setError(null); setQrLocked(false); setTorch(false);
+    setError(null); qrLockRef.current = false; setQrLocked(false); setTorch(false);
     if (!cameraPermission?.granted) {
       const permission = await askCameraPermission();
       if (operation !== operationRef.current) return;
@@ -240,44 +289,50 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
     navigate('qr');
   };
 
-  const onQrScanned = ({ data }: { data: string }) => {
-    if (qrLocked) return;
-    setQrLocked(true);
+  const applyCameraAddress = (data: string) => {
     const parsed = parseCameraQr(data);
     if (parsed.kind !== 'camera' || !parsed.ip) {
-      setError(parsed.message ?? 'Este QR Code não contém um endereço de câmera compatível.');
-      setTimeout(() => setQrLocked(false), 1_200);
-      return;
+      setError(parsed.kind === 'wifi' ? 'Este código é da rede Wi-Fi. Use o endereço da câmera ou procure na rede.' : 'Não encontramos um endereço de câmera nesse conteúdo. Use um IP ou endereço RTSP completo.');
+      return false;
     }
+    invalidateConnection();
     setSourceMode('rtsp_pull'); setIp(parsed.ip); setRtspPort(parsed.port ? String(parsed.port) : RTSP_PORT_DEFAULT);
-    if (parsed.username) setUsername(parsed.username);
-    if (parsed.password) setPassword(parsed.password);
-    if (parsed.rtspPath) setRtspPath(parsed.rtspPath);
+    setUsername(parsed.username ?? 'admin');
+    setPassword(parsed.password ?? '');
+    setRtspPath(parsed.rtspPath ?? '');
     if (parsed.name) setName(parsed.name);
     setManualConnectionNeeded(false); setConnection(null); setError(null); navigate('details');
+    return true;
+  };
+
+  const onQrScanned = ({ data }: { data: string }) => {
+    if (qrLockRef.current) return;
+    qrLockRef.current = true; setQrLocked(true);
+    if (!applyCameraAddress(data)) {
+      qrTimerRef.current = setTimeout(() => { qrLockRef.current = false; setQrLocked(false); }, 1_200);
+    }
+  };
+
+  const pasteCameraAddress = async () => {
+    const operation = operationRef.current;
+    try {
+      const value = await Clipboard.getStringAsync();
+      if (operation === operationRef.current) applyCameraAddress(value);
+    } catch { if (operation === operationRef.current) setError('Não foi possível ler o conteúdo copiado. Digite o endereço abaixo.'); }
   };
 
   const testConnection = async () => {
-    if (!ip.trim() || !username.trim() || !password) {
-      setError('Informe usuário e senha da câmera para validar o vídeo.');
-      return;
-    }
-    if (!Number.isInteger(Number(httpPort)) || Number(httpPort) < 1 || Number(httpPort) > 65535) {
-      setError('Informe a porta HTTP da câmera, entre 1 e 65535. Geralmente é 80.');
-      return;
-    }
+    if (checking || !planReady) return;
+    if (connectionError) { setError(connectionError); return; }
     const operation = ++operationRef.current;
+    requestRef.current?.abort();
+    const controller = new AbortController(); requestRef.current = controller;
     setChecking(true); setConnection(null); setError(null);
     try {
       const result = await request<ConnectionResult>(apiUrl, '/cameras/mine/test-connection', token ?? undefined, {
         method: 'POST',
-        body: JSON.stringify({
-          ip: ip.trim(), rtspPort: Number(rtspPort) || 554,
-          httpPort: Number(httpPort) || 80,
-          ...(Number(onvifPort) ? { onvifPort: Number(onvifPort) } : {}),
-          username: username.trim(), password,
-          ...(rtspPath.trim() ? { rtspPath: rtspPath.trim() } : {}),
-        }),
+        signal: controller.signal, timeoutMs: 90_000,
+        body: JSON.stringify(cameraConnectionPayload(draft)),
       });
       if (operation !== operationRef.current) return;
       setConnection(result);
@@ -293,6 +348,7 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
         setPreviewLoading(true);
         void request<PreviewFrame>(apiUrl, '/cameras/mine/preview-frame', token ?? undefined, {
           method: 'POST',
+          signal: controller.signal, timeoutMs: 30_000,
           body: JSON.stringify({
             ip: ip.trim(), rtspPort: result.detectedRtspPort ?? (Number(rtspPort) || 554),
             username: username.trim(), password,
@@ -304,10 +360,10 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
       }
       else if (result.rtspReachableAny) {
         setManualConnectionNeeded(true);
-        setError('Encontramos o equipamento, mas não conseguimos abrir o vídeo. Confira o usuário e a senha; se estiverem corretos, informe a porta ou o caminho RTSP abaixo.');
+        setError('O servidor encontrou a câmera, mas não abriu o vídeo. Confira usuário, senha e a porta do vídeo.');
       } else {
         setManualConnectionNeeded(true);
-        setError('Não encontramos vídeo nas portas RTSP mais usadas. Informe abaixo a porta indicada pela câmera ou pelo fabricante.');
+        setError('O servidor não conseguiu alcançar o vídeo. Se a câmera está em outra rede, peça ao instalador para liberar a conexão ou use a opção de envio RTMP.');
       }
     } catch (err) {
       if (operation !== operationRef.current) return;
@@ -318,18 +374,17 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
   };
 
   const submit = async () => {
-    if (!canSave) return;
+    if (!canSave || submittingRef.current) return;
+    submittingRef.current = true;
     const operation = ++operationRef.current;
     setSubmitting(true); setError(null);
     try {
-      const installerLocation = await captureInstallerLocation();
+      const installerLocation = includeLocation ? await captureInstallerLocation() : null;
       if (operation !== operationRef.current) return;
       const payload = sourceMode === 'rtmp_push'
         ? { name: name.trim(), sourceMode, ...(installerLocation ?? {}) }
         : {
-            name: name.trim(), sourceMode, ip: ip.trim(), rtspPort: Number(rtspPort) || 554,
-            httpPort: Number(httpPort) || 80,
-            username: username.trim(), password,
+            name: name.trim(), sourceMode, ...cameraConnectionPayload(draft),
             ...(installerLocation ?? {}),
             ...(rtspPath.trim() ? { rtspPath: rtspPath.trim() } : {}),
             ...(Number(onvifPort) ? { onvifPort: Number(onvifPort) } : {}), ...(onvifPath ? { onvifPath } : {}),
@@ -340,31 +395,40 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
       });
       if (operation !== operationRef.current) return;
       onCreated?.();
+      setPassword(''); setShowPass(false); setPreview(null);
       if (sourceMode === 'rtmp_push') {
         setRtmpTarget(created.rtmpIngest ?? null);
-        if (!created.rtmpIngest?.fullUrl) setError('A câmera foi criada, mas o endereço RTMP não veio na resposta. Abra a câmera novamente pela tela web.');
+        if (!created.rtmpIngest?.fullUrl) {
+          const target = await request<RtmpTarget>(apiUrl, `/cameras/mine/${created.id}/rtmp-ingest`, token ?? undefined).catch(() => null);
+          if (operation !== operationRef.current) return;
+          setRtmpTarget(target);
+          if (!target?.fullUrl) setError('A câmera foi criada. Você pode recuperar o endereço em Gerenciar câmera, na sua lista.');
+        }
       }
-      navigate('success');
+      setScreen('success');
     } catch (err) {
       if (operation !== operationRef.current) return;
       setError(userFacingError(err, 'Não foi possível adicionar a câmera. Tente novamente.'));
     } finally {
+      submittingRef.current = false;
       if (operation === operationRef.current) setSubmitting(false);
     }
   };
 
   const title = useMemo(() => ({
     home: 'Adicionar câmera', discover: 'Câmeras por perto', qr: 'Ler QR Code',
-    provision: 'Preparar câmera nova', details: 'Configurar câmera',
-    review: 'Confirmar instalação', success: 'Câmera adicionada',
+    provision: 'Conectar ao Wi-Fi', details: 'Dados da câmera',
+    review: 'Conferir câmera', success: 'Câmera adicionada',
   })[screen], [screen]);
 
   const goBack = () => {
+    if (submittingRef.current) return;
     operationRef.current += 1;
+    requestRef.current?.abort();
     setDiscovering(false); setScanProgress(null); setChecking(false); setSubmitting(false); setPreviewLoading(false);
     setError(null);
     const previous = historyRef.current.pop() ?? 'home';
-    if (previous === 'qr') setQrLocked(false);
+    if (previous === 'qr') { qrLockRef.current = false; setQrLocked(false); }
     setScreen(previous);
   };
 
@@ -374,16 +438,22 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
     else goBack();
   };
 
-  const copyRtmpAddress = async () => {
-    const value = rtmpTarget?.fullUrl ?? '';
+  const copyRtmpAddress = async (field: 'fullUrl' | 'serverUrl' | 'streamKey' = 'fullUrl') => {
+    const value = rtmpTarget?.[field] ?? '';
     if (!value) return;
-    await Clipboard.setStringAsync(value);
+    const operation = operationRef.current;
+    try { await Clipboard.setStringAsync(value); }
+    catch { if (operation === operationRef.current) setError('Não foi possível copiar. Tente novamente.'); return; }
+    if (operation !== operationRef.current) {
+      if (await Clipboard.getStringAsync().catch(() => '') === value) await Clipboard.setStringAsync('').catch(() => undefined);
+      return;
+    }
     clipboardValueRef.current = value;
-    setCopied(true);
+    setCopied(field);
     if (clipboardTimerRef.current) clearTimeout(clipboardTimerRef.current);
     clipboardTimerRef.current = setTimeout(() => {
       clipboardTimerRef.current = null;
-      setCopied(false);
+      setCopied(null);
       void clearSensitiveClipboard();
     }, 120_000);
   };
@@ -391,18 +461,19 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={handleSystemBack}>
       <SafeAreaView edges={['top', 'bottom', 'left', 'right']} style={[styles.safe, { backgroundColor: theme.bg }]}>
-        <KeyboardAvoidingView style={styles.safe} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <KeyboardAvoidingView style={styles.safe} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
           <View style={[styles.header, { borderBottomColor: theme.border }]}>
             {screen !== 'home' && screen !== 'success' ? (
               <Pressable accessibilityRole="button" accessibilityLabel={`Voltar de ${title}`} accessibilityState={{ disabled: submitting }} disabled={submitting} style={[styles.headerBtn, { backgroundColor: theme.surface, opacity: submitting ? 0.45 : 1 }]} onPress={goBack}>
                 <Icon name="chevronLeft" size={20} color={theme.text} />
               </Pressable>
             ) : <View style={styles.headerBtn} />}
-            <Text style={[styles.headerTitle, { color: theme.text }]}>{title}</Text>
+            <Text style={[styles.headerTitle, { color: theme.text }]} accessibilityRole="header">{title}</Text>
             <Pressable accessibilityRole="button" accessibilityLabel="Fechar cadastro de câmera" accessibilityState={{ disabled: submitting }} disabled={submitting} style={[styles.headerBtn, { backgroundColor: theme.surface, opacity: submitting ? 0.45 : 1 }]} onPress={closeSheet}>
               <Icon name="close" size={18} color={theme.textSub} />
             </Pressable>
           </View>
+          {screen !== 'home' && screen !== 'success' && screen !== 'provision' ? <SetupProgress theme={theme} screen={screen} /> : null}
 
           {screen === 'qr' && cameraPermission?.granted ? (
             <View style={styles.qrRoot}>
@@ -417,7 +488,10 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
               {error ? <View style={styles.qrError}><Text style={styles.qrErrorText}>{error}</Text></View> : null}
             </View>
           ) : (
-            <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+            <ScrollView ref={scrollRef} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" showsVerticalScrollIndicator={false}>
+              {error ? <ErrorBanner theme={theme} text={error} /> : null}
+              {quotaError && screen !== 'success' ? <View style={{ gap: 8 }}><ErrorBanner theme={theme} text="Não conseguimos verificar seu limite de câmeras. Tente novamente para continuar." /><SecondaryButton theme={theme} icon="clock" label={quotaLoading ? 'Verificando…' : 'Verificar meu plano'} disabled={quotaLoading} onPress={() => void retryQuota()} /></View> : null}
+              {quotaFull && screen !== 'home' && screen !== 'success' ? <QuotaBanner theme={theme} loading={false} quota={quota} /> : null}
               {screen === 'home' ? <HomeStep theme={theme} quota={quota} quotaLoading={quotaLoading}
                 onDiscover={() => void startDiscovery()} onQr={() => void openQr()} onProvision={() => navigate('provision')}
                 onRemote={() => { setSourceMode('rtmp_push'); setName(''); navigate('details'); }}
@@ -438,12 +512,12 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
 
               {screen === 'provision' ? (
                 <>
-                  <Text style={[styles.heroTitle, { color: theme.text }]}>Prepare a câmera para o Wi-Fi</Text>
-                  <Text style={[styles.heroSub, { color: theme.textSub }]}>A instalação direta de SSID e senha ainda depende do SDK oficial de cada fabricante. Nesta versão, o app orienta o primeiro pareamento e assume a configuração assim que a câmera entra na rede.</Text>
-                  <Step theme={theme} number="1" title="Ligue e restaure a câmera" text="Segure o botão RESET até ouvir o aviso ou o LED começar a piscar." />
-                  <Step theme={theme} number="2" title="Faça o primeiro pareamento" text="Se ainda não estiver no Wi-Fi, use o app do fabricante e habilite RTSP/ONVIF quando a opção existir." />
-                  <Step theme={theme} number="3" title="Volte para o S2Cam" text="Depois disso, encontramos IP, portas, perfis e codec automaticamente." />
-                  <InfoBanner theme={theme} text="Isto não é pareamento Wi-Fi automático: Intelbras, Tuya/Positivo e outros precisam de drivers e credenciais oficiais homologados por modelo." />
+                  <Text style={[styles.heroTitle, { color: theme.text }]}>Primeiro, conecte ao Wi-Fi</Text>
+                  <Text style={[styles.heroSub, { color: theme.textSub }]}>Use o aplicativo do fabricante para conectar a câmera à sua rede. Depois, volte aqui para adicioná-la.</Text>
+                  <Step theme={theme} number="1" title="Ligue a câmera" text="Confira se ela recebe energia. Se já estiver funcionando, mantenha a configuração atual." />
+                  <Step theme={theme} number="2" title="Conecte à sua rede" text="Siga o guia do fabricante. Alguns modelos precisam liberar a opção RTSP ou ONVIF para compartilhar o vídeo." />
+                  <Step theme={theme} number="3" title="Volte para o S2Cam" text="Conecte o celular ao mesmo Wi-Fi e procure a câmera abaixo." />
+                  <InfoBanner theme={theme} text="Este guia ajuda na preparação. A conexão inicial ao Wi-Fi é feita pelo aplicativo do fabricante." />
                   <PrimaryButton theme={theme} icon="search" label="A câmera já está conectada" onPress={() => void startDiscovery()} />
                   <SecondaryButton theme={theme} icon="qrCode" label="Ler QR da câmera" onPress={() => void openQr()} />
                 </>
@@ -453,98 +527,119 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
                 <DetailsStep theme={theme} sourceMode={sourceMode} ip={ip} name={name} username={username} password={password}
                   rtspPort={rtspPort} httpPort={httpPort} onvifPort={onvifPort} rtspPath={rtspPath} showPass={showPass} manualConnectionNeeded={manualConnectionNeeded}
                   checking={checking} submitting={submitting} canSave={canSave}
-                  onName={setName} onUsername={setUsername} onPassword={setPassword}
-                  onIp={(value) => { setIp(value); setConnection(null); setManualConnectionNeeded(false); }}
-                  onPort={setRtspPort} onHttpPort={setHttpPort} onOnvifPort={setOnvifPort} onPath={setRtspPath}
+                  planReady={planReady} showConnectionOptions={showConnectionOptions}
+                  onToggleOptions={() => setShowConnectionOptions(value => !value)} onPaste={() => void pasteCameraAddress()}
+                  onName={setName} onUsername={value => { invalidateConnection(); setUsername(value); }} onPassword={value => { invalidateConnection(); setPassword(value); }}
+                  onIp={(value) => { invalidateConnection(); setIp(value); }}
+                  onPort={value => { invalidateConnection(); setRtspPort(value); }} onHttpPort={value => { invalidateConnection(); setHttpPort(value); }} onOnvifPort={value => { invalidateConnection(); setOnvifPort(value); }} onPath={value => { invalidateConnection(); setRtspPath(value); }}
                   onTogglePass={() => setShowPass((value) => !value)}
-                  onTest={() => void testConnection()} onSubmit={() => void submit()} />
+                  onTest={() => void testConnection()} onSubmit={() => navigate('review')}
+                  />
               ) : null}
 
-              {screen === 'review' && connection ? (
+              {screen === 'review' && (connection || sourceMode === 'rtmp_push') ? (
                 <>
-                  <View style={[styles.successHero, { backgroundColor: theme.accentBg, borderColor: theme.success }]}><View style={[styles.successIcon, { backgroundColor: theme.success }]}><Icon name="check" size={25} color="#fff" /></View><Text style={[styles.discoveryTitle, { color: theme.text }]}>Vídeo encontrado</Text><Text style={[styles.discoverySub, { color: theme.textSub }]}>O sistema configurou o melhor perfil disponível para esta câmera.</Text></View>
+                  <View style={[styles.successHero, { backgroundColor: theme.accentBg, borderColor: theme.border }]}><View style={[styles.successIcon, { backgroundColor: theme.success }]}><Icon name="check" size={25} color="#fff" /></View><Text style={[styles.discoveryTitle, { color: theme.text }]}>{sourceMode === 'rtmp_push' ? 'Pronta para cadastrar' : 'Vídeo encontrado'}</Text><Text style={[styles.discoverySub, { color: theme.textSub }]}>{sourceMode === 'rtmp_push' ? 'Depois de adicionar, copie o endereço de envio para a câmera.' : 'Confira a imagem e escolha um nome fácil de reconhecer.'}</Text></View>
+                  <Field label="Nome da câmera" theme={theme}><TextInput accessibilityLabel="Nome da câmera na confirmação" editable={!submitting} value={name} onChangeText={setName} maxLength={100} placeholder="Ex.: Entrada principal" placeholderTextColor={theme.textMuted} style={[styles.inputText, { color: theme.text }]} /></Field>
                   <View style={[styles.summary, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-                    <SummaryRow theme={theme} label="Câmera" value={name || ip} /><SummaryRow theme={theme} label="Endereço" value={ip} />
-                    <SummaryRow theme={theme} label="Vídeo" value={[connection.detectedStream?.codec?.toUpperCase(), connection.detectedStream?.width && connection.detectedStream?.height ? `${connection.detectedStream.width}×${connection.detectedStream.height}` : null].filter(Boolean).join(' · ') || 'RTSP confirmado'} />
-                    <SummaryRow theme={theme} label="ONVIF" value={connection.onvifReachable ? (connection.ptzDigestOk ? 'Ativo · PTZ detectado' : 'Ativo') : 'Não detectado'} last />
+                    <SummaryRow theme={theme} label="Conexão" value={sourceMode === 'rtmp_push' ? 'Envio pela câmera (RTMP)' : 'Acesso pelo endereço (RTSP)'} />
+                    {connection ? <><SummaryRow theme={theme} label="Endereço" value={`${ip}${connection.detectedRtspPort ? ` · porta ${connection.detectedRtspPort}` : ''}`} /><SummaryRow theme={theme} label="Imagem" value={connection.detectedStream?.width && connection.detectedStream?.height ? `${connection.detectedStream.width} × ${connection.detectedStream.height}` : 'Vídeo confirmado'} /></> : null}
+                    <SummaryRow theme={theme} label="Privacidade" value="Sua câmera privada" last />
                   </View>
-                  {previewLoading ? <View style={[styles.preview, styles.previewLoading, { backgroundColor: theme.surface, borderColor: theme.border }]}><ActivityIndicator color={theme.accent} /><Text style={[styles.previewHint, { color: theme.textSub }]}>Carregando uma imagem para conferência…</Text></View> : preview?.ok && preview.imageDataUrl ? <View style={[styles.preview, { borderColor: theme.border }]}><Image source={{ uri: preview.imageDataUrl }} style={styles.previewImage} resizeMode="cover" /><View style={styles.previewCaption}><Icon name="eye" size={15} color="#fff" /><Text style={styles.previewCaptionText}>Confirme se esta é a câmera correta</Text></View></View> : preview ? <InfoBanner theme={theme} text={preview.reason || 'O vídeo foi validado, mas a imagem de conferência não ficou disponível.'} /> : null}
-                  {connection.compatibility?.warnings?.length ? <InfoBanner theme={theme} text={connection.compatibility.warnings[0]} /> : null}
-                  <PrimaryButton theme={theme} loading={submitting} disabled={!canSave} icon="check" label="Adicionar esta câmera" onPress={() => void submit()} />
-                  <SecondaryButton theme={theme} icon="edit" label="Corrigir dados" onPress={goBack} />
+                  {previewLoading ? <View style={[styles.preview, styles.previewLoading, { backgroundColor: theme.surface, borderColor: theme.border }]}><ActivityIndicator color={theme.accent} /><Text style={[styles.previewHint, { color: theme.textSub }]}>Carregando uma imagem para conferência…</Text></View> : preview?.ok && preview.imageDataUrl ? <View style={[styles.preview, { borderColor: theme.border, backgroundColor: theme.videoBg }]}><Image source={{ uri: preview.imageDataUrl }} style={styles.previewImage} resizeMode="contain" /><View style={styles.previewCaption}><Icon name="eye" size={15} color="#fff" /><Text style={styles.previewCaptionText}>Confirme se esta é a câmera correta</Text></View></View> : preview ? <InfoBanner theme={theme} text="O vídeo foi validado, mas a imagem de conferência não ficou disponível." /> : null}
+                  <InfoBanner theme={theme} text="Esta câmera ficará vinculada à sua conta. Grupos e administradores não recebem acesso automático às imagens." />
+                  <Pressable accessibilityRole="checkbox" accessibilityLabel="Usar localização do celular no cadastro" accessibilityState={{ checked: includeLocation, disabled: submitting }} disabled={submitting} onPress={() => setIncludeLocation(value => !value)} style={[styles.choiceRow, { borderColor: theme.border, backgroundColor: theme.surface }]}><Icon name={includeLocation ? 'check' : 'plus'} size={20} color={theme.accent} /><View style={{ flex: 1 }}><Text style={[styles.methodTitle, { color: theme.text }]}>Usar localização do celular</Text><Text style={[styles.methodSub, { color: theme.textSub }]}>Opcional. Ative somente se você estiver no local da câmera.</Text></View></Pressable>
                 </>
               ) : null}
 
               {screen === 'success' ? (
                 <View style={styles.doneRoot}><View style={[styles.doneIcon, { backgroundColor: theme.success }]}><Icon name="check" size={36} color="#fff" strokeWidth={2.6} /></View><Text style={[styles.doneTitle, { color: theme.text }]}>Tudo pronto!</Text><Text style={[styles.doneSub, { color: theme.textSub }]}>{sourceMode === 'rtmp_push' ? 'Agora configure este endereço na opção RTMP da câmera.' : 'A câmera já foi adicionada à sua lista e está sendo preparada.'}</Text>
-                  {sourceMode === 'rtmp_push' && rtmpTarget?.fullUrl ? <View style={[styles.urlCard, { backgroundColor: theme.surface, borderColor: theme.border }]}><Text style={[styles.urlLabel, { color: theme.textMuted }]}>ENDEREÇO RTMP</Text><Text selectable style={[styles.urlText, { color: theme.text }]}>{rtmpTarget.fullUrl}</Text><Pressable accessibilityRole="button" accessibilityLabel="Copiar endereço RTMP" style={[styles.copyBtn, { backgroundColor: theme.accentBg }]} onPress={() => { void copyRtmpAddress(); }}><Icon name={copied ? 'check' : 'share'} size={16} color={theme.accent} /><Text style={[styles.copyText, { color: theme.accent }]}>{copied ? 'Copiado por 2 minutos' : 'Copiar endereço'}</Text></Pressable></View> : null}
+                  {sourceMode === 'rtmp_push' && rtmpTarget?.fullUrl ? <View style={[styles.urlCard, { backgroundColor: theme.surface, borderColor: theme.border }]}><Text style={[styles.methodTitle, { color: theme.text }]}>Configure o envio na câmera</Text><Text style={[styles.heroSub, { color: theme.textSub }]}>Se ela pedir um único endereço, copie o completo. Se pedir servidor e chave, copie cada campo abaixo.</Text>{(['fullUrl', 'serverUrl', 'streamKey'] as const).filter(field => rtmpTarget[field]).map(field => <View key={field} style={{ gap: 8 }}><Text style={[styles.urlLabel, { color: theme.textSub }]}>{field === 'fullUrl' ? 'Endereço completo' : field === 'serverUrl' ? 'Servidor' : 'Chave de transmissão'}</Text><Text selectable style={[styles.urlText, { color: theme.text }]}>{rtmpTarget[field]}</Text><SecondaryButton theme={theme} icon={copied === field ? 'check' : 'share'} label={copied === field ? 'Copiado' : `Copiar ${field === 'fullUrl' ? 'endereço completo' : field === 'serverUrl' ? 'servidor' : 'chave'}`} onPress={() => void copyRtmpAddress(field)} /></View>)}</View> : null}
                   <PrimaryButton theme={theme} icon="camera" label="Concluir" onPress={closeSheet} />
                 </View>
               ) : null}
 
-              {error && screen !== 'qr' ? <ErrorBanner theme={theme} text={error} /> : null}
             </ScrollView>
           )}
+          {screen === 'details' || screen === 'review' ? <View style={[styles.footer, { backgroundColor: theme.bg, borderTopColor: theme.border }]}>
+            {screen === 'review' ? <PrimaryButton theme={theme} loading={submitting} disabled={!canSave} icon="check" label="Adicionar esta câmera" onPress={() => void submit()} />
+              : sourceMode === 'rtmp_push' ? <PrimaryButton theme={theme} disabled={!canSave} icon="chevronRight" label="Conferir e continuar" onPress={() => navigate('review')} />
+              : <PrimaryButton theme={theme} loading={checking} disabled={checking || !planReady || !ip.trim() || !username.trim() || !password} icon="play" label={manualConnectionNeeded ? 'Testar novamente' : 'Testar vídeo e continuar'} onPress={() => void testConnection()} />}
+            {checking ? <SecondaryButton theme={theme} icon="close" label="Cancelar teste" onPress={() => { invalidateConnection(); }} /> : null}
+            <Text style={[styles.footerHint, { color: theme.textSub }]}>{checking ? 'Aguarde enquanto o servidor verifica a conexão.' : screen === 'review' ? 'A câmera será privada e vinculada à sua conta.' : 'Você confere os dados antes de adicionar.'}</Text>
+          </View> : null}
         </KeyboardAvoidingView>
       </SafeAreaView>
     </Modal>
   );
 }
 
-function HomeStep({ theme, quota, quotaLoading, onDiscover, onQr, onProvision, onRemote, onManual }: { theme: any; quota: Quota | null; quotaLoading: boolean; onDiscover: () => void; onQr: () => void; onProvision: () => void; onRemote: () => void; onManual: () => void }) {
+function SetupProgress({ theme, screen }: { theme: Theme; screen: Screen }) {
+  const active = screen === 'review' ? 2 : screen === 'details' ? 1 : 0;
+  return <View style={styles.progress} accessibilityLabel={`Etapa ${active + 1} de 3: ${['Conectar', 'Dados', 'Conferir'][active]}`}>
+    {['Conectar', 'Dados', 'Conferir'].map((label, index) => <View key={label} style={styles.progressItem}><View style={[styles.progressLine, { backgroundColor: index <= active ? theme.accent : theme.border }]} /><Text style={[styles.progressLabel, { color: index === active ? theme.text : theme.textSub }]}>{index < active ? '✓ ' : `${index + 1}. `}{label}</Text></View>)}
+  </View>;
+}
+
+function HomeStep({ theme, quota, quotaLoading, onDiscover, onQr, onProvision, onRemote, onManual }: { theme: Theme; quota: Quota | null; quotaLoading: boolean; onDiscover: () => void; onQr: () => void; onProvision: () => void; onRemote: () => void; onManual: () => void }) {
   return <>
+    <View style={styles.homeHero}><View style={[styles.homeIcon, { backgroundColor: theme.accentBg }]}><Icon name="camera" size={30} color={theme.accent} /></View><Text style={[styles.heroTitle, { color: theme.text }]}>Vamos conectar sua câmera</Text><Text style={[styles.heroSub, { color: theme.textSub }]}>Escolha como deseja adicionar. Você poderá conferir tudo antes de concluir.</Text></View>
     <QuotaBanner theme={theme} loading={quotaLoading} quota={quota} />
     <Pressable accessibilityRole="button" accessibilityLabel="Adicionar câmera por RTSP" style={styles.autoMethodWrap} onPress={onManual}>
       <LinearGradient colors={[theme.accent, theme.accentDark]} style={styles.autoMethod}>
         <View style={styles.autoMethodIcon}><Icon name="camera" size={27} color={theme.textOnAccent} /></View>
         <View style={{ flex: 1 }}>
-          <Text style={[styles.autoMethodTitle, { color: theme.textOnAccent }]}>Câmera por RTSP</Text>
-          <Text style={[styles.autoMethodSub, { color: theme.textOnAccent }]}>Conectar usando o endereço da câmera</Text>
+          <Text style={[styles.autoMethodTitle, { color: theme.textOnAccent }]}>Tenho o endereço da câmera</Text>
+          <Text style={[styles.autoMethodSub, { color: theme.textOnAccent }]}>Informe o IP e os dados de acesso</Text>
         </View>
         <Icon name="chevronRight" size={20} color={theme.textOnAccent} />
       </LinearGradient>
     </Pressable>
-    <Text style={[styles.sectionLabel, { color: theme.textMuted }]}>OUTRAS FORMAS</Text>
+    <Text style={[styles.sectionLabel, { color: theme.textSub }]}>Ou escolha outra forma</Text>
     <View style={[styles.methodList, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-      <MethodRow theme={theme} icon="search" title="Encontrar câmeras na rede" subtitle="Busca automática no Wi-Fi ou cabo" onPress={onDiscover} />
+      <MethodRow theme={theme} icon="search" title="Procurar no meu Wi-Fi" subtitle="Encontre câmeras na mesma rede do celular" onPress={onDiscover} />
       <MethodRow theme={theme} icon="qrCode" title="Ler QR Code" subtitle="QR com endereço IP ou RTSP" onPress={onQr} />
-      <MethodRow theme={theme} icon="wifi" title="Preparar câmera nova" subtitle="Guia para primeiro uso ou troca de Wi-Fi" onPress={onProvision} />
-      <MethodRow theme={theme} icon="radio" title="Câmera RTMP" subtitle="Usar o endereço RTMP configurado na câmera" onPress={onRemote} last />
+      <MethodRow theme={theme} icon="radio" title="Receber o envio da câmera" subtitle="Crie um endereço para envio RTMP" onPress={onRemote} />
+      <MethodRow theme={theme} icon="wifi" title="Preciso conectar ao Wi-Fi" subtitle="Veja como preparar a câmera" onPress={onProvision} last />
     </View>
+    <InfoBanner theme={theme} text="As câmeras adicionadas por aqui são privadas e ficam vinculadas à sua conta." />
   </>;
 }
 
-function DetailsStep(props: { theme: any; sourceMode: SourceMode; ip: string; name: string; username: string; password: string; rtspPort: string; httpPort: string; onvifPort: string; rtspPath: string; showPass: boolean; manualConnectionNeeded: boolean; checking: boolean; submitting: boolean; canSave: boolean; onName: (v: string) => void; onUsername: (v: string) => void; onPassword: (v: string) => void; onIp: (v: string) => void; onPort: (v: string) => void; onHttpPort: (v: string) => void; onOnvifPort: (v: string) => void; onPath: (v: string) => void; onTogglePass: () => void; onTest: () => void; onSubmit: () => void }) {
+function DetailsStep(props: { theme: Theme; sourceMode: SourceMode; ip: string; name: string; username: string; password: string; rtspPort: string; httpPort: string; onvifPort: string; rtspPath: string; showPass: boolean; manualConnectionNeeded: boolean; checking: boolean; submitting: boolean; canSave: boolean; planReady: boolean; showConnectionOptions: boolean; onToggleOptions: () => void; onPaste: () => void; onName: (v: string) => void; onUsername: (v: string) => void; onPassword: (v: string) => void; onIp: (v: string) => void; onPort: (v: string) => void; onHttpPort: (v: string) => void; onOnvifPort: (v: string) => void; onPath: (v: string) => void; onTogglePass: () => void; onTest: () => void; onSubmit: () => void }) {
   const { theme, sourceMode, ip, name, username, password, rtspPort, httpPort, onvifPort, rtspPath, showPass, manualConnectionNeeded, checking, submitting, canSave } = props;
   if (sourceMode === 'rtmp_push') {
     return <>
-      <Text style={[styles.heroTitle, { color: theme.text }]}>Câmera RTMP</Text>
-      <Text style={[styles.heroSub, { color: theme.textSub }]}>Dê um nome à câmera. O sistema criará um endereço curto para você copiar.</Text>
+      <Text style={[styles.heroTitle, { color: theme.text }]}>Receba o vídeo da câmera</Text>
+      <Text style={[styles.heroSub, { color: theme.textSub }]}>A câmera envia o vídeo ao S2Cam. Depois de cadastrar, você copia o endereço para a configuração RTMP dela.</Text>
       <Field label="Nome da câmera" theme={theme}><TextInput accessibilityLabel="Nome da câmera" value={name} onChangeText={props.onName} maxLength={100} returnKeyType="done" placeholder="Ex.: Entrada principal" placeholderTextColor={theme.textMuted} style={[styles.inputText, { color: theme.text }]} /></Field>
-      <PrimaryButton theme={theme} loading={submitting} disabled={!canSave} icon="plus" label="Criar endereço da câmera" onPress={props.onSubmit} />
+      <InfoBanner theme={theme} text="Confira se sua câmera oferece envio RTMP. Se ela não tiver essa opção, use o cadastro pelo endereço IP." />
     </>;
   }
   return <>
     <Text style={[styles.heroTitle, { color: theme.text }]}>{ip ? 'Conectar à câmera' : 'Adicionar pelo endereço'}</Text>
-    <Text style={[styles.heroSub, { color: theme.textSub }]}>Informe os dados de acesso. O app procura a porta e configura o vídeo automaticamente.</Text>
+    <Text style={[styles.heroSub, { color: theme.textSub }]}>Use o usuário e a senha da própria câmera. O servidor vai testar o vídeo antes de cadastrar.</Text>
+    <SecondaryButton theme={theme} icon="share" label="Colar endereço do vídeo" onPress={props.onPaste} />
     <View style={[styles.formCard, { backgroundColor: theme.surface, borderColor: theme.border }]}>
       <Field label="Nome da câmera" theme={theme}><TextInput accessibilityLabel="Nome da câmera" value={name} onChangeText={props.onName} maxLength={100} placeholder="Ex.: Portão de casa" placeholderTextColor={theme.textMuted} style={[styles.inputText, { color: theme.text }]} /></Field>
-      <Field label="Endereço da câmera (IP)" theme={theme}><TextInput accessibilityLabel="Endereço IP da câmera" value={ip} onChangeText={props.onIp} maxLength={45} keyboardType="numbers-and-punctuation" autoCapitalize="none" autoCorrect={false} placeholder="Ex.: 192.168.0.100" placeholderTextColor={theme.textMuted} style={[styles.inputText, { color: theme.text }]} /></Field>
+      <Field label="Endereço da câmera (IP)" theme={theme}><TextInput accessibilityLabel="Endereço IP da câmera" value={ip} onChangeText={props.onIp} maxLength={45} keyboardType="url" autoCapitalize="none" autoCorrect={false} placeholder="Ex.: 192.168.0.100" placeholderTextColor={theme.textMuted} style={[styles.inputText, { color: theme.text }]} /></Field>
       <Field label="Usuário" theme={theme}><TextInput accessibilityLabel="Usuário da câmera" value={username} onChangeText={props.onUsername} maxLength={128} autoCapitalize="none" autoCorrect={false} placeholder="Geralmente admin" placeholderTextColor={theme.textMuted} style={[styles.inputText, { color: theme.text }]} /></Field>
       <Field label="Senha da câmera" theme={theme}><View style={styles.inputRow}><TextInput accessibilityLabel="Senha da câmera" value={password} onChangeText={props.onPassword} maxLength={512} autoCapitalize="none" autoCorrect={false} autoComplete="off" textContentType="none" secureTextEntry={!showPass} placeholder="Senha ou chave de acesso" placeholderTextColor={theme.textMuted} style={[styles.inputText, { color: theme.text, flex: 1 }]} /><Pressable accessibilityRole="button" accessibilityLabel={showPass ? 'Ocultar senha' : 'Mostrar senha'} onPress={props.onTogglePass} hitSlop={10}><Icon name="eye" size={19} color={theme.textMuted} /></Pressable></View></Field>
-      <Field label="Porta HTTP da câmera" theme={theme}><TextInput accessibilityLabel="Porta HTTP da câmera" value={httpPort} onChangeText={(value) => props.onHttpPort(value.replace(/[^0-9]/g, '').slice(0, 5))} keyboardType="number-pad" placeholder="80" placeholderTextColor={theme.textMuted} style={[styles.inputText, { color: theme.text }]} /></Field>
-      <Field label="Porta ONVIF (opcional)" theme={theme}><TextInput accessibilityLabel="Porta ONVIF opcional" value={onvifPort} onChangeText={(value) => props.onOnvifPort(value.replace(/[^0-9]/g, '').slice(0, 5))} keyboardType="number-pad" placeholder="Usar a porta HTTP" placeholderTextColor={theme.textMuted} style={[styles.inputText, { color: theme.text }]} /></Field>
     </View>
     {!manualConnectionNeeded ? <View style={[styles.autoConfig, { backgroundColor: theme.accentBg }]}>
       <View style={[styles.autoConfigIcon, { backgroundColor: theme.surface }]}><Icon name="search" size={18} color={theme.accent} /></View>
       <View style={{ flex: 1 }}><Text style={[styles.autoConfigTitle, { color: theme.text }]}>Porta e vídeo automáticos</Text><Text style={[styles.autoConfigSub, { color: theme.textSub }]}>Vamos testar as portas RTSP mais usadas e os perfis da câmera.</Text></View>
-    </View> : <View style={[styles.manualConnection, { backgroundColor: theme.surface, borderColor: theme.warning }]}>
-      <View style={styles.manualConnectionHeader}><Icon name="info" size={18} color={theme.warning} /><View style={{ flex: 1 }}><Text style={[styles.manualConnectionTitle, { color: theme.text }]}>Complete os dados da conexão</Text><Text style={[styles.manualConnectionSub, { color: theme.textSub }]}>A busca automática não encontrou o vídeo. Consulte a etiqueta, o manual ou o instalador.</Text></View></View>
+    </View> : <InfoBanner theme={theme} text="Confira os dados de acesso. Se o instalador passou uma porta diferente, informe em Portas e caminho do vídeo." />}
+    <Pressable accessibilityRole="button" accessibilityState={{ expanded: props.showConnectionOptions || manualConnectionNeeded }} onPress={props.onToggleOptions} style={[styles.choiceRow, { backgroundColor: theme.surface, borderColor: theme.border }]}><Icon name="settings" size={20} color={theme.accent} /><Text style={[styles.methodTitle, { color: theme.text, flex: 1 }]}>Portas e caminho do vídeo</Text><Icon name="chevronDown" size={18} color={theme.textSub} /></Pressable>
+    {props.showConnectionOptions || manualConnectionNeeded ? <View style={[styles.manualConnection, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+      <Text style={[styles.heroSub, { color: theme.textSub }]}>Preencha se você já conhece esses dados. A porta do vídeo em branco permite a busca automática.</Text>
       <Field label="Porta RTSP" theme={theme}><TextInput accessibilityLabel="Porta RTSP" value={rtspPort} onChangeText={(value) => props.onPort(value.replace(/[^0-9]/g, '').slice(0, 5))} keyboardType="number-pad" placeholder="Ex.: 554" placeholderTextColor={theme.textMuted} style={[styles.inputText, { color: theme.text }]} /></Field>
       <Field label="Caminho do vídeo (se houver)" theme={theme}><TextInput accessibilityLabel="Caminho RTSP do vídeo" value={rtspPath} onChangeText={props.onPath} maxLength={512} autoCapitalize="none" autoCorrect={false} placeholder="Ex.: /cam/realmonitor" placeholderTextColor={theme.textMuted} style={[styles.inputText, { color: theme.text }]} /></Field>
-    </View>}
+      <Field label="Porta de acesso (HTTP)" theme={theme}><TextInput accessibilityLabel="Porta de acesso HTTP" value={httpPort} onChangeText={(value) => props.onHttpPort(value.replace(/[^0-9]/g, '').slice(0, 5))} keyboardType="number-pad" placeholder="Geralmente 80" placeholderTextColor={theme.textMuted} style={[styles.inputText, { color: theme.text }]} /></Field>
+      <Field label="Porta ONVIF (opcional)" theme={theme}><TextInput accessibilityLabel="Porta ONVIF opcional" value={onvifPort} onChangeText={(value) => props.onOnvifPort(value.replace(/[^0-9]/g, '').slice(0, 5))} keyboardType="number-pad" placeholder="Usar a porta de acesso" placeholderTextColor={theme.textMuted} style={[styles.inputText, { color: theme.text }]} /></Field>
+    </View> : null}
     {!ip ? <InfoBanner theme={theme} text="Não sabe o endereço? Volte e escolha Encontrar câmeras ou Ler QR Code." /> : null}
-    <PrimaryButton theme={theme} loading={checking} disabled={checking || !ip || !username || !password} icon="search" label={manualConnectionNeeded ? 'Tentar novamente' : 'Encontrar vídeo e continuar'} onPress={props.onTest} />
+    <InfoBanner theme={theme} text="Encontrar no Wi-Fi não garante acesso pelo servidor. Se a câmera estiver em outro local, o instalador precisa liberar a conexão." />
   </>;
 }
 
@@ -572,16 +667,19 @@ function Field({ label, theme, children }: { label: string; theme: any; children
 function Step({ theme, number, title, text }: { theme: any; number: string; title: string; text: string }) { return <View style={styles.step}><View style={[styles.stepNumber, { backgroundColor: theme.accent }]}><Text style={styles.stepNumberText}>{number}</Text></View><View style={{ flex: 1 }}><Text style={[styles.stepTitle, { color: theme.text }]}>{title}</Text><Text style={[styles.stepText, { color: theme.textSub }]}>{text}</Text></View></View>; }
 function SummaryRow({ theme, label, value, last }: { theme: any; label: string; value: string; last?: boolean }) { return <View style={[styles.summaryRow, !last && { borderBottomColor: theme.border, borderBottomWidth: StyleSheet.hairlineWidth }]}><Text style={[styles.summaryLabel, { color: theme.textSub }]}>{label}</Text><Text style={[styles.summaryValue, { color: theme.text }]} numberOfLines={2}>{value}</Text></View>; }
 function PrimaryButton({ theme, icon, label, loading, disabled, onPress }: { theme: any; icon: IconName; label: string; loading?: boolean; disabled?: boolean; onPress: () => void }) { return <Pressable accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ disabled: !!disabled, busy: !!loading }} disabled={disabled || loading} onPress={onPress} style={{ opacity: disabled ? 0.45 : 1 }}><LinearGradient colors={[theme.accent, theme.accentDark]} style={styles.primary}>{loading ? <ActivityIndicator color={theme.textOnAccent} /> : <><Icon name={icon} size={18} color={theme.textOnAccent} /><Text style={[styles.primaryText, { color: theme.textOnAccent }]}>{label}</Text></>}</LinearGradient></Pressable>; }
-function SecondaryButton({ theme, icon, label, onPress }: { theme: any; icon: IconName; label: string; onPress: () => void }) { return <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress} style={[styles.secondary, { backgroundColor: theme.surface, borderColor: theme.border }]}><Icon name={icon} size={17} color={theme.textSub} /><Text style={[styles.secondaryText, { color: theme.text }]}>{label}</Text></Pressable>; }
+function SecondaryButton({ theme, icon, label, disabled, onPress }: { theme: Theme; icon: IconName; label: string; disabled?: boolean; onPress: () => void }) { return <Pressable accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ disabled: !!disabled }} disabled={disabled} onPress={onPress} style={[styles.secondary, { backgroundColor: theme.surface, borderColor: theme.border, opacity: disabled ? 0.45 : 1 }]}><Icon name={icon} size={17} color={theme.textSub} /><Text style={[styles.secondaryText, { color: theme.text }]}>{label}</Text></Pressable>; }
 function InfoBanner({ theme, text }: { theme: any; text: string }) { return <View style={[styles.banner, { backgroundColor: theme.accentBg }]}><Icon name="info" size={17} color={theme.accent} /><Text style={[styles.bannerText, { color: theme.textSub }]}>{text}</Text></View>; }
-function ErrorBanner({ theme, text }: { theme: any; text: string }) { return <View style={[styles.banner, { backgroundColor: theme.dangerBg }]}><Icon name="alert" size={17} color={theme.danger} /><Text style={[styles.bannerText, { color: theme.danger }]}>{text}</Text></View>; }
+function ErrorBanner({ theme, text }: { theme: Theme; text: string }) { return <View accessibilityRole="alert" accessibilityLiveRegion="polite" style={[styles.banner, { backgroundColor: theme.dangerBg }]}><Icon name="alert" size={17} color={theme.danger} /><Text style={[styles.bannerText, { color: theme.danger }]}>{text}</Text></View>; }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1 }, header: { height: 58, borderBottomWidth: StyleSheet.hairlineWidth, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, headerBtn: { width: 38, height: 38, borderRadius: 12, alignItems: 'center', justifyContent: 'center' }, headerTitle: { fontFamily: 'Sora', fontSize: 17, fontWeight: '700' },
+  homeHero: { gap: 8, marginBottom: 4 }, homeIcon: { width: 60, height: 60, borderRadius: 20, alignItems: 'center', justifyContent: 'center', marginBottom: 4 },
+  progress: { flexDirection: 'row', gap: 12, width: '100%', maxWidth: 680, alignSelf: 'center', paddingHorizontal: 20, paddingTop: 16, paddingBottom: 4 }, progressItem: { flex: 1, gap: 6 }, progressLine: { height: 3, borderRadius: 3 }, progressLabel: { fontFamily: 'InstrumentSans', fontSize: 12, fontWeight: '600' },
+  footer: { width: '100%', maxWidth: 680, alignSelf: 'center', borderTopWidth: StyleSheet.hairlineWidth, paddingHorizontal: 20, paddingTop: 10, paddingBottom: 8, gap: 8 }, footerHint: { textAlign: 'center', fontFamily: 'InstrumentSans', fontSize: 12, lineHeight: 17 }, choiceRow: { flexDirection: 'row', alignItems: 'center', gap: 12, borderWidth: 1, borderRadius: 16, padding: 14, minHeight: 56 },
+  safe: { flex: 1 }, header: { minHeight: 64, borderBottomWidth: StyleSheet.hairlineWidth, paddingHorizontal: 16, paddingVertical: 8, gap: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, headerBtn: { width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center' }, headerTitle: { fontFamily: 'Sora', fontSize: 17, fontWeight: '700', flex: 1, textAlign: 'center' },
   content: { width: '100%', maxWidth: 680, alignSelf: 'center', paddingHorizontal: 20, paddingTop: 22, paddingBottom: 44, gap: 14 }, heroTitle: { fontFamily: 'Sora', fontSize: 25, fontWeight: '800', letterSpacing: -0.5, marginTop: 2 }, heroSub: { fontFamily: 'InstrumentSans', fontSize: 14, lineHeight: 20, marginBottom: 4 },
   quota: { flexDirection: 'row', alignItems: 'center', gap: 9, borderWidth: StyleSheet.hairlineWidth, borderRadius: 13, paddingHorizontal: 13, paddingVertical: 10, marginVertical: 2 }, quotaText: { fontFamily: 'InstrumentSans', fontSize: 12.5, fontWeight: '600', flex: 1 },
   autoMethodWrap: { borderRadius: 20, overflow: 'hidden' }, autoMethod: { minHeight: 96, borderRadius: 20, padding: 17, flexDirection: 'row', alignItems: 'center', gap: 14 }, autoMethodIcon: { width: 48, height: 48, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.16)', alignItems: 'center', justifyContent: 'center' }, autoMethodTitle: { fontFamily: 'Sora', fontSize: 17, fontWeight: '700' }, autoMethodSub: { fontFamily: 'InstrumentSans', fontSize: 12.5, lineHeight: 17, marginTop: 4, opacity: 0.88 },
-  sectionLabel: { fontFamily: 'JetBrainsMono', fontSize: 9.5, fontWeight: '600', letterSpacing: 0.8, marginTop: 6, marginLeft: 3 }, methodList: { borderWidth: 1, borderRadius: 19, overflow: 'hidden' }, methodRow: { minHeight: 76, paddingHorizontal: 14, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', gap: 12 }, methodIcon: { width: 42, height: 42, borderRadius: 14, alignItems: 'center', justifyContent: 'center' }, methodTitle: { fontFamily: 'InstrumentSans', fontSize: 14.5, fontWeight: '700' }, methodSub: { fontFamily: 'InstrumentSans', fontSize: 12.5, lineHeight: 17, marginTop: 2 }, manualLink: { minHeight: 66, flexDirection: 'row', alignItems: 'center', gap: 11, paddingVertical: 11, paddingHorizontal: 13 }, manualText: { fontFamily: 'InstrumentSans', fontSize: 13.5, fontWeight: '700' }, manualSub: { fontFamily: 'InstrumentSans', fontSize: 11.5, marginTop: 2 },
+  sectionLabel: { fontFamily: 'InstrumentSans', fontSize: 13, fontWeight: '600', marginTop: 6, marginLeft: 3 }, methodList: { borderWidth: 1, borderRadius: 19, overflow: 'hidden' }, methodRow: { minHeight: 84, paddingHorizontal: 16, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', gap: 12 }, methodIcon: { width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center' }, methodTitle: { fontFamily: 'InstrumentSans', fontSize: 15, fontWeight: '700' }, methodSub: { fontFamily: 'InstrumentSans', fontSize: 13, lineHeight: 18, marginTop: 3 }, manualLink: { minHeight: 66, flexDirection: 'row', alignItems: 'center', gap: 11, paddingVertical: 11, paddingHorizontal: 13 }, manualText: { fontFamily: 'InstrumentSans', fontSize: 13.5, fontWeight: '700' }, manualSub: { fontFamily: 'InstrumentSans', fontSize: 11.5, marginTop: 2 },
   discoveryHero: { borderWidth: 1, borderRadius: 22, padding: 22, alignItems: 'center', gap: 8, marginBottom: 4 }, successHero: { borderWidth: 1, borderRadius: 22, padding: 22, alignItems: 'center', gap: 8 }, discoveryTitle: { fontFamily: 'Sora', fontSize: 18, fontWeight: '700', textAlign: 'center' }, discoverySub: { fontFamily: 'InstrumentSans', fontSize: 13.5, lineHeight: 19, textAlign: 'center' },
   device: { borderWidth: 1, borderRadius: 17, padding: 13, flexDirection: 'row', alignItems: 'center', gap: 12 }, deviceIcon: { width: 46, height: 46, borderRadius: 14, alignItems: 'center', justifyContent: 'center' }, deviceName: { fontFamily: 'InstrumentSans', fontSize: 15, fontWeight: '700' }, deviceMeta: { fontFamily: 'JetBrainsMono', fontSize: 11.5, marginTop: 2 }, deviceSource: { fontFamily: 'InstrumentSans', fontSize: 11.5, fontWeight: '600', marginTop: 2 },
   scanPrivacy: { fontFamily: 'InstrumentSans', fontSize: 11.5, lineHeight: 16, textAlign: 'center', paddingHorizontal: 16 },
