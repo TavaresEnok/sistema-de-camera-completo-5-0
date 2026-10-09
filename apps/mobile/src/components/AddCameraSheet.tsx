@@ -58,9 +58,9 @@ interface CreatedCamera { id: string; name: string; sourceMode?: SourceMode; rtm
 interface RtmpTarget { fullUrl?: string | null; serverUrl?: string | null; streamKey?: string | null }
 interface PreviewFrame { ok: boolean; imageDataUrl: string | null; reason?: string | null }
 
-// Vazio significa "automático" na interface. O endpoint recebe 554 apenas como
-// primeiro candidato e também testa outras portas RTSP conhecidas/ONVIF.
-const RTSP_PORT_DEFAULT = '';
+// 554 é a porta comum sugerida, não uma porta já detectada.
+// A busca automática usa separadamente os candidatos do servidor.
+const RTSP_PORT_DEFAULT = '554';
 
 export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: AddCameraSheetProps) {
   const { theme } = useTheme();
@@ -70,6 +70,7 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
   const [name, setName] = useState('');
   const [ip, setIp] = useState('');
   const [rtspPort, setRtspPort] = useState(RTSP_PORT_DEFAULT);
+  const [automaticPort, setAutomaticPort] = useState(false);
   const [httpPort, setHttpPort] = useState('80');
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('');
@@ -112,8 +113,8 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
   const scrollRef = useRef<ScrollView>(null);
 
   const quotaFull = !!quota && !quota.canAdd;
-  const draft = { ip, username, password, rtspPort, httpPort, onvifPort, rtspPath };
-  const connectionError = cameraConnectionError(draft);
+  const draft = { ip, username, password, rtspPort: automaticPort ? '' : rtspPort, httpPort, onvifPort, rtspPath };
+  const connectionError = !automaticPort && !rtspPort.trim() ? 'Informe a porta RTSP do vídeo.' : cameraConnectionError(draft);
   const planReady = !!quota?.canAdd && !quotaLoading && !quotaError;
   const canSave = !submitting && planReady && name.trim().length > 0 && (
     sourceMode === 'rtmp_push' || (!connectionError && !!connection?.rtspAuthOk)
@@ -134,6 +135,7 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
     historyRef.current = [];
     setScreen('home'); setSourceMode('rtsp_pull'); setName(''); setIp('');
     setRtspPort(RTSP_PORT_DEFAULT); setHttpPort('80'); setUsername('admin'); setPassword(''); setRtspPath('');
+    setAutomaticPort(false);
     setOnvifPort(''); setOnvifPath(null); setOnvifToken(null);
     setShowPass(false); setManualConnectionNeeded(false); setTorch(false); setQrLocked(false);
     setShowConnectionOptions(false); setIncludeLocation(false);
@@ -268,7 +270,8 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
     invalidateConnection();
     setSourceMode('rtsp_pull'); setIp(device.ip);
     setName(/^(Câmera|Possível câmera) /.test(device.name) ? '' : device.name);
-    setRtspPort(''); setHttpPort('80'); setOnvifPort(''); setRtspPath('');
+    setRtspPort(RTSP_PORT_DEFAULT); setHttpPort('80'); setOnvifPort(''); setRtspPath('');
+    setAutomaticPort(false);
     setUsername('admin'); setPassword('');
     if (device.port === 554 || device.port === 8554) setRtspPort(String(device.port));
     else if (device.port) setHttpPort(String(device.port));
@@ -297,6 +300,7 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
     }
     invalidateConnection();
     setSourceMode('rtsp_pull'); setIp(parsed.ip); setRtspPort(parsed.port ? String(parsed.port) : RTSP_PORT_DEFAULT);
+    setAutomaticPort(false);
     setUsername(parsed.username ?? 'admin');
     setPassword(parsed.password ?? '');
     setRtspPath(parsed.rtspPath ?? '');
@@ -336,7 +340,7 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
       });
       if (operation !== operationRef.current) return;
       setConnection(result);
-      if (result.detectedRtspPort) setRtspPort(String(result.detectedRtspPort));
+      if (result.detectedRtspPort) { setRtspPort(String(result.detectedRtspPort)); setAutomaticPort(false); }
       if (result.detectedRtspPath) setRtspPath(result.detectedRtspPath);
       if (result.detectedOnvifPort) setOnvifPort(String(result.detectedOnvifPort));
       setOnvifPath(result.detectedOnvifPath); setOnvifToken(result.detectedOnvifProfileToken);
@@ -528,6 +532,7 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
                   rtspPort={rtspPort} httpPort={httpPort} onvifPort={onvifPort} rtspPath={rtspPath} showPass={showPass} manualConnectionNeeded={manualConnectionNeeded}
                   checking={checking} submitting={submitting} canSave={canSave}
                   planReady={planReady} showConnectionOptions={showConnectionOptions}
+                  automaticPort={automaticPort} onPortMode={automatic => { invalidateConnection(); setAutomaticPort(automatic); if (!automatic && !rtspPort.trim()) setRtspPort(RTSP_PORT_DEFAULT); }}
                   onToggleOptions={() => setShowConnectionOptions(value => !value)} onPaste={() => void pasteCameraAddress()}
                   onName={setName} onUsername={value => { invalidateConnection(); setUsername(value); }} onPassword={value => { invalidateConnection(); setPassword(value); }}
                   onIp={(value) => { invalidateConnection(); setIp(value); }}
@@ -606,7 +611,7 @@ function HomeStep({ theme, quota, quotaLoading, onDiscover, onQr, onProvision, o
   </>;
 }
 
-function DetailsStep(props: { theme: Theme; sourceMode: SourceMode; ip: string; name: string; username: string; password: string; rtspPort: string; httpPort: string; onvifPort: string; rtspPath: string; showPass: boolean; manualConnectionNeeded: boolean; checking: boolean; submitting: boolean; canSave: boolean; planReady: boolean; showConnectionOptions: boolean; onToggleOptions: () => void; onPaste: () => void; onName: (v: string) => void; onUsername: (v: string) => void; onPassword: (v: string) => void; onIp: (v: string) => void; onPort: (v: string) => void; onHttpPort: (v: string) => void; onOnvifPort: (v: string) => void; onPath: (v: string) => void; onTogglePass: () => void; onTest: () => void; onSubmit: () => void }) {
+function DetailsStep(props: { theme: Theme; sourceMode: SourceMode; ip: string; name: string; username: string; password: string; rtspPort: string; automaticPort: boolean; onPortMode: (automatic: boolean) => void; httpPort: string; onvifPort: string; rtspPath: string; showPass: boolean; manualConnectionNeeded: boolean; checking: boolean; submitting: boolean; canSave: boolean; planReady: boolean; showConnectionOptions: boolean; onToggleOptions: () => void; onPaste: () => void; onName: (v: string) => void; onUsername: (v: string) => void; onPassword: (v: string) => void; onIp: (v: string) => void; onPort: (v: string) => void; onHttpPort: (v: string) => void; onOnvifPort: (v: string) => void; onPath: (v: string) => void; onTogglePass: () => void; onTest: () => void; onSubmit: () => void }) {
   const { theme, sourceMode, ip, name, username, password, rtspPort, httpPort, onvifPort, rtspPath, showPass, manualConnectionNeeded, checking, submitting, canSave } = props;
   if (sourceMode === 'rtmp_push') {
     return <>
@@ -618,28 +623,30 @@ function DetailsStep(props: { theme: Theme; sourceMode: SourceMode; ip: string; 
   }
   return <>
     <Text style={[styles.heroTitle, { color: theme.text }]}>{ip ? 'Conectar à câmera' : 'Adicionar pelo endereço'}</Text>
-    <Text style={[styles.heroSub, { color: theme.textSub }]}>Use o usuário e a senha da própria câmera. O servidor vai testar o vídeo antes de cadastrar.</Text>
+    <Text style={[styles.heroSub, { color: theme.textSub }]}>Informe os dados da câmera. Se recebeu portas diferentes do instalador, use os valores que ele passou.</Text>
     <SecondaryButton theme={theme} icon="share" label="Colar endereço do vídeo" onPress={props.onPaste} />
     <View style={[styles.formCard, { backgroundColor: theme.surface, borderColor: theme.border }]}>
       <Field label="Nome da câmera" theme={theme}><TextInput accessibilityLabel="Nome da câmera" value={name} onChangeText={props.onName} maxLength={100} placeholder="Ex.: Portão de casa" placeholderTextColor={theme.textMuted} style={[styles.inputText, { color: theme.text }]} /></Field>
       <Field label="Endereço da câmera (IP)" theme={theme}><TextInput accessibilityLabel="Endereço IP da câmera" value={ip} onChangeText={props.onIp} maxLength={45} keyboardType="url" autoCapitalize="none" autoCorrect={false} placeholder="Ex.: 192.168.0.100" placeholderTextColor={theme.textMuted} style={[styles.inputText, { color: theme.text }]} /></Field>
       <Field label="Usuário" theme={theme}><TextInput accessibilityLabel="Usuário da câmera" value={username} onChangeText={props.onUsername} maxLength={128} autoCapitalize="none" autoCorrect={false} placeholder="Geralmente admin" placeholderTextColor={theme.textMuted} style={[styles.inputText, { color: theme.text }]} /></Field>
       <Field label="Senha da câmera" theme={theme}><View style={styles.inputRow}><TextInput accessibilityLabel="Senha da câmera" value={password} onChangeText={props.onPassword} maxLength={512} autoCapitalize="none" autoCorrect={false} autoComplete="off" textContentType="none" secureTextEntry={!showPass} placeholder="Senha ou chave de acesso" placeholderTextColor={theme.textMuted} style={[styles.inputText, { color: theme.text, flex: 1 }]} /><Pressable accessibilityRole="button" accessibilityLabel={showPass ? 'Ocultar senha' : 'Mostrar senha'} onPress={props.onTogglePass} hitSlop={10}><Icon name="eye" size={19} color={theme.textMuted} /></Pressable></View></Field>
+      <View style={{ gap: 8 }}>
+        <Text style={[styles.label, { color: theme.textSub }]}>Porta do vídeo</Text>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+          {([{ label: 'Informar porta', automatic: false }, { label: 'Buscar automaticamente', automatic: true }] as const).map(option => {
+            const selected = option.automatic === props.automaticPort;
+            return <Pressable key={option.label} accessibilityRole="radio" accessibilityLabel={option.label} accessibilityState={{ checked: selected }} onPress={() => props.onPortMode(option.automatic)} style={[styles.portChoice, { borderColor: selected ? theme.accent : theme.border, backgroundColor: selected ? theme.accentBg : theme.surface }]}><Text style={[styles.portChoiceText, { color: selected ? theme.accent : theme.textSub }]}>{option.label}</Text></Pressable>;
+          })}
+        </View>
+      </View>
+      {!props.automaticPort ? <Field label="Porta RTSP (vídeo)" theme={theme}><TextInput accessibilityLabel="Porta RTSP do vídeo" value={rtspPort} onChangeText={(value) => props.onPort(value.replace(/[^0-9]/g, '').slice(0, 5))} keyboardType="number-pad" maxLength={5} placeholder="Geralmente 554" placeholderTextColor={theme.textMuted} style={[styles.inputText, { color: theme.text }]} /></Field> : <Text style={[styles.heroSub, { color: theme.textSub }]}>Vamos procurar a porta. Se não encontrar, escolha Informar porta.</Text>}
+      <Field label="Porta HTTP (acesso)" theme={theme}><TextInput accessibilityLabel="Porta HTTP de acesso" value={httpPort} onChangeText={(value) => props.onHttpPort(value.replace(/[^0-9]/g, '').slice(0, 5))} keyboardType="number-pad" maxLength={5} placeholder="Geralmente 80" placeholderTextColor={theme.textMuted} style={[styles.inputText, { color: theme.text }]} /></Field>
     </View>
-    {!manualConnectionNeeded ? <View style={[styles.autoConfig, { backgroundColor: theme.accentBg }]}>
-      <View style={[styles.autoConfigIcon, { backgroundColor: theme.surface }]}><Icon name="search" size={18} color={theme.accent} /></View>
-      <View style={{ flex: 1 }}><Text style={[styles.autoConfigTitle, { color: theme.text }]}>Porta e vídeo automáticos</Text><Text style={[styles.autoConfigSub, { color: theme.textSub }]}>Vamos testar as portas RTSP mais usadas e os perfis da câmera.</Text></View>
-    </View> : <InfoBanner theme={theme} text="Confira os dados de acesso. Se o instalador passou uma porta diferente, informe em Portas e caminho do vídeo." />}
-    <Pressable accessibilityRole="button" accessibilityState={{ expanded: props.showConnectionOptions || manualConnectionNeeded }} onPress={props.onToggleOptions} style={[styles.choiceRow, { backgroundColor: theme.surface, borderColor: theme.border }]}><Icon name="settings" size={20} color={theme.accent} /><Text style={[styles.methodTitle, { color: theme.text, flex: 1 }]}>Portas e caminho do vídeo</Text><Icon name="chevronDown" size={18} color={theme.textSub} /></Pressable>
-    {props.showConnectionOptions || manualConnectionNeeded ? <View style={[styles.manualConnection, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-      <Text style={[styles.heroSub, { color: theme.textSub }]}>Preencha se você já conhece esses dados. A porta do vídeo em branco permite a busca automática.</Text>
-      <Field label="Porta RTSP" theme={theme}><TextInput accessibilityLabel="Porta RTSP" value={rtspPort} onChangeText={(value) => props.onPort(value.replace(/[^0-9]/g, '').slice(0, 5))} keyboardType="number-pad" placeholder="Ex.: 554" placeholderTextColor={theme.textMuted} style={[styles.inputText, { color: theme.text }]} /></Field>
+    <Pressable accessibilityRole="button" accessibilityState={{ expanded: props.showConnectionOptions }} onPress={props.onToggleOptions} style={[styles.choiceRow, { backgroundColor: theme.surface, borderColor: theme.border }]}><Icon name="settings" size={20} color={theme.accent} /><Text style={[styles.methodTitle, { color: theme.text, flex: 1 }]}>Outros dados (opcional)</Text><Icon name="chevronDown" size={18} color={theme.textSub} /></Pressable>
+    {props.showConnectionOptions ? <View style={[styles.manualConnection, { backgroundColor: theme.surface, borderColor: theme.border }]}>
       <Field label="Caminho do vídeo (se houver)" theme={theme}><TextInput accessibilityLabel="Caminho RTSP do vídeo" value={rtspPath} onChangeText={props.onPath} maxLength={512} autoCapitalize="none" autoCorrect={false} placeholder="Ex.: /cam/realmonitor" placeholderTextColor={theme.textMuted} style={[styles.inputText, { color: theme.text }]} /></Field>
-      <Field label="Porta de acesso (HTTP)" theme={theme}><TextInput accessibilityLabel="Porta de acesso HTTP" value={httpPort} onChangeText={(value) => props.onHttpPort(value.replace(/[^0-9]/g, '').slice(0, 5))} keyboardType="number-pad" placeholder="Geralmente 80" placeholderTextColor={theme.textMuted} style={[styles.inputText, { color: theme.text }]} /></Field>
       <Field label="Porta ONVIF (opcional)" theme={theme}><TextInput accessibilityLabel="Porta ONVIF opcional" value={onvifPort} onChangeText={(value) => props.onOnvifPort(value.replace(/[^0-9]/g, '').slice(0, 5))} keyboardType="number-pad" placeholder="Usar a porta de acesso" placeholderTextColor={theme.textMuted} style={[styles.inputText, { color: theme.text }]} /></Field>
     </View> : null}
-    {!ip ? <InfoBanner theme={theme} text="Não sabe o endereço? Volte e escolha Encontrar câmeras ou Ler QR Code." /> : null}
-    <InfoBanner theme={theme} text="Encontrar no Wi-Fi não garante acesso pelo servidor. Se a câmera estiver em outro local, o instalador precisa liberar a conexão." />
   </>;
 }
 
@@ -672,6 +679,7 @@ function InfoBanner({ theme, text }: { theme: any; text: string }) { return <Vie
 function ErrorBanner({ theme, text }: { theme: Theme; text: string }) { return <View accessibilityRole="alert" accessibilityLiveRegion="polite" style={[styles.banner, { backgroundColor: theme.dangerBg }]}><Icon name="alert" size={17} color={theme.danger} /><Text style={[styles.bannerText, { color: theme.danger }]}>{text}</Text></View>; }
 
 const styles = StyleSheet.create({
+  portChoice: { flex: 1, minWidth: 120, minHeight: 44, borderRadius: 12, borderWidth: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 10 }, portChoiceText: { fontFamily: 'InstrumentSans', fontSize: 13, fontWeight: '600', textAlign: 'center' },
   homeHero: { gap: 8, marginBottom: 4 }, homeIcon: { width: 60, height: 60, borderRadius: 20, alignItems: 'center', justifyContent: 'center', marginBottom: 4 },
   progress: { flexDirection: 'row', gap: 12, width: '100%', maxWidth: 680, alignSelf: 'center', paddingHorizontal: 20, paddingTop: 16, paddingBottom: 4 }, progressItem: { flex: 1, gap: 6 }, progressLine: { height: 3, borderRadius: 3 }, progressLabel: { fontFamily: 'InstrumentSans', fontSize: 12, fontWeight: '600' },
   footer: { width: '100%', maxWidth: 680, alignSelf: 'center', borderTopWidth: StyleSheet.hairlineWidth, paddingHorizontal: 20, paddingTop: 10, paddingBottom: 8, gap: 8 }, footerHint: { textAlign: 'center', fontFamily: 'InstrumentSans', fontSize: 12, lineHeight: 17 }, choiceRow: { flexDirection: 'row', alignItems: 'center', gap: 12, borderWidth: 1, borderRadius: 16, padding: 14, minHeight: 56 },

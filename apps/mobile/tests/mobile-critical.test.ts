@@ -36,13 +36,13 @@ test('android security: build bloqueia permissões e backup inseguros', () => {
   assert(plugin.includes("android:requestLegacyExternalStorage'] = 'false'"), 'storage legado deve ser desativado');
 });
 
-test('cadastro de câmera: porta automática e correção manual acessível antes e depois da falha', () => {
+test('cadastro de câmera: portas visíveis e busca automática selecionável', () => {
   const source = readFileSync('src/components/AddCameraSheet.tsx', 'utf8');
   assert(!source.includes('Configuração avançada'), 'não deve esconder dados necessários em Configuração avançada');
-  assert(source.includes("const RTSP_PORT_DEFAULT = '';"), 'porta deve iniciar em modo automático, sem fingir que 554 já foi detectada');
-  assert(source.includes('Porta e vídeo automáticos'), 'a tela deve explicar a detecção automática');
-  assert(source.includes('props.showConnectionOptions || manualConnectionNeeded'), 'as portas devem estar disponíveis antes do teste e abrir quando ele falhar');
-  assert(source.includes('Porta RTSP'), 'a correção manual deve permitir informar a porta RTSP');
+  assert(source.includes("const RTSP_PORT_DEFAULT = '554';"), 'a porta comum deve estar visível desde o início');
+  assert(source.includes("label: 'Informar porta'") && source.includes("label: 'Buscar automaticamente'"), 'usuário precisa poder escolher entre os dois modos');
+  assert(source.indexOf('label="Porta RTSP (vídeo)"') < source.indexOf('Outros dados (opcional)'), 'porta RTSP não pode ficar escondida nos dados opcionais');
+  assert(source.indexOf('label="Porta HTTP (acesso)"') < source.indexOf('Outros dados (opcional)'), 'porta HTTP não pode ficar escondida nos dados opcionais');
   assert(source.includes('Caminho do vídeo (se houver)'), 'a correção manual deve permitir informar o caminho do stream');
 });
 
