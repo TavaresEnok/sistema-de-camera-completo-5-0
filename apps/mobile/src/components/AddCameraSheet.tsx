@@ -35,7 +35,7 @@ interface AddCameraSheetProps {
 }
 
 type Quota = { used: number; limit: number; canAdd: boolean };
-type Screen = 'home' | 'discover' | 'qr' | 'provision' | 'details' | 'review' | 'success';
+type Screen = 'home' | 'discover' | 'qr' | 'details' | 'review' | 'success';
 type SourceMode = 'rtsp_pull' | 'rtmp_push';
 
 interface ConnectionResult {
@@ -423,10 +423,10 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
   };
 
   const title = useMemo(() => ({
-    home: 'Adicionar câmera', discover: 'Câmeras por perto', qr: 'Ler QR Code',
-    provision: 'Conectar ao Wi-Fi', details: 'Dados da câmera',
+    home: 'Cadastrar câmera', discover: 'Câmeras por perto', qr: 'Ler QR Code',
+    details: sourceMode === 'rtmp_push' ? 'Gerar link para câmera' : 'Dados da câmera',
     review: 'Conferir câmera', success: 'Câmera adicionada',
-  })[screen], [screen]);
+  })[screen], [screen, sourceMode]);
 
   const goBack = () => {
     if (submittingRef.current) return;
@@ -475,12 +475,12 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
                 <Icon name="chevronLeft" size={20} color={theme.text} />
               </Pressable>
             ) : <View style={styles.headerBtn} />}
-            <Text style={[styles.headerTitle, { color: theme.text }]} accessibilityRole="header">{title}</Text>
+            <Text style={[styles.headerTitle, { color: theme.text }]} accessibilityRole="header" numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>{title}</Text>
             <Pressable accessibilityRole="button" accessibilityLabel="Fechar cadastro de câmera" accessibilityState={{ disabled: submitting }} disabled={submitting} style={[styles.headerBtn, { backgroundColor: theme.surface, opacity: submitting ? 0.45 : 1 }]} onPress={closeSheet}>
               <Icon name="close" size={18} color={theme.textSub} />
             </Pressable>
           </View>
-          {screen !== 'home' && screen !== 'success' && screen !== 'provision' ? <SetupProgress theme={theme} screen={screen} /> : null}
+          {screen !== 'home' && screen !== 'success' ? <SetupProgress theme={theme} screen={screen} /> : null}
 
           {screen === 'qr' && cameraPermission?.granted ? (
             <View style={styles.qrRoot}>
@@ -500,7 +500,7 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
               {quotaError && screen !== 'success' ? <View style={{ gap: 8 }}><ErrorBanner theme={theme} text="Não conseguimos verificar seu limite de câmeras. Tente novamente para continuar." /><SecondaryButton theme={theme} icon="clock" label={quotaLoading ? 'Verificando…' : 'Verificar meu plano'} disabled={quotaLoading} onPress={() => void retryQuota()} /></View> : null}
               {quotaFull && screen !== 'home' && screen !== 'success' ? <QuotaBanner theme={theme} loading={false} quota={quota} /> : null}
               {screen === 'home' ? <HomeStep theme={theme} quota={quota} quotaLoading={quotaLoading}
-                onDiscover={() => void startDiscovery()} onQr={() => void openQr()} onProvision={() => navigate('provision')}
+                onDiscover={() => void startDiscovery()} onQr={() => void openQr()}
                 onRemote={() => { setSourceMode('rtmp_push'); setName(''); navigate('details'); }}
                 onManual={() => { setSourceMode('rtsp_pull'); setManualConnectionNeeded(false); navigate('details'); }} /> : null}
 
@@ -514,19 +514,6 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
                   {devices.map((device) => <DeviceCard key={device.id} theme={theme} device={device} onPress={() => chooseDevice(device)} />)}
                   {discoveryWarnings.length ? <InfoBanner theme={theme} text="Alguns métodos de busca não responderam. Você ainda pode tentar novamente ou cadastrar pelo endereço." /> : null}
                   {!discovering ? <View style={{ gap: 10 }}><SecondaryButton theme={theme} icon="search" label="Buscar novamente" onPress={() => void startDiscovery()} /><SecondaryButton theme={theme} icon="wifi" label="Busca completa nesta rede" onPress={() => void startFullScan()} /><Text style={[styles.scanPrivacy, { color: theme.textMuted }]}>Verifica somente endereços privados do Wi-Fi atual. Nenhuma senha é enviada.</Text><SecondaryButton theme={theme} icon="edit" label="Informar endereço" onPress={() => navigate('details')} /></View> : null}
-                </>
-              ) : null}
-
-              {screen === 'provision' ? (
-                <>
-                  <Text style={[styles.heroTitle, { color: theme.text }]}>Primeiro, conecte ao Wi-Fi</Text>
-                  <Text style={[styles.heroSub, { color: theme.textSub }]}>Use o aplicativo do fabricante para conectar a câmera à sua rede. Depois, volte aqui para adicioná-la.</Text>
-                  <Step theme={theme} number="1" title="Ligue a câmera" text="Confira se ela recebe energia. Se já estiver funcionando, mantenha a configuração atual." />
-                  <Step theme={theme} number="2" title="Conecte à sua rede" text="Siga o guia do fabricante. Alguns modelos precisam liberar a opção RTSP ou ONVIF para compartilhar o vídeo." />
-                  <Step theme={theme} number="3" title="Volte para o S2Cam" text="Conecte o celular ao mesmo Wi-Fi e procure a câmera abaixo." />
-                  <InfoBanner theme={theme} text="Este guia ajuda na preparação. A conexão inicial ao Wi-Fi é feita pelo aplicativo do fabricante." />
-                  <PrimaryButton theme={theme} icon="search" label="A câmera já está conectada" onPress={() => void startDiscovery()} />
-                  <SecondaryButton theme={theme} icon="qrCode" label="Ler QR da câmera" onPress={() => void openQr()} />
                 </>
               ) : null}
 
@@ -589,26 +576,31 @@ function SetupProgress({ theme, screen }: { theme: Theme; screen: Screen }) {
   </View>;
 }
 
-function HomeStep({ theme, quota, quotaLoading, onDiscover, onQr, onProvision, onRemote, onManual }: { theme: Theme; quota: Quota | null; quotaLoading: boolean; onDiscover: () => void; onQr: () => void; onProvision: () => void; onRemote: () => void; onManual: () => void }) {
+function HomeStep({ theme, quota, quotaLoading, onDiscover, onQr, onRemote, onManual }: { theme: Theme; quota: Quota | null; quotaLoading: boolean; onDiscover: () => void; onQr: () => void; onRemote: () => void; onManual: () => void }) {
   return <>
-    <View style={styles.homeHero}><View style={[styles.homeIcon, { backgroundColor: theme.accentBg }]}><Icon name="camera" size={30} color={theme.accent} /></View><Text style={[styles.heroTitle, { color: theme.text }]}>Vamos conectar sua câmera</Text><Text style={[styles.heroSub, { color: theme.textSub }]}>Escolha como deseja adicionar. Você poderá conferir tudo antes de concluir.</Text></View>
+    <View style={styles.homeHero}>
+      <View style={[styles.homeIcon, { backgroundColor: theme.accentBg }]}><Icon name="camera" size={28} color={theme.accent} /></View>
+      <Text style={[styles.homeTitle, { color: theme.text }]} accessibilityRole="header">Adicione sua câmera</Text>
+      <Text style={[styles.homeSubtitle, { color: theme.textSub }]}>Escolha como deseja conectar.</Text>
+    </View>
     <QuotaBanner theme={theme} loading={quotaLoading} quota={quota} />
-    <Pressable accessibilityRole="button" accessibilityLabel="Adicionar câmera por RTSP" style={styles.autoMethodWrap} onPress={onManual}>
+    <Pressable accessibilityRole="button" accessibilityLabel="Cadastrar câmera" accessibilityHint="Informe o endereço e os dados de acesso" style={styles.autoMethodWrap} onPress={onManual}>
       <LinearGradient colors={[theme.accent, theme.accentDark]} style={styles.autoMethod}>
         <View style={styles.autoMethodIcon}><Icon name="camera" size={27} color={theme.textOnAccent} /></View>
-        <View style={{ flex: 1 }}>
-          <Text style={[styles.autoMethodTitle, { color: theme.textOnAccent }]}>Tenho o endereço da câmera</Text>
+        <View style={styles.methodCopy}>
+          <Text style={[styles.autoMethodTitle, { color: theme.textOnAccent }]}>Cadastrar câmera</Text>
           <Text style={[styles.autoMethodSub, { color: theme.textOnAccent }]}>Informe o IP e os dados de acesso</Text>
         </View>
         <Icon name="chevronRight" size={20} color={theme.textOnAccent} />
       </LinearGradient>
     </Pressable>
+    <View style={[styles.methodList, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+      <MethodRow theme={theme} icon="radio" title="Gerar link para câmera" subtitle="Coloque o link na opção RTMP da câmera" onPress={onRemote} last />
+    </View>
     <Text style={[styles.sectionLabel, { color: theme.textSub }]}>Ou escolha outra forma</Text>
     <View style={[styles.methodList, { backgroundColor: theme.surface, borderColor: theme.border }]}>
       <MethodRow theme={theme} icon="search" title="Procurar no meu Wi-Fi" subtitle="Encontre câmeras na mesma rede do celular" onPress={onDiscover} />
-      <MethodRow theme={theme} icon="qrCode" title="Ler QR Code" subtitle="QR com endereço IP ou RTSP" onPress={onQr} />
-      <MethodRow theme={theme} icon="radio" title="Receber o envio da câmera" subtitle="Crie um endereço para envio RTMP" onPress={onRemote} />
-      <MethodRow theme={theme} icon="wifi" title="Preciso conectar ao Wi-Fi" subtitle="Veja como preparar a câmera" onPress={onProvision} last />
+      <MethodRow theme={theme} icon="qrCode" title="Ler QR Code" subtitle="QR com endereço IP ou RTSP" onPress={onQr} last />
     </View>
     <InfoBanner theme={theme} text="As câmeras adicionadas por aqui são privadas e ficam vinculadas à sua conta." />
   </>;
@@ -618,8 +610,8 @@ function DetailsStep(props: { theme: Theme; sourceMode: SourceMode; ip: string; 
   const { theme, sourceMode, ip, name, username, password, rtspPort, httpPort, onvifPort, rtspPath, showPass, manualConnectionNeeded, checking, submitting, canSave } = props;
   if (sourceMode === 'rtmp_push') {
     return <>
-      <Text style={[styles.heroTitle, { color: theme.text }]}>Receba o vídeo da câmera</Text>
-      <Text style={[styles.heroSub, { color: theme.textSub }]}>A câmera envia o vídeo ao S2Cam. Depois de cadastrar, você copia o endereço para a configuração RTMP dela.</Text>
+      <Text style={[styles.heroTitle, { color: theme.text }]}>Gerar link para câmera</Text>
+      <Text style={[styles.heroSub, { color: theme.textSub }]}>Dê um nome à câmera. Ao concluir, copie o link e coloque na opção RTMP dela.</Text>
       <Field label="Nome da câmera" theme={theme}><TextInput accessibilityLabel="Nome da câmera" value={name} onChangeText={props.onName} maxLength={100} returnKeyType="done" placeholder="Ex.: Entrada principal" placeholderTextColor={theme.textMuted} style={[styles.inputText, { color: theme.text }]} /></Field>
       <InfoBanner theme={theme} text="Confira se sua câmera oferece envio RTMP. Se ela não tiver essa opção, use o cadastro pelo endereço IP." />
     </>;
@@ -660,7 +652,7 @@ function DeviceCard({ theme, device, onPress }: { theme: any; device: Discovered
 }
 
 function MethodRow({ theme, icon, title, subtitle, last, onPress }: { theme: any; icon: IconName; title: string; subtitle: string; last?: boolean; onPress: () => void }) {
-  return <Pressable accessibilityRole="button" style={[styles.methodRow, !last && { borderBottomColor: theme.border, borderBottomWidth: StyleSheet.hairlineWidth }]} onPress={onPress}><View style={[styles.methodIcon, { backgroundColor: theme.accentBg }]}><Icon name={icon} size={21} color={theme.accent} /></View><View style={{ flex: 1 }}><Text style={[styles.methodTitle, { color: theme.text }]}>{title}</Text><Text style={[styles.methodSub, { color: theme.textSub }]}>{subtitle}</Text></View><Icon name="chevronRight" size={18} color={theme.textMuted} /></Pressable>;
+  return <Pressable accessibilityRole="button" accessibilityLabel={title} accessibilityHint={subtitle} style={[styles.methodRow, !last && { borderBottomColor: theme.border, borderBottomWidth: StyleSheet.hairlineWidth }]} onPress={onPress}><View style={[styles.methodIcon, { backgroundColor: theme.accentBg }]}><Icon name={icon} size={21} color={theme.accent} /></View><View style={styles.methodCopy}><Text style={[styles.methodTitle, { color: theme.text }]}>{title}</Text><Text style={[styles.methodSub, { color: theme.textSub }]}>{subtitle}</Text></View><Icon name="chevronRight" size={18} color={theme.textMuted} /></Pressable>;
 }
 
 function QuotaBanner({ theme, loading, quota }: { theme: any; loading: boolean; quota: Quota | null }) {
@@ -674,7 +666,6 @@ function QuotaBanner({ theme, loading, quota }: { theme: any; loading: boolean; 
 }
 
 function Field({ label, theme, children }: { label: string; theme: any; children: React.ReactNode }) { return <View style={styles.field}><Text style={[styles.label, { color: theme.textMuted }]}>{label}</Text><View style={[styles.input, { backgroundColor: theme.surface, borderColor: theme.border }]}>{children}</View></View>; }
-function Step({ theme, number, title, text }: { theme: any; number: string; title: string; text: string }) { return <View style={styles.step}><View style={[styles.stepNumber, { backgroundColor: theme.accent }]}><Text style={styles.stepNumberText}>{number}</Text></View><View style={{ flex: 1 }}><Text style={[styles.stepTitle, { color: theme.text }]}>{title}</Text><Text style={[styles.stepText, { color: theme.textSub }]}>{text}</Text></View></View>; }
 function SummaryRow({ theme, label, value, last }: { theme: any; label: string; value: string; last?: boolean }) { return <View style={[styles.summaryRow, !last && { borderBottomColor: theme.border, borderBottomWidth: StyleSheet.hairlineWidth }]}><Text style={[styles.summaryLabel, { color: theme.textSub }]}>{label}</Text><Text style={[styles.summaryValue, { color: theme.text }]} numberOfLines={2}>{value}</Text></View>; }
 function PrimaryButton({ theme, icon, label, loading, disabled, onPress }: { theme: any; icon: IconName; label: string; loading?: boolean; disabled?: boolean; onPress: () => void }) { return <Pressable accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ disabled: !!disabled, busy: !!loading }} disabled={disabled || loading} onPress={onPress} style={{ opacity: disabled ? 0.45 : 1 }}><LinearGradient colors={[theme.accent, theme.accentDark]} style={styles.primary}>{loading ? <ActivityIndicator color={theme.textOnAccent} /> : <><Icon name={icon} size={18} color={theme.textOnAccent} /><Text style={[styles.primaryText, { color: theme.textOnAccent }]}>{label}</Text></>}</LinearGradient></Pressable>; }
 function SecondaryButton({ theme, icon, label, disabled, onPress }: { theme: Theme; icon: IconName; label: string; disabled?: boolean; onPress: () => void }) { return <Pressable accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ disabled: !!disabled }} disabled={disabled} onPress={onPress} style={[styles.secondary, { backgroundColor: theme.surface, borderColor: theme.border, opacity: disabled ? 0.45 : 1 }]}><Icon name={icon} size={17} color={theme.textSub} /><Text style={[styles.secondaryText, { color: theme.text }]}>{label}</Text></Pressable>; }
@@ -683,19 +674,21 @@ function ErrorBanner({ theme, text }: { theme: Theme; text: string }) { return <
 
 const styles = StyleSheet.create({
   portChoice: { flex: 1, minWidth: 120, minHeight: 44, borderRadius: 12, borderWidth: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 10 }, portChoiceText: { fontFamily: 'InstrumentSans', fontSize: 13, fontWeight: '600', textAlign: 'center' },
-  homeHero: { gap: 8, marginBottom: 4 }, homeIcon: { width: 60, height: 60, borderRadius: 20, alignItems: 'center', justifyContent: 'center', marginBottom: 4 },
+  homeHero: { alignItems: 'center', gap: 6, marginBottom: 4 }, homeIcon: { width: 56, height: 56, flexShrink: 0, borderRadius: 18, alignItems: 'center', justifyContent: 'center', marginBottom: 4 },
+  homeTitle: { alignSelf: 'stretch', fontFamily: 'Sora', fontSize: 22, lineHeight: 30, fontWeight: '700', textAlign: 'center' },
+  homeSubtitle: { alignSelf: 'stretch', fontFamily: 'InstrumentSans', fontSize: 14, lineHeight: 20, textAlign: 'center' },
+  methodCopy: { flex: 1, minWidth: 0, flexShrink: 1 },
   progress: { flexDirection: 'row', gap: 12, width: '100%', maxWidth: 680, alignSelf: 'center', paddingHorizontal: 20, paddingTop: 16, paddingBottom: 4 }, progressItem: { flex: 1, gap: 6 }, progressLine: { height: 3, borderRadius: 3 }, progressLabel: { fontFamily: 'InstrumentSans', fontSize: 12, fontWeight: '600' },
   footer: { width: '100%', maxWidth: 680, alignSelf: 'center', borderTopWidth: StyleSheet.hairlineWidth, paddingHorizontal: 20, paddingTop: 10, paddingBottom: 8, gap: 8 }, footerHint: { textAlign: 'center', fontFamily: 'InstrumentSans', fontSize: 12, lineHeight: 17 }, choiceRow: { flexDirection: 'row', alignItems: 'center', gap: 12, borderWidth: 1, borderRadius: 16, padding: 14, minHeight: 56 },
-  safe: { flex: 1 }, header: { minHeight: 64, borderBottomWidth: StyleSheet.hairlineWidth, paddingHorizontal: 16, paddingVertical: 8, gap: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, headerBtn: { width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center' }, headerTitle: { fontFamily: 'Sora', fontSize: 17, fontWeight: '700', flex: 1, textAlign: 'center' },
+  safe: { flex: 1 }, header: { minHeight: 64, borderBottomWidth: StyleSheet.hairlineWidth, paddingHorizontal: 16, paddingVertical: 8, gap: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, headerBtn: { width: 44, height: 44, flexShrink: 0, borderRadius: 14, alignItems: 'center', justifyContent: 'center' }, headerTitle: { fontFamily: 'Sora', fontSize: 17, fontWeight: '700', flex: 1, minWidth: 0, textAlign: 'center' },
   content: { width: '100%', maxWidth: 680, alignSelf: 'center', paddingHorizontal: 20, paddingTop: 22, paddingBottom: 44, gap: 14 }, heroTitle: { fontFamily: 'Sora', fontSize: 25, fontWeight: '800', letterSpacing: -0.5, marginTop: 2 }, heroSub: { fontFamily: 'InstrumentSans', fontSize: 14, lineHeight: 20, marginBottom: 4 },
   quota: { flexDirection: 'row', alignItems: 'center', gap: 9, borderWidth: StyleSheet.hairlineWidth, borderRadius: 13, paddingHorizontal: 13, paddingVertical: 10, marginVertical: 2 }, quotaText: { fontFamily: 'InstrumentSans', fontSize: 12.5, fontWeight: '600', flex: 1 },
-  autoMethodWrap: { borderRadius: 20, overflow: 'hidden' }, autoMethod: { minHeight: 96, borderRadius: 20, padding: 17, flexDirection: 'row', alignItems: 'center', gap: 14 }, autoMethodIcon: { width: 48, height: 48, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.16)', alignItems: 'center', justifyContent: 'center' }, autoMethodTitle: { fontFamily: 'Sora', fontSize: 17, fontWeight: '700' }, autoMethodSub: { fontFamily: 'InstrumentSans', fontSize: 12.5, lineHeight: 17, marginTop: 4, opacity: 0.88 },
+  autoMethodWrap: { borderRadius: 20, overflow: 'hidden' }, autoMethod: { minHeight: 96, borderRadius: 20, padding: 14, flexDirection: 'row', alignItems: 'center', gap: 10 }, autoMethodIcon: { width: 42, height: 42, flexShrink: 0, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.16)', alignItems: 'center', justifyContent: 'center' }, autoMethodTitle: { fontFamily: 'Sora', fontSize: 17, fontWeight: '700' }, autoMethodSub: { fontFamily: 'InstrumentSans', fontSize: 12.5, lineHeight: 17, marginTop: 4, opacity: 0.88 },
   sectionLabel: { fontFamily: 'InstrumentSans', fontSize: 13, fontWeight: '600', marginTop: 6, marginLeft: 3 }, methodList: { borderWidth: 1, borderRadius: 19, overflow: 'hidden' }, methodRow: { minHeight: 84, paddingHorizontal: 16, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', gap: 12 }, methodIcon: { width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center' }, methodTitle: { fontFamily: 'InstrumentSans', fontSize: 15, fontWeight: '700' }, methodSub: { fontFamily: 'InstrumentSans', fontSize: 13, lineHeight: 18, marginTop: 3 }, manualLink: { minHeight: 66, flexDirection: 'row', alignItems: 'center', gap: 11, paddingVertical: 11, paddingHorizontal: 13 }, manualText: { fontFamily: 'InstrumentSans', fontSize: 13.5, fontWeight: '700' }, manualSub: { fontFamily: 'InstrumentSans', fontSize: 11.5, marginTop: 2 },
   discoveryHero: { borderWidth: 1, borderRadius: 22, padding: 22, alignItems: 'center', gap: 8, marginBottom: 4 }, successHero: { borderWidth: 1, borderRadius: 22, padding: 22, alignItems: 'center', gap: 8 }, discoveryTitle: { fontFamily: 'Sora', fontSize: 18, fontWeight: '700', textAlign: 'center' }, discoverySub: { fontFamily: 'InstrumentSans', fontSize: 13.5, lineHeight: 19, textAlign: 'center' },
   device: { borderWidth: 1, borderRadius: 17, padding: 13, flexDirection: 'row', alignItems: 'center', gap: 12 }, deviceIcon: { width: 46, height: 46, borderRadius: 14, alignItems: 'center', justifyContent: 'center' }, deviceName: { fontFamily: 'InstrumentSans', fontSize: 15, fontWeight: '700' }, deviceMeta: { fontFamily: 'JetBrainsMono', fontSize: 11.5, marginTop: 2 }, deviceSource: { fontFamily: 'InstrumentSans', fontSize: 11.5, fontWeight: '600', marginTop: 2 },
   scanPrivacy: { fontFamily: 'InstrumentSans', fontSize: 11.5, lineHeight: 16, textAlign: 'center', paddingHorizontal: 16 },
   formCard: { borderWidth: 1, borderRadius: 19, padding: 14, gap: 14 }, field: { gap: 7 }, label: { fontFamily: 'InstrumentSans', fontSize: 12.5, fontWeight: '600' }, input: { minHeight: 52, borderRadius: 13, borderWidth: 1, paddingHorizontal: 14, justifyContent: 'center' }, inputRow: { flexDirection: 'row', alignItems: 'center' }, inputText: { fontFamily: 'InstrumentSans', fontSize: 15, fontWeight: '600', padding: 0 }, autoConfig: { minHeight: 72, borderRadius: 16, padding: 13, flexDirection: 'row', alignItems: 'center', gap: 12 }, autoConfigIcon: { width: 40, height: 40, borderRadius: 13, alignItems: 'center', justifyContent: 'center' }, autoConfigTitle: { fontFamily: 'InstrumentSans', fontSize: 13.5, fontWeight: '700' }, autoConfigSub: { fontFamily: 'InstrumentSans', fontSize: 12, lineHeight: 16, marginTop: 2 }, manualConnection: { borderWidth: 1, borderRadius: 18, padding: 14, gap: 14 }, manualConnectionHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 }, manualConnectionTitle: { fontFamily: 'InstrumentSans', fontSize: 14, fontWeight: '700' }, manualConnectionSub: { fontFamily: 'InstrumentSans', fontSize: 12, lineHeight: 17, marginTop: 3 },
-  step: { flexDirection: 'row', gap: 13, paddingVertical: 7 }, stepNumber: { width: 31, height: 31, borderRadius: 10, alignItems: 'center', justifyContent: 'center' }, stepNumberText: { color: '#fff', fontFamily: 'Sora', fontSize: 13, fontWeight: '800' }, stepTitle: { fontFamily: 'InstrumentSans', fontSize: 15, fontWeight: '700' }, stepText: { fontFamily: 'InstrumentSans', fontSize: 13, lineHeight: 18, marginTop: 3 },
   primary: { minHeight: 54, borderRadius: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9, marginTop: 3 }, primaryText: { fontFamily: 'InstrumentSans', fontSize: 15, fontWeight: '700' }, secondary: { minHeight: 52, borderRadius: 16, borderWidth: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9 }, secondaryText: { fontFamily: 'InstrumentSans', fontSize: 14, fontWeight: '700' }, banner: { borderRadius: 14, padding: 13, flexDirection: 'row', alignItems: 'flex-start', gap: 10 }, bannerText: { flex: 1, fontFamily: 'InstrumentSans', fontSize: 12.5, lineHeight: 18, fontWeight: '600' },
   successIcon: { width: 52, height: 52, borderRadius: 17, alignItems: 'center', justifyContent: 'center' }, summary: { borderRadius: 17, borderWidth: 1, overflow: 'hidden' }, summaryRow: { minHeight: 51, paddingHorizontal: 14, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 12 }, summaryLabel: { fontFamily: 'InstrumentSans', fontSize: 12.5, flex: 0.42 }, summaryValue: { fontFamily: 'InstrumentSans', fontSize: 13.5, fontWeight: '700', flex: 0.58, textAlign: 'right' },
   preview: { width: '100%', minHeight: 190, borderRadius: 18, borderWidth: 1, overflow: 'hidden', position: 'relative' }, previewLoading: { alignItems: 'center', justifyContent: 'center', gap: 10 }, previewHint: { fontFamily: 'InstrumentSans', fontSize: 12.5, fontWeight: '600' }, previewImage: { width: '100%', height: 210 }, previewCaption: { position: 'absolute', left: 10, right: 10, bottom: 10, borderRadius: 10, backgroundColor: 'rgba(0,0,0,0.68)', paddingHorizontal: 11, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 }, previewCaptionText: { color: '#fff', fontFamily: 'InstrumentSans', fontSize: 12, fontWeight: '700' },

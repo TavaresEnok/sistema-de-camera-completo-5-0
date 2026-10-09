@@ -46,9 +46,9 @@ test('cadastro de câmera: portas visíveis e busca automática selecionável', 
   assert(source.includes('Caminho do vídeo (se houver)'), 'a correção manual deve permitir informar o caminho do stream');
 });
 
-test('provisionamento Wi-Fi não promete pareamento proprietário inexistente', () => {
+test('entrada do cadastro simplifica opções sem prometer pareamento Wi-Fi', () => {
   const source = readFileSync('src/components/AddCameraSheet.tsx', 'utf8');
-  assert(source.includes('A conexão inicial ao Wi-Fi é feita pelo aplicativo do fabricante'), 'tela deve explicar o pareamento em linguagem simples');
+  assert(!source.includes('Preciso conectar ao Wi-Fi') && !source.includes("screen === 'provision'"), 'guia de Wi-Fi deve ser retirado da jornada');
   assert(!source.includes('Segure o botão RESET'), 'cadastro não deve recomendar apagar a configuração de uma câmera em uso');
   assert(source.includes('QR com endereço IP ou RTSP'), 'QR genérico não pode fingir aceitar QR proprietário');
 });
