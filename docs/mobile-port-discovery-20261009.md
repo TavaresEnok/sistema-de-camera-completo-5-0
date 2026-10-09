@@ -19,6 +19,7 @@
 - Retorna assim que confirma vídeo, sem aguardar PTZ, bitrate ou separação de perfis. O provisionamento posterior ao cadastro permanece responsável pela descoberta completa.
 - Recusa de credenciais interrompe tentativas de caminhos. Erros simples distinguem porta inacessível, serviço sem RTSP, acesso recusado, vídeo indisponível e prazo excedido.
 - Diagnóstico legado do navegador também ganha 5540 e estado baseado no vídeo efetivamente confirmado. Demais operações, permissões, licença, gravação e IA não são alteradas.
+- Revisão adicional do Wi-Fi: anúncios mDNS passam a preservar separadamente RTSP, HTTP e ONVIF; mesclar anúncios não perde essas portas. Ao selecionar um aparelho, a porta RTSP anunciada não é mais colocada em HTTP. Quando só há ONVIF/TCP, o aplicativo solicita descoberta automática de vídeo em vez de fixar incorretamente 554. A varredura local inclui 5540/10554/5544 e reduz a concorrência total de sockets (96 para 66), com um pouco mais de tolerância a respostas lentas.
 
 ## Validação
 

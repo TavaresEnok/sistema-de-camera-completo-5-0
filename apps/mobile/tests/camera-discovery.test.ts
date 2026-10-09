@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  isPrivateIpv4, localScanHosts, mergeDiscoveredCameras, parseCameraQr,
+  discoveredCameraPorts, isPrivateIpv4, localScanHosts, mergeDiscoveredCameras, parseCameraQr,
   parseOnvifDiscoveryResponse, parseSsdpDiscoveryResponse,
 } from '../src/services/camera-discovery-core';
 
@@ -34,8 +34,31 @@ test('extrai dispositivos de uma resposta WS-Discovery ONVIF', () => {
   assert.equal(devices.length, 1);
   assert.equal(devices[0].ip, '192.168.0.18');
   assert.equal(devices[0].port, 8080);
+  assert.equal(devices[0].onvifPort, 8080);
   assert.equal(devices[0].name, 'Portao');
   assert.equal(devices[0].manufacturerHint, 'Intelbras');
+});
+
+test('nonstandard mDNS RTSP port is not put in the HTTP field', () => {
+  assert.deepEqual(discoveredCameraPorts({ id: 'x', name: 'Camera', ip: '192.168.1.8', port: 5540, rtspPort: 5540, sources: ['mdns'] }),
+    { rtspPort: '5540', httpPort: '80', onvifPort: '', automatic: false });
+});
+
+test('ONVIF control port does not force manual RTSP 554; server discovers actual video port', () => {
+  assert.deepEqual(discoveredCameraPorts({ id: 'x', name: 'Camera', ip: '192.168.1.8', port: 8000, onvifPort: 8000, sources: ['onvif'] }),
+    { rtspPort: '554', httpPort: '8000', onvifPort: '8000', automatic: true });
+});
+
+test('merged announcements retain separate RTSP and ONVIF ports', () => {
+  const device = mergeDiscoveredCameras([
+    { id: 'o', name: 'Entrance', ip: '192.168.1.8', port: 8000, onvifPort: 8000, sources: ['onvif'] },
+    { id: 'r', name: 'Camera', ip: '192.168.1.8', port: 12345, rtspPort: 12345, sources: ['mdns'] },
+  ])[0];
+  assert.deepEqual(discoveredCameraPorts(device), { rtspPort: '12345', httpPort: '8000', onvifPort: '8000', automatic: false });
+});
+
+test('scan TCP candidate requires protocol verification instead of guessing HTTP as RTSP', () => {
+  assert.equal(discoveredCameraPorts({ id: 's', name: 'Candidate', ip: '192.168.1.8', port: 8000, openPorts: [8000], sources: ['scan'] }).automatic, true);
 });
 
 test('mescla ONVIF e mDNS da mesma câmera', () => {

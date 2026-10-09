@@ -11,9 +11,9 @@ import {
 const ONVIF_ADDRESS = '239.255.255.250';
 const ONVIF_PORT = 3702;
 const DISCOVERY_MS = 6_000;
-const SCAN_PORTS = [554, 8554, 80, 443, 8080, 8000, 8899, 37777] as const;
-const SCAN_SOCKET_MS = 380;
-const SCAN_WORKERS = 12;
+const SCAN_PORTS = [554, 5540, 8554, 10554, 5544, 80, 443, 8080, 8000, 8899, 37777] as const;
+const SCAN_SOCKET_MS = 600;
+const SCAN_WORKERS = 6;
 
 function uuid() {
   return `urn:uuid:${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}-${Math.random().toString(16).slice(2)}`;
@@ -113,6 +113,9 @@ function discoverMdns(type: 'rtsp' | 'http' | 'onvif', timeoutMs: number): Promi
         name: service.name?.trim() || `Câmera ${ip}`,
         ip,
         port: typeof service.port === 'number' ? service.port : null,
+        rtspPort: type === 'rtsp' ? service.port : undefined,
+        httpPort: type === 'http' ? service.port : undefined,
+        onvifPort: type === 'onvif' ? service.port : undefined,
         sources: ['mdns'],
         serviceUrl: service.fullName,
       });

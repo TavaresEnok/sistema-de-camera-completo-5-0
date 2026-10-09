@@ -5,6 +5,9 @@ export interface DiscoveredCamera {
   name: string;
   ip: string;
   port: number | null;
+  rtspPort?: number;
+  httpPort?: number;
+  onvifPort?: number;
   sources: DiscoverySource[];
   serviceUrl?: string;
   manufacturerHint?: string;
@@ -172,6 +175,7 @@ export function parseOnvifDiscoveryResponse(xml: string): DiscoveredCamera[] {
       id: `onvif:${ip}`,
       ip,
       port,
+      onvifPort: port ?? undefined,
       sources: ['onvif'],
       serviceUrl,
       manufacturerHint,
@@ -199,7 +203,7 @@ export function parseSsdpDiscoveryResponse(response: string): DiscoveredCamera[]
   try { port = parsePort(new URL(location).port) ?? (location.startsWith('https:') ? 443 : 80); } catch { /* noop */ }
   const manufacturerHint = manufacturerFromText(fingerprint);
   return [{
-    id: `ssdp:${ip}`, ip, port, sources: ['ssdp'], serviceUrl: location || undefined,
+    id: `ssdp:${ip}`, ip, port, httpPort: port ?? undefined, sources: ['ssdp'], serviceUrl: location || undefined,
     manufacturerHint, name: manufacturerHint ? `${manufacturerHint} ${ip}` : `Câmera ${ip}`,
   }];
 }
@@ -218,6 +222,9 @@ export function mergeDiscoveredCameras(devices: DiscoveredCamera[]): DiscoveredC
       id: current.id,
       name: /^(Câmera|Possível câmera) /.test(current.name) ? item.name : current.name,
       port: current.port ?? item.port,
+      rtspPort: current.rtspPort ?? item.rtspPort,
+      httpPort: current.httpPort ?? item.httpPort,
+      onvifPort: current.onvifPort ?? item.onvifPort,
       serviceUrl: current.serviceUrl ?? item.serviceUrl,
       manufacturerHint: current.manufacturerHint ?? item.manufacturerHint,
       openPorts: Array.from(new Set([...(current.openPorts ?? []), ...(item.openPorts ?? [])])).sort((a, b) => a - b),
@@ -225,4 +232,17 @@ export function mergeDiscoveredCameras(devices: DiscoveredCamera[]): DiscoveredC
     });
   }
   return Array.from(merged.values()).sort((a, b) => a.ip.localeCompare(b.ip, undefined, { numeric: true }));
+}
+
+/** Discovery reports service types; TCP scan alone cannot identify a video port. */
+export function discoveredCameraPorts(device: DiscoveredCamera) {
+  const knownRtsp = device.rtspPort ?? (/^rtsp:\/\//i.test(device.serviceUrl ?? '') ? device.port : undefined);
+  const control = device.onvifPort ?? device.httpPort
+    ?? (/^https?:\/\//i.test(device.serviceUrl ?? '') || device.sources.includes('onvif') || device.sources.includes('ssdp') ? device.port : undefined);
+  return {
+    rtspPort: String(knownRtsp || 554),
+    httpPort: String(device.httpPort || control || 80),
+    onvifPort: device.onvifPort ? String(device.onvifPort) : '',
+    automatic: !knownRtsp,
+  };
 }

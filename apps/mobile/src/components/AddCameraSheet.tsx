@@ -20,7 +20,7 @@ import { request } from '../services/api';
 import { userFacingError } from '../services/user-facing-error';
 import { captureInstallerLocation } from '../services/installer-location';
 import { discoverCameras, scanLocalNetwork, type ScanProgress } from '../services/camera-discovery';
-import { mergeDiscoveredCameras, parseCameraQr, type DiscoveredCamera } from '../services/camera-discovery-core';
+import { discoveredCameraPorts, mergeDiscoveredCameras, parseCameraQr, type DiscoveredCamera } from '../services/camera-discovery-core';
 import { useTheme } from '../theme/ThemeProvider';
 import type { Theme } from '../theme/theme';
 import { cameraConnectionError, cameraConnectionPayload, cameraConnectionTestPayload, cameraSetupFailureMessage } from '../services/camera-setup';
@@ -271,11 +271,10 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
     invalidateConnection();
     setSourceMode('rtsp_pull'); setIp(device.ip);
     setName(/^(Câmera|Possível câmera) /.test(device.name) ? '' : device.name);
-    setRtspPort(RTSP_PORT_DEFAULT); setHttpPort('80'); setOnvifPort(''); setRtspPath('');
-    setAutomaticPort(false);
+    const ports = discoveredCameraPorts(device);
+    setRtspPort(ports.rtspPort); setHttpPort(ports.httpPort); setOnvifPort(ports.onvifPort); setRtspPath('');
+    setAutomaticPort(ports.automatic);
     setUsername('admin'); setPassword('');
-    if (device.port === 554 || device.port === 8554) setRtspPort(String(device.port));
-    else if (device.port) setHttpPort(String(device.port));
     setManualConnectionNeeded(false); setShowConnectionOptions(false); setError(null); navigate('details');
   };
 
