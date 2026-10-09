@@ -55,6 +55,9 @@ import { flushPushRemovals } from './src/services/push-revocation';
 import { findAlarmRecording } from './src/services/alarm-recording';
 import { loadCameraList } from './src/services/camera-list';
 import { ThemeProvider, useTheme } from './src/theme/ThemeProvider';
+import { CameraWorkflowContext } from './src/components/CameraWorkflowContext';
+import { CameraManagementSheet } from './src/components/CameraManagementSheet';
+import { clearCameraSetupDraft } from './src/services/camera-setup-draft';
 import { LibraryProvider, useLibrary } from './src/state/LibraryProvider';
 import { localDateKey, localDayIsoRange, shiftDateKey } from './src/utils/format';
 import { buildOperationalMessages } from './src/utils/operational';
@@ -113,6 +116,7 @@ function AppInner() {
   const [cameras, setCameras] = useState<Camera[]>([]);
   const [selectedCameraId, setSelectedCameraId] = useState<string | null>(null);
   const [liveCamera, setLiveCamera] = useState<Camera | null>(null);
+  const [managedCamera, setManagedCamera] = useState<Camera | null>(null);
   const [highlightedAlarmId, setHighlightedAlarmId] = useState<string | null>(null);
   // Câmera pedida por um push tocado antes da lista de câmeras carregar (cold start).
   const [pendingPushCameraId, setPendingPushCameraId] = useState<string | null>(null);
@@ -649,6 +653,8 @@ function AppInner() {
     sessionGenerationRef.current++;
     invalidateAuthRequests();
     const previous = session;
+    setManagedCamera(null);
+    if (previous) void clearCameraSetupDraft(previous.apiUrl, previous.user.id).catch(() => undefined);
     void stopActiveClip(true);
     sessionTokenRef.current = null;
     setUnauthorizedHandler(null);
@@ -1707,6 +1713,7 @@ function AppInner() {
   if (liveCamera) {
     const live = cameras.find((c) => c.id === liveCamera.id) ?? liveCamera;
     return (
+      <CameraWorkflowContext.Provider value={{ userId: session.user.id, openCamera: openLive, editCamera: camera => { if (camera.canSelfManage === true) leaveLive(() => setManagedCamera(camera)); } }}>
       <SafeAreaView style={[styles.screen, { backgroundColor: '#070809' }]}>
         <StatusBar style="light" />
         {isRedesign ? (
@@ -1837,10 +1844,12 @@ function AppInner() {
           />
         ) : null}
       </SafeAreaView>
+      </CameraWorkflowContext.Provider>
     );
   }
 
   return (
+    <CameraWorkflowContext.Provider value={{ userId: session.user.id, openCamera: openLive, editCamera: camera => { if (camera.canSelfManage === true) setManagedCamera(camera); } }}>
     <SafeAreaView style={[styles.screen, { backgroundColor: theme.bg }]}>
       <StatusBar style={statusBarStyle} />
       {/* Fundo em GRADIENTE quando o branding define 2 cores (bg != bg2); senão
@@ -2059,7 +2068,10 @@ function AppInner() {
         alarmCount={openAlarmCount}
       />
       )}
+      <CameraManagementSheet visible={!!managedCamera} camera={managedCamera} apiUrl={session.apiUrl} token={session.token}
+        onClose={() => setManagedCamera(null)} onChanged={(cameraId) => { clearStreamUrlsCache(cameraId); void loadAll(true); }} />
     </SafeAreaView>
+    </CameraWorkflowContext.Provider>
   );
 }
 

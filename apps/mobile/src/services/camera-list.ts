@@ -1,7 +1,7 @@
 import { request } from './api';
 import type { Camera, Session } from '../types';
 
-export async function loadCameraList(session: Session): Promise<Camera[]> {
+export async function loadCameraList(session: Pick<Session, 'apiUrl' | 'token'>): Promise<Camera[]> {
   const items = new Map<string, Camera>();
   let offset = 0;
   while (true) {

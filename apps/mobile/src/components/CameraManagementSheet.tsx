@@ -40,6 +40,7 @@ export function CameraManagementSheet({ visible, camera, apiUrl, token, onClose,
   const [rtmpLoading, setRtmpLoading] = useState(false);
   const [copied, setCopied] = useState(false);
   const generation = useRef(0);
+  const busyRef = useRef(false);
   const clipboardTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const copiedValue = useRef<string | null>(null);
 
@@ -69,6 +70,7 @@ export function CameraManagementSheet({ visible, camera, apiUrl, token, onClose,
     setPassword('');
     setPath(camera.rtspPath ?? '');
     setShowPassword(false);
+    busyRef.current = false;
     setSaving(false); setDeleting(false); setError(null); setCopied(false); setRtmpTarget(null);
     if (camera.sourceMode === 'rtmp_push') {
       setRtmpLoading(true);
@@ -79,7 +81,9 @@ export function CameraManagementSheet({ visible, camera, apiUrl, token, onClose,
     } else {
       setRtmpLoading(false);
     }
-  }, [visible, camera?.id, apiUrl, token]);
+    return () => { generation.current += 1; };
+    // Token renewal must not erase edits. Requests handle authentication refresh.
+  }, [visible, camera?.id, apiUrl]);
 
   useEffect(() => () => {
     generation.current += 1;
@@ -88,7 +92,7 @@ export function CameraManagementSheet({ visible, camera, apiUrl, token, onClose,
   }, []);
 
   const close = () => {
-    if (busy) return;
+    if (busyRef.current) return;
     generation.current += 1;
     if (clipboardTimer.current) clearTimeout(clipboardTimer.current);
     clipboardTimer.current = null;
@@ -97,7 +101,7 @@ export function CameraManagementSheet({ visible, camera, apiUrl, token, onClose,
   };
 
   const save = async () => {
-    if (!camera || busy) return;
+    if (!camera || camera.canSelfManage !== true || busyRef.current) return;
     const trimmedName = name.trim();
     if (!trimmedName) { setError('Informe o nome da câmera.'); return; }
     if (!isPush && (!ip.trim() || !username.trim())) {
@@ -120,6 +124,7 @@ export function CameraManagementSheet({ visible, camera, apiUrl, token, onClose,
       return;
     }
     const current = ++generation.current;
+    busyRef.current = true;
     setSaving(true); setError(null);
     try {
       const body = isPush
@@ -143,13 +148,14 @@ export function CameraManagementSheet({ visible, camera, apiUrl, token, onClose,
     } catch (err) {
       if (generation.current === current) setError(userFacingError(err, 'Não foi possível salvar a câmera. Tente novamente.'));
     } finally {
-      if (generation.current === current) setSaving(false);
+      if (generation.current === current) { busyRef.current = false; setSaving(false); }
     }
   };
 
   const performDelete = async () => {
-    if (!camera || busy) return;
+    if (!camera || camera.canSelfManage !== true || busyRef.current) return;
     const current = ++generation.current;
+    busyRef.current = true;
     setDeleting(true); setError(null);
     try {
       await request(apiUrl, `/cameras/mine/${encodeURIComponent(camera.id)}`, token ?? undefined, { method: 'DELETE' });
@@ -159,7 +165,7 @@ export function CameraManagementSheet({ visible, camera, apiUrl, token, onClose,
     } catch (err) {
       if (generation.current === current) setError(userFacingError(err, 'Não foi possível remover a câmera. Tente novamente.'));
     } finally {
-      if (generation.current === current) setDeleting(false);
+      if (generation.current === current) { busyRef.current = false; setDeleting(false); }
     }
   };
 
@@ -178,7 +184,13 @@ export function CameraManagementSheet({ visible, camera, apiUrl, token, onClose,
   const copyRtmp = async () => {
     const value = rtmpTarget?.fullUrl;
     if (!value) return;
-    await Clipboard.setStringAsync(value);
+    const current = generation.current;
+    try { await Clipboard.setStringAsync(value); }
+    catch { if (current === generation.current) setError('Não foi possível copiar o link. Tente novamente.'); return; }
+    if (current !== generation.current) {
+      if (await Clipboard.getStringAsync().catch(() => '') === value) await Clipboard.setStringAsync('').catch(() => undefined);
+      return;
+    }
     copiedValue.current = value;
     setCopied(true);
     if (clipboardTimer.current) clearTimeout(clipboardTimer.current);

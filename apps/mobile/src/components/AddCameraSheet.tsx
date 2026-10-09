@@ -12,7 +12,7 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import { LinearGradient } from 'expo-linear-gradient';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator, Alert, Image, KeyboardAvoidingView, Modal, Platform, Pressable,
+  ActivityIndicator, Alert, AppState, Image, KeyboardAvoidingView, Modal, Platform, Pressable,
   PermissionsAndroid, ScrollView, StyleSheet, Text, TextInput, View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -25,6 +25,11 @@ import { useTheme } from '../theme/ThemeProvider';
 import type { Theme } from '../theme/theme';
 import { cameraConnectionError, cameraConnectionPayload, cameraConnectionTestPayload, cameraSetupFailureMessage } from '../services/camera-setup';
 import { Icon, type IconName } from './Icon';
+import { useCameraWorkflow } from './CameraWorkflowContext';
+import { loadCameraList } from '../services/camera-list';
+import { findOwnedCameraDuplicate } from '../services/camera-duplicate';
+import { clearCameraSetupDraft, loadCameraSetupDraft, saveCameraSetupDraft, type CameraSetupDraft } from '../services/camera-setup-draft';
+import type { Camera } from '../types';
 
 interface AddCameraSheetProps {
   visible: boolean;
@@ -65,6 +70,8 @@ const RTSP_PORT_DEFAULT = '554';
 
 export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: AddCameraSheetProps) {
   const { theme } = useTheme();
+  const workflow = useCameraWorkflow();
+  const userId = workflow?.userId;
   const [cameraPermission, askCameraPermission] = useCameraPermissions();
   const [screen, setScreen] = useState<Screen>('home');
   const [sourceMode, setSourceMode] = useState<SourceMode>('rtsp_pull');
@@ -100,6 +107,16 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
   const [error, setError] = useState<string | null>(null);
   const [rtmpTarget, setRtmpTarget] = useState<RtmpTarget | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  const [duplicate, setDuplicate] = useState<Camera | null>(null);
+  const [previewConfirmed, setPreviewConfirmed] = useState(false);
+  const [connectionStage, setConnectionStage] = useState('');
+  const [splitRtmp, setSplitRtmp] = useState(false);
+  const [createdId, setCreatedId] = useState<string | null>(null);
+  const [receivingVideo, setReceivingVideo] = useState(false);
+  const [draftReady, setDraftReady] = useState(false);
+  const [draftNotice, setDraftNotice] = useState<string | null>(null);
+  const draftActive = useRef(false);
+  const currentDraft = useRef<CameraSetupDraft | null>(null);
   const historyRef = useRef<Screen[]>([]);
   const clipboardTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clipboardValueRef = useRef<string | null>(null);
@@ -115,15 +132,17 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
 
   const quotaFull = !!quota && !quota.canAdd;
   const draft = { ip, username, password, rtspPort: automaticPort ? '' : rtspPort, httpPort, onvifPort, rtspPath };
+  currentDraft.current = { sourceMode, name, ip, rtspPort, automaticPort, httpPort, onvifPort, username, password, rtspPath };
   const connectionError = !automaticPort && !rtspPort.trim() ? 'Informe a porta RTSP do vídeo.' : cameraConnectionError(draft);
   const planReady = !!quota?.canAdd && !quotaLoading && !quotaError;
-  const canSave = !submitting && planReady && name.trim().length > 0 && (
-    sourceMode === 'rtmp_push' || (!connectionError && !!connection?.rtspAuthOk)
+  const canSave = draftReady && !submitting && !duplicate && planReady && name.trim().length > 0 && (
+    sourceMode === 'rtmp_push' || (!connectionError && !!connection?.rtspAuthOk && !previewLoading && previewConfirmed)
   );
 
   const invalidateConnection = () => {
     operationRef.current += 1; requestRef.current?.abort();
     setConnection(null); setPreview(null); setChecking(false); setPreviewLoading(false); setError(null);
+    setPreviewConfirmed(false); setDuplicate(null); setConnectionStage('');
     setOnvifPath(null); setOnvifToken(null);
   };
 
@@ -135,6 +154,7 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
     if (qrTimerRef.current) clearTimeout(qrTimerRef.current);
     historyRef.current = [];
     setScreen('home'); setSourceMode('rtsp_pull'); setName(''); setIp('');
+    setDuplicate(null); setPreviewConfirmed(false); setConnectionStage(''); setSplitRtmp(false); setCreatedId(null); setReceivingVideo(false); setDraftNotice(null);
     setRtspPort(RTSP_PORT_DEFAULT); setHttpPort('80'); setUsername('admin'); setPassword(''); setRtspPath('');
     setAutomaticPort(false);
     setOnvifPort(''); setOnvifPath(null); setOnvifToken(null);
@@ -156,17 +176,26 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
     // O POST de criação pode já ter sido aceito pelo servidor. Fechar no meio
     // criaria câmera sem atualizar a lista e induziria cadastro duplicado.
     if (submittingRef.current) return;
-    const finish = () => {
+    const finish = async (discard = false) => {
+      if (userId) {
+        try {
+          if (discard || screen === 'success') { draftActive.current = false; await clearCameraSetupDraft(apiUrl, userId); }
+          else if (currentDraft.current && draftActive.current) await saveCameraSetupDraft(apiUrl, userId, currentDraft.current);
+        } catch { setError('Não conseguimos guardar o cadastro. Continue aqui ou escolha descartar.'); return; }
+      }
+      draftActive.current = false;
       reset();
       if (clipboardTimerRef.current) clearTimeout(clipboardTimerRef.current);
       clipboardTimerRef.current = null;
       void clearSensitiveClipboard(); onClose();
     };
     if (screen !== 'success' && (name.trim() || ip.trim() || password)) {
-      Alert.alert('Sair do cadastro?', 'Os dados preenchidos serão descartados.', [
-        { text: 'Continuar cadastro', style: 'cancel' }, { text: 'Sair', style: 'destructive', onPress: finish },
+      Alert.alert('Continuar depois?', 'Podemos guardar o preenchimento neste celular por até 24 horas.', [
+        { text: 'Ficar aqui', style: 'cancel' },
+        { text: 'Descartar', style: 'destructive', onPress: () => void finish(true) },
+        { text: 'Guardar e sair', onPress: () => void finish() },
       ]);
-    } else finish();
+    } else void finish();
   };
 
   const clearSensitiveClipboard = async () => {
@@ -190,6 +219,24 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
   useEffect(() => {
     if (!visible) return;
     reset();
+    setDraftReady(false); draftActive.current = false;
+    let cancelled = false;
+    void (userId ? loadCameraSetupDraft(apiUrl, userId) : Promise.resolve(null)).then(saved => {
+      if (cancelled) return;
+      if (saved) {
+        setSourceMode(saved.sourceMode); setName(saved.name); setIp(saved.ip); setRtspPort(saved.rtspPort);
+        setAutomaticPort(saved.automaticPort); setHttpPort(saved.httpPort); setOnvifPort(saved.onvifPort);
+        setUsername(saved.username); setPassword(saved.password); setRtspPath(saved.rtspPath);
+        setScreen('details'); historyRef.current = ['home'];
+        setDraftNotice('Recuperamos seu preenchimento. Confira os dados e continue.');
+      }
+      draftActive.current = true; setDraftReady(true);
+    });
+    return () => { cancelled = true; draftActive.current = false; };
+  }, [visible, apiUrl, userId]);
+
+  useEffect(() => {
+    if (!visible) return;
     setQuota(null); setQuotaError(false); setQuotaLoading(true);
     let cancelled = false;
     void request<Quota>(apiUrl, '/cameras/mine/quota', token ?? undefined)
@@ -198,6 +245,63 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
       .finally(() => { if (!cancelled) setQuotaLoading(false); });
     return () => { cancelled = true; };
   }, [visible, apiUrl, token]);
+
+  useEffect(() => {
+    if (!visible || !draftReady || !userId) return;
+    const persist = () => {
+      const value = currentDraft.current;
+      if (!draftActive.current || !value || !(value.name.trim() || value.ip.trim() || value.password)) return;
+      void saveCameraSetupDraft(apiUrl, userId, value).catch(() => setDraftNotice('O preenchimento está mantido nesta tela, mas não foi possível guardá-lo para depois.'));
+    };
+    const timer = setTimeout(persist, 400);
+    const subscription = AppState.addEventListener('change', state => { if (state !== 'active') persist(); });
+    return () => { clearTimeout(timer); subscription.remove(); };
+  }, [visible, draftReady, userId, apiUrl, sourceMode, name, ip, rtspPort, automaticPort, httpPort, onvifPort, username, password, rtspPath]);
+
+  useEffect(() => {
+    if (!visible || screen !== 'success' || sourceMode !== 'rtmp_push' || !createdId || receivingVideo) return;
+    let cancelled = false;
+    let controller: AbortController | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let pollGeneration = 0;
+    const poll = async () => {
+      if (cancelled || AppState.currentState !== 'active') return;
+      const current = ++pollGeneration;
+      controller = new AbortController();
+      try {
+        const camera = await request<Camera>(apiUrl, `/cameras/${encodeURIComponent(createdId)}`, token ?? undefined, { signal: controller.signal });
+        if (cancelled || current !== pollGeneration) return;
+        if (camera.status === 'ONLINE') { setReceivingVideo(true); onCreated?.(); return; }
+      } catch { /* A câmera ainda pode estar sendo configurada. */ }
+      if (!cancelled && current === pollGeneration) timer = setTimeout(() => void poll(), 5000);
+    };
+    void poll();
+    const subscription = AppState.addEventListener('change', state => {
+      pollGeneration += 1;
+      if (timer) clearTimeout(timer);
+      controller?.abort();
+      if (state === 'active') void poll();
+    });
+    return () => { cancelled = true; controller?.abort(); if (timer) clearTimeout(timer); subscription.remove(); };
+  }, [visible, screen, sourceMode, createdId, receivingVideo, apiUrl, token]);
+
+  const checkDuplicate = async (candidate = draft) => {
+    if (!token) throw new Error('Entre novamente na sua conta para continuar.');
+    const cameras = await loadCameraList({ apiUrl, token });
+    const found = findOwnedCameraDuplicate(cameras, candidate);
+    return found;
+  };
+
+  const openDuplicate = async (edit: boolean) => {
+    if (!duplicate || !workflow) return;
+    if (userId && currentDraft.current) {
+      try { await saveCameraSetupDraft(apiUrl, userId, currentDraft.current); }
+      catch { setError('Não conseguimos guardar o preenchimento. Tente novamente.'); return; }
+    }
+    const camera = duplicate;
+    draftActive.current = false; reset(); onClose();
+    if (edit) workflow.editCamera(camera); else workflow.openCamera(camera);
+  };
 
   useEffect(() => { scrollRef.current?.scrollTo({ y: 0, animated: false }); }, [screen]);
   useEffect(() => { if (error) scrollRef.current?.scrollTo({ y: 0, animated: true }); }, [error]);
@@ -326,13 +430,18 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
   };
 
   const testConnection = async () => {
-    if (checking || !planReady) return;
+    if (checking || !planReady || !draftReady) return;
     if (connectionError) { setError(connectionError); return; }
     const operation = ++operationRef.current;
     requestRef.current?.abort();
     const controller = new AbortController(); requestRef.current = controller;
     setChecking(true); setConnection(null); setError(null);
+    setPreviewConfirmed(false); setPreview(null); setDuplicate(null); setConnectionStage('Conferindo se esta câmera já está cadastrada…');
     try {
+      const existing = await checkDuplicate();
+      if (operation !== operationRef.current) return;
+      if (existing) { setDuplicate(existing); return; }
+      setConnectionStage('Conectando à câmera e verificando o acesso ao vídeo…');
       const result = await request<ConnectionResult>(apiUrl, '/cameras/mine/test-connection', token ?? undefined, {
         method: 'POST',
         signal: controller.signal, timeoutMs: 90_000,
@@ -345,6 +454,10 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
       if (result.detectedOnvifPort) setOnvifPort(String(result.detectedOnvifPort));
       setOnvifPath(result.detectedOnvifPath); setOnvifToken(result.detectedOnvifProfileToken);
       if (result.rtspAuthOk) {
+        const existing = await checkDuplicate({ ...draft, rtspPort: String(result.detectedRtspPort ?? rtspPort), rtspPath: result.detectedRtspPath ?? result.suggestedRtspPath ?? rtspPath });
+        if (operation !== operationRef.current) return;
+        if (existing) { setDuplicate(existing); return; }
+        setConnectionStage('Vídeo encontrado. Abrindo uma imagem para conferência…');
         setManualConnectionNeeded(false);
         if (!result.detectedRtspPath && result.suggestedRtspPath) setRtspPath(result.suggestedRtspPath);
         if (!name.trim()) setName(`Câmera ${ip.trim().split('.').at(-1) ?? ''}`.trim());
@@ -360,7 +473,7 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
           }),
         }).then((value) => { if (operation === operationRef.current) setPreview(value); })
           .catch(() => { if (operation === operationRef.current) setPreview({ ok: false, imageDataUrl: null, reason: 'A imagem de confirmação não ficou disponível.' }); })
-          .finally(() => { if (operation === operationRef.current) setPreviewLoading(false); });
+          .finally(() => { if (operation === operationRef.current) { setPreviewLoading(false); setConnectionStage(''); } });
       }
       else if (cameraSetupFailureMessage(result.failureCode)) {
         setManualConnectionNeeded(true);
@@ -388,6 +501,11 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
     try {
       const installerLocation = includeLocation ? await captureInstallerLocation() : null;
       if (operation !== operationRef.current) return;
+      if (sourceMode === 'rtsp_pull') {
+        const existing = await checkDuplicate();
+        if (operation !== operationRef.current) return;
+        if (existing) { setDuplicate(existing); return; }
+      }
       const payload = sourceMode === 'rtmp_push'
         ? { name: name.trim(), sourceMode, ...(installerLocation ?? {}) }
         : {
@@ -401,6 +519,9 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
         method: 'POST', body: JSON.stringify(payload),
       });
       if (operation !== operationRef.current) return;
+      draftActive.current = false;
+      if (userId) await clearCameraSetupDraft(apiUrl, userId).catch(() => undefined);
+      setCreatedId(created.id);
       onCreated?.();
       setPassword(''); setShowPass(false); setPreview(null);
       if (sourceMode === 'rtmp_push') {
@@ -497,11 +618,15 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
           ) : (
             <ScrollView ref={scrollRef} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" showsVerticalScrollIndicator={false}>
               {error ? <ErrorBanner theme={theme} text={error} /> : null}
+              {!draftReady ? <ActivityIndicator color={theme.accent} /> : null}
+              {draftNotice && screen !== 'success' ? <InfoBanner theme={theme} text={draftNotice} /> : null}
+              {(checking || previewLoading) && connectionStage ? <View accessibilityLiveRegion="polite"><InfoBanner theme={theme} text={connectionStage} /></View> : null}
+              {duplicate ? <View style={{ gap: 8 }}><InfoBanner theme={theme} text={`Esta câmera já está na sua conta como “${duplicate.name}”. Não precisamos cadastrá-la novamente.`} />{workflow ? <><SecondaryButton theme={theme} icon="play" label="Abrir câmera cadastrada" onPress={() => void openDuplicate(false)} /><SecondaryButton theme={theme} icon="edit" label="Editar câmera cadastrada" onPress={() => void openDuplicate(true)} /></> : null}</View> : null}
               {quotaError && screen !== 'success' ? <View style={{ gap: 8 }}><ErrorBanner theme={theme} text="Não conseguimos verificar seu limite de câmeras. Tente novamente para continuar." /><SecondaryButton theme={theme} icon="clock" label={quotaLoading ? 'Verificando…' : 'Verificar meu plano'} disabled={quotaLoading} onPress={() => void retryQuota()} /></View> : null}
               {quotaFull && screen !== 'home' && screen !== 'success' ? <QuotaBanner theme={theme} loading={false} quota={quota} /> : null}
-              {screen === 'home' ? <HomeStep theme={theme} quota={quota} quotaLoading={quotaLoading}
+              {draftReady && screen === 'home' ? <HomeStep theme={theme} quota={quota} quotaLoading={quotaLoading}
                 onDiscover={() => void startDiscovery()} onQr={() => void openQr()}
-                onRemote={() => { setSourceMode('rtmp_push'); setName(''); navigate('details'); }}
+                onRemote={() => { setSourceMode('rtmp_push'); setDuplicate(null); navigate('details'); }}
                 onManual={() => { setSourceMode('rtsp_pull'); setManualConnectionNeeded(false); navigate('details'); }} /> : null}
 
               {screen === 'discover' ? (
@@ -517,7 +642,7 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
                 </>
               ) : null}
 
-              {screen === 'details' ? (
+              {draftReady && screen === 'details' ? (
                 <DetailsStep theme={theme} sourceMode={sourceMode} ip={ip} name={name} username={username} password={password}
                   rtspPort={rtspPort} httpPort={httpPort} onvifPort={onvifPort} rtspPath={rtspPath} showPass={showPass} manualConnectionNeeded={manualConnectionNeeded}
                   checking={checking} submitting={submitting} canSave={canSave}
@@ -542,14 +667,21 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
                     <SummaryRow theme={theme} label="Privacidade" value="Sua câmera privada" last />
                   </View>
                   {previewLoading ? <View style={[styles.preview, styles.previewLoading, { backgroundColor: theme.surface, borderColor: theme.border }]}><ActivityIndicator color={theme.accent} /><Text style={[styles.previewHint, { color: theme.textSub }]}>Carregando uma imagem para conferência…</Text></View> : preview?.ok && preview.imageDataUrl ? <View style={[styles.preview, { borderColor: theme.border, backgroundColor: theme.videoBg }]}><Image source={{ uri: preview.imageDataUrl }} style={styles.previewImage} resizeMode="contain" /><View style={styles.previewCaption}><Icon name="eye" size={15} color="#fff" /><Text style={styles.previewCaptionText}>Confirme se esta é a câmera correta</Text></View></View> : preview ? <InfoBanner theme={theme} text="O vídeo foi validado, mas a imagem de conferência não ficou disponível." /> : null}
+                  {sourceMode === 'rtsp_pull' && !previewLoading ? <><Pressable accessibilityRole="checkbox" accessibilityLabel={preview?.ok && preview.imageDataUrl ? 'Sim, esta é a câmera correta' : 'Quero adicionar mesmo sem a imagem de conferência'} accessibilityState={{ checked: previewConfirmed, disabled: submitting }} disabled={submitting} onPress={() => setPreviewConfirmed(value => !value)} style={[styles.choiceRow, { borderColor: previewConfirmed ? theme.accent : theme.border, backgroundColor: theme.surface }]}><Icon name={previewConfirmed ? 'check' : 'plus'} size={20} color={theme.accent} /><Text style={[styles.methodTitle, { color: theme.text, flex: 1 }]}>{preview?.ok && preview.imageDataUrl ? 'Sim, esta é a câmera correta' : 'Quero adicionar mesmo sem a imagem de conferência'}</Text></Pressable><SecondaryButton theme={theme} icon="edit" label="Voltar e conferir os dados" disabled={submitting} onPress={goBack} /></> : null}
                   <InfoBanner theme={theme} text="Esta câmera ficará vinculada à sua conta. Grupos e administradores não recebem acesso automático às imagens." />
                   <Pressable accessibilityRole="checkbox" accessibilityLabel="Usar localização do celular no cadastro" accessibilityState={{ checked: includeLocation, disabled: submitting }} disabled={submitting} onPress={() => setIncludeLocation(value => !value)} style={[styles.choiceRow, { borderColor: theme.border, backgroundColor: theme.surface }]}><Icon name={includeLocation ? 'check' : 'plus'} size={20} color={theme.accent} /><View style={{ flex: 1 }}><Text style={[styles.methodTitle, { color: theme.text }]}>Usar localização do celular</Text><Text style={[styles.methodSub, { color: theme.textSub }]}>Opcional. Ative somente se você estiver no local da câmera.</Text></View></Pressable>
                 </>
               ) : null}
 
               {screen === 'success' ? (
-                <View style={styles.doneRoot}><View style={[styles.doneIcon, { backgroundColor: theme.success }]}><Icon name="check" size={36} color="#fff" strokeWidth={2.6} /></View><Text style={[styles.doneTitle, { color: theme.text }]}>Tudo pronto!</Text><Text style={[styles.doneSub, { color: theme.textSub }]}>{sourceMode === 'rtmp_push' ? 'Agora configure este endereço na opção RTMP da câmera.' : 'A câmera já foi adicionada à sua lista e está sendo preparada.'}</Text>
-                  {sourceMode === 'rtmp_push' && rtmpTarget?.fullUrl ? <View style={[styles.urlCard, { backgroundColor: theme.surface, borderColor: theme.border }]}><Text style={[styles.methodTitle, { color: theme.text }]}>Configure o envio na câmera</Text><Text style={[styles.heroSub, { color: theme.textSub }]}>Se ela pedir um único endereço, copie o completo. Se pedir servidor e chave, copie cada campo abaixo.</Text>{(['fullUrl', 'serverUrl', 'streamKey'] as const).filter(field => rtmpTarget[field]).map(field => <View key={field} style={{ gap: 8 }}><Text style={[styles.urlLabel, { color: theme.textSub }]}>{field === 'fullUrl' ? 'Endereço completo' : field === 'serverUrl' ? 'Servidor' : 'Chave de transmissão'}</Text><Text selectable style={[styles.urlText, { color: theme.text }]}>{rtmpTarget[field]}</Text><SecondaryButton theme={theme} icon={copied === field ? 'check' : 'share'} label={copied === field ? 'Copiado' : `Copiar ${field === 'fullUrl' ? 'endereço completo' : field === 'serverUrl' ? 'servidor' : 'chave'}`} onPress={() => void copyRtmpAddress(field)} /></View>)}</View> : null}
+                <View style={styles.doneRoot}><View style={[styles.doneIcon, { backgroundColor: theme.success }]}><Icon name="check" size={36} color="#fff" strokeWidth={2.6} /></View><Text style={[styles.doneTitle, { color: theme.text }]}>{sourceMode === 'rtmp_push' ? receivingVideo ? 'Vídeo recebido!' : 'Link gerado!' : 'Câmera adicionada!'}</Text><Text style={[styles.doneSub, { color: theme.textSub }]}>{sourceMode === 'rtmp_push' ? receivingVideo ? 'A câmera já está enviando vídeo ao sistema.' : 'Aguardando o vídeo. Copie o link e configure o envio RTMP na câmera. Você pode concluir e voltar depois.' : 'A câmera já foi adicionada à sua lista e está sendo preparada.'}</Text>
+                  {sourceMode === 'rtmp_push' && rtmpTarget?.fullUrl ? <View style={[styles.urlCard, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+                    <Text style={[styles.methodTitle, { color: theme.text }]}>Coloque este link na câmera</Text>
+                    <Text selectable style={[styles.urlText, { color: theme.text }]}>{rtmpTarget.fullUrl}</Text>
+                    <PrimaryButton theme={theme} icon={copied === 'fullUrl' ? 'check' : 'share'} label={copied === 'fullUrl' ? 'Link copiado' : 'Copiar link completo'} onPress={() => void copyRtmpAddress()} />
+                    <Pressable accessibilityRole="button" accessibilityLabel="Minha câmera pede servidor e chave" accessibilityState={{ expanded: splitRtmp }} onPress={() => setSplitRtmp(value => !value)} style={styles.secondary}><Text style={[styles.secondaryText, { color: theme.textSub }]}>Minha câmera pede servidor e chave</Text></Pressable>
+                    {splitRtmp ? (['serverUrl', 'streamKey'] as const).filter(field => rtmpTarget[field]).map(field => <View key={field} style={{ gap: 8 }}><Text style={[styles.urlLabel, { color: theme.textSub }]}>{field === 'serverUrl' ? 'Servidor' : 'Chave de transmissão'}</Text><Text selectable style={[styles.urlText, { color: theme.text }]}>{rtmpTarget[field]}</Text><SecondaryButton theme={theme} icon={copied === field ? 'check' : 'share'} label={copied === field ? 'Copiado' : `Copiar ${field === 'serverUrl' ? 'servidor' : 'chave'}`} onPress={() => void copyRtmpAddress(field)} /></View>) : null}
+                  </View> : null}
                   <PrimaryButton theme={theme} icon="camera" label="Concluir" onPress={closeSheet} />
                 </View>
               ) : null}
@@ -559,9 +691,9 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
           {screen === 'details' || screen === 'review' ? <View style={[styles.footer, { backgroundColor: theme.bg, borderTopColor: theme.border }]}>
             {screen === 'review' ? <PrimaryButton theme={theme} loading={submitting} disabled={!canSave} icon="check" label="Adicionar esta câmera" onPress={() => void submit()} />
               : sourceMode === 'rtmp_push' ? <PrimaryButton theme={theme} disabled={!canSave} icon="chevronRight" label="Conferir e continuar" onPress={() => navigate('review')} />
-              : <PrimaryButton theme={theme} loading={checking} disabled={checking || !planReady || !ip.trim() || !username.trim() || !password} icon="play" label={manualConnectionNeeded ? 'Testar novamente' : 'Testar vídeo e continuar'} onPress={() => void testConnection()} />}
+              : <PrimaryButton theme={theme} loading={checking} disabled={!draftReady || checking || !planReady || !ip.trim() || !username.trim() || !password} icon="play" label={manualConnectionNeeded ? 'Testar novamente' : 'Testar vídeo e continuar'} onPress={() => void testConnection()} />}
             {checking ? <SecondaryButton theme={theme} icon="close" label="Cancelar teste" onPress={() => { invalidateConnection(); }} /> : null}
-            <Text style={[styles.footerHint, { color: theme.textSub }]}>{checking ? 'Aguarde enquanto o servidor verifica a conexão.' : screen === 'review' ? 'A câmera será privada e vinculada à sua conta.' : 'Você confere os dados antes de adicionar.'}</Text>
+            <Text style={[styles.footerHint, { color: theme.textSub }]}>{checking ? 'Você pode cancelar sem perder o preenchimento.' : screen === 'review' ? 'Confira a câmera antes de adicionar à sua conta.' : 'Você confere os dados antes de adicionar.'}</Text>
           </View> : null}
         </KeyboardAvoidingView>
       </SafeAreaView>

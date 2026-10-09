@@ -18,6 +18,7 @@ import type { ActivePlayback, Camera, Direction, LiveDetection, Recording } from
 import { isOnlineStatus, ptzLabel } from '../../utils/camera-view';
 import { localDateKey } from '../../utils/format';
 import { useLiveQuality } from '../../hooks/useLiveQuality';
+import { useCameraWorkflow } from '../../components/CameraWorkflowContext';
 
 const TITLE = 'Sora';
 const UI = 'InstrumentSans';
@@ -101,11 +102,12 @@ function ClockBadge({ style, textStyle }: { style: any; textStyle: any }) {
 
 export function LiveScreenRedesign(props: Props) {
   const { camera, topInset, streamUrl, whepUrl, posterUrl, hdUrl, hdWhepUrl, onRequestHd, onExitHd, detections,
-    recordings, recordingsLoading, recordingDate, activePlayback, recordingActive, ptzActive, ptzFeedback, canPtz,
+    recordings, recordingsLoading, recordingDate, activePlayback, recordingActive, recordingBusy, ptzActive, ptzFeedback, canPtz,
     canPlayback, canDownload, myRecordings, notificationsMuted, onToggleNotifications, onBack, onSendPtz, onToggleRecording,
     audioLigado = false, onAudioLigadoChange,
     onSnapshot, onOpenPlayback, onClosePlayback, onSelectDate, onDownloadRecording, onPlayLocal, onDeleteLocal } = props;
   const { theme } = useTheme();
+  const workflow = useCameraWorkflow();
   const s = makeStyles(theme);
   // Em paisagem a barra de navegação do Android ocupa uma lateral — os controles
   // da tela cheia respeitam os insets para não ficarem atrás dela.
@@ -287,6 +289,7 @@ export function LiveScreenRedesign(props: Props) {
           <Text style={s.name} numberOfLines={1}>{camera.name}</Text>
           <Text style={s.meta} numberOfLines={1}>{(camera.group?.name ?? 'Câmera')} · {resLabel}{fpsLabel ? ` · ${fpsLabel}` : ''}</Text>
         </View>
+        {camera.canSelfManage === true && workflow ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Editar câmera" disabled={recordingActive || recordingBusy} accessibilityState={{ disabled: recordingActive || recordingBusy }} onPress={() => workflow.editCamera(camera)} style={[s.backBtn, { opacity: recordingActive || recordingBusy ? 0.4 : 1 }]}><Icon name="edit" size={19} color={theme.text} /></TouchableOpacity> : null}
         {isPlaying ? (
           <View style={s.dateBadge}><Text style={s.dateText}>{new Date(activePlayback!.recording.startedAt).toLocaleDateString('pt-BR')}</Text></View>
         ) : (

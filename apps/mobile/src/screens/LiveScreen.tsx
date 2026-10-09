@@ -11,6 +11,7 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import React, { useEffect, useState } from 'react';
 import { useLiveQuality } from '../hooks/useLiveQuality';
+import { useCameraWorkflow } from '../components/CameraWorkflowContext';
 import { FlatList, ActivityIndicator, Image, type LayoutChangeEvent, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DetectionOverlay } from '../components/DetectionOverlay';
@@ -138,6 +139,7 @@ export function LiveScreen({
   audioLigado = false, onAudioLigadoChange, gravacaoSistemaAtiva = false,
   gravacaoSistemaOcupada = false, onToggleGravacaoSistema }: LiveScreenProps) {
   const { theme } = useTheme();
+  const workflow = useCameraWorkflow();
   const [liveStatus, setLiveStatus] = useState<LiveStatus>('idle');
   const [videoSize, setVideoSize] = useState({ width: 0, height: 0 });
   const [muted, setMuted] = useState(!audioLigado); // CCTV abre mudo por padrão
@@ -430,6 +432,7 @@ export function LiveScreen({
             {areaLabel(camera)}
           </Text>
         </View>
+        {camera.canSelfManage === true && workflow ? <Pressable accessibilityRole="button" accessibilityLabel="Editar câmera" disabled={recordingActive || recordingBusy} accessibilityState={{ disabled: recordingActive || recordingBusy }} onPress={() => workflow.editCamera(camera)} style={[styles.headerBack, { backgroundColor: theme.surfaceAlt, opacity: recordingActive || recordingBusy ? 0.4 : 1 }]}><Icon name="edit" size={19} color={theme.text} /></Pressable> : null}
         {badge}
       </View>
 
