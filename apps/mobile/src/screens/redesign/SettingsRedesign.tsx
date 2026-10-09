@@ -81,7 +81,7 @@ export function SettingsRedesign(props: Props) {
   return (
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
       <ScrollView contentContainerStyle={s.root} showsVerticalScrollIndicator={false}>
-        <Text style={s.title}>Ajustes</Text>
+          <Text style={s.title}>Configurações</Text>
 
         {/* Perfil */}
         <View style={s.card}>

@@ -109,11 +109,13 @@ test('ao vivo recupera WebRTC congelado e abre câmera única em máxima qualida
   assert(whep.includes('pc.getStats()'), 'sessão ICE conectada precisa vigiar avanço real de mídia');
   assert(whep.includes('MEDIA_STALL_TIMEOUT_MS'), 'WebRTC congelado precisa de limite explícito');
   assert(!player.includes('30_000'), 'HLS estável não pode ser interrompido por sondagem WebRTC periódica');
-  assert(live.includes('useState(true)') && redesign.includes('useState(true)'), 'tela única deve começar em máxima qualidade');
+  const quality = readFileSync('src/hooks/useLiveQuality.ts', 'utf8');
+  assert(quality.includes('hdMode: true') && quality.includes('void select(true)'), 'tela única deve começar em máxima qualidade');
+  assert(live.includes('useLiveQuality(camera.id, onRequestHd, onExitHd, audioLigado)') && redesign.includes('useLiveQuality(camera.id, onRequestHd, onExitHd, audioLigado)'), 'as duas telas devem compartilhar a seleção segura de qualidade e áudio');
   assert(app.includes('setHdWhepUrl(whep)'), 'HD+ deve priorizar o WebRTC original em vez de forçar HLS');
   assert(app.includes("'X-S2Cam-Native-WebRTC': 'hevc'"), 'app nativo deve declarar a tentativa HEVC/WHEP ao servidor');
   assert(live.includes('whepUri={hdWhepUrl}') && redesign.includes('whepUri={hdActive ? hdWhepUrl : whepUrl}'), 'as duas telas ao vivo devem entregar WHEP no HD+');
-  assert(live.includes("{hdMode ? 'Economia' : 'HD+'}") && redesign.includes("label={hdMode ? 'Economia' : 'HD+'}"), 'o botão deve mostrar a qualidade para a qual vai trocar');
+  assert(live.includes("{hdMode ? 'HD+' : 'Economia'}") && redesign.includes("label={hdMode ? 'HD+' : 'Economia'}"), 'o botão deve mostrar a qualidade selecionada, não a próxima ação');
 });
 
 test('login mantém os campos visíveis acima do teclado', () => {
@@ -166,7 +168,7 @@ test('barra ao vivo deixa PTZ fechado, acessível e mantém as ações na ordem 
     assert(current > previous, `${label} deve respeitar a ordem da barra`);
     previous = current;
   }
-  const hd = row.indexOf("label={hdMode ? 'Economia' : 'HD+'}");
+  const hd = row.indexOf("label={hdMode ? 'HD+' : 'Economia'}");
   const ptz = row.indexOf('label="PTZ"');
   const tela = row.indexOf('label="Tela"');
   assert(hd >= 0 && ptz > hd && tela > ptz, 'PTZ autorizado deve aparecer depois da qualidade e antes da tela cheia');

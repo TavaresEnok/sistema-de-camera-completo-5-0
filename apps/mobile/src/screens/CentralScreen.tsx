@@ -34,6 +34,7 @@ interface CentralScreenProps {
   onOpenAlarms: () => void;
   onOpenMosaic: () => void;
   onOpenPlayback: () => void;
+  onOpenSettings: () => void;
   onPosterError?: (cameraId: string) => void;
   apiUrl: string;
   token: string | null;
@@ -53,7 +54,7 @@ function todayLabel(): string {
 
 export function CentralScreen({
   cameras, user, streamPosters, operationalMessages, alarms, alarmCount, refreshing, onRefresh,
-  onOpenCamera, onOpenAlarms, onOpenMosaic, onOpenPlayback, onPosterError,
+  onOpenCamera, onOpenAlarms, onOpenMosaic, onOpenPlayback, onOpenSettings, onPosterError,
   apiUrl, token, onCamerasChanged,
 }: CentralScreenProps) {
   const { theme, branding } = useTheme();
@@ -96,12 +97,12 @@ export function CentralScreen({
     >
       {/* ── Header: saudação × logo/sino/avatar ── */}
       <View style={styles.header}>
-        <View style={{ flexShrink: 1 }}>
+        <Pressable style={{ flexShrink: 1, minHeight: 44, justifyContent: 'center' }} accessibilityRole="button" accessibilityLabel="Abrir configurações" onPress={onOpenSettings}>
           <Text style={[styles.greeting, { color: theme.textSub }]}>{todayLabel()}</Text>
           <Text style={[styles.title, { color: theme.bgText }]} numberOfLines={1}>
             Olá, {user?.name?.trim().split(/\s+/)[0] ?? 'Usuário'}
           </Text>
-        </View>
+        </Pressable>
         <View style={styles.headerActions}>
           {branding.logoDataUrl ? (
             <Image source={{ uri: branding.logoDataUrl }} style={styles.headerLogo} resizeMode="contain" />
@@ -130,9 +131,9 @@ export function CentralScreen({
               </View>
             ) : null}
           </Pressable>
-          <View style={[styles.avatar, { backgroundColor: theme.accent }]}>
+          <Pressable style={[styles.avatar, { backgroundColor: theme.accent }]} hitSlop={8} accessibilityRole="button" accessibilityLabel="Configurações da conta" onPress={onOpenSettings}>
             <Text style={[styles.avatarText, { color: theme.textOnAccent }]}>{initialsOf(user?.name)}</Text>
-          </View>
+          </Pressable>
         </View>
       </View>
 

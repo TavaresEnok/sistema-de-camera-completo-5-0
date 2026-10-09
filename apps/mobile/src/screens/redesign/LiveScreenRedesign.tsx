@@ -17,6 +17,7 @@ import type { SavedClip } from '../../services/clips';
 import type { ActivePlayback, Camera, Direction, LiveDetection, Recording } from '../../types';
 import { isOnlineStatus, ptzLabel } from '../../utils/camera-view';
 import { localDateKey } from '../../utils/format';
+import { useLiveQuality } from '../../hooks/useLiveQuality';
 
 const TITLE = 'Sora';
 const UI = 'InstrumentSans';
@@ -35,7 +36,7 @@ interface Props {
   /** WebRTC/WHEP original: caminho prioritário e de baixa latência do HD+. */
   hdWhepUrl: string | null;
   onRequestHd: () => Promise<boolean>;
-  onExitHd: () => void;
+  onExitHd: () => Promise<boolean>;
   recordings: Recording[];
   recordingsLoading: boolean;
   recordingsLoadingMore: boolean;
@@ -135,31 +136,13 @@ export function LiveScreenRedesign(props: Props) {
       void ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => undefined);
     };
   }, [fullscreen]);
-  // Diagnóstico: HD+ usa exclusivamente WebRTC/WHEP; Economia mantém seu fallback.
-  const [hdMode, setHdMode] = useState(true);
-  const [hdRequestFailed, setHdRequestFailed] = useState(false);
+  const { hdMode, qualityLoading, qualityFailed, toggleHd, retryQuality } = useLiveQuality(camera.id, onRequestHd, onExitHd, audioLigado);
   const hdAvailable = !!hdWhepUrl || !!hdUrl;
   const hdActive = hdMode;
-  const requestHdRef = useRef(onRequestHd);
-  requestHdRef.current = onRequestHd;
   useEffect(() => {
-    setHdMode(true);
-    setHdRequestFailed(false);
-    setStatus('connecting');
-    void requestHdRef.current().then((opened) => {
-      if (!opened) { setHdRequestFailed(true); setStatus('offline'); }
-    });
-  }, [camera.id]);
-  const toggleHd = () => {
-    if (hdMode) { setHdMode(false); onExitHd(); }
-    else {
-      setHdMode(true);
-      setHdRequestFailed(false);
-      void onRequestHd().then((opened) => {
-        if (!opened) { setHdRequestFailed(true); setStatus('offline'); }
-      });
-    }
-  };
+    if (qualityLoading) setStatus('connecting');
+    else if (qualityFailed) setStatus('offline');
+  }, [qualityLoading, qualityFailed]);
   // A capacidade do equipamento é diagnosticada pela API no momento do comando.
   // Aqui a regra é de AUTORIZAÇÃO: sem a permissão efetiva, não pode existir um
   // caminho visual para abrir ou operar o PTZ, nem na tela normal nem na cheia.
@@ -176,8 +159,8 @@ export function LiveScreenRedesign(props: Props) {
     ? camera.detectedWidth / camera.detectedHeight
     : 16 / 9;
 
-  const resLabel = camera.detectedHeight ? `${camera.detectedHeight}p` : '1080p';
-  const fpsLabel = camera.detectedFps ? `${Math.round(camera.detectedFps)} fps` : '30 fps';
+  const resLabel = hdMode ? (camera.detectedHeight ? `${camera.detectedHeight}p` : 'HD+') : 'Vídeo reduzido';
+  const fpsLabel = hdMode && camera.detectedFps ? `${Math.round(camera.detectedFps)} fps` : null;
 
   // Elemento de vídeo compartilhado pelos dois layouts (normal e tela cheia).
   // Entrar/sair da tela cheia remonta o player (o stream reconecta em ~1s),
@@ -197,18 +180,15 @@ export function LiveScreenRedesign(props: Props) {
       initialPositionSeconds={activePlayback!.retomarEm ?? null}
       style={s.videoFill}
     />
-  ) : hdMode && !hdAvailable ? (
+  ) : qualityLoading || qualityFailed || (hdMode && !hdAvailable) ? (
     <View style={s.qualityLoading}>
-      {hdRequestFailed ? (
+      {qualityFailed ? (
         <>
-          <Text style={s.qualityLoadingText}>HD+ indisponível: não foi possível obter a conexão WebRTC/WHEP.</Text>
-          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Tentar HD+ novamente" onPress={() => {
-            setHdRequestFailed(false);
-            void onRequestHd().then((opened) => { if (!opened) setHdRequestFailed(true); });
-          }}><Text style={s.qualityLoadingText}>Tentar novamente</Text></TouchableOpacity>
+          <Text style={s.qualityLoadingText}>Não foi possível abrir o vídeo em {hdMode ? 'HD+' : 'Economia'}.</Text>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Tentar novamente" onPress={retryQuality}><Text style={s.qualityLoadingText}>Tentar novamente</Text></TouchableOpacity>
         </>
       ) : (
-        <><ActivityIndicator color="#ffffff" /><Text style={s.qualityLoadingText}>Conectando HD+ por WebRTC…</Text></>
+        <><ActivityIndicator color="#ffffff" /><Text style={s.qualityLoadingText}>Preparando vídeo em {hdMode ? 'HD+' : 'Economia'}…</Text></>
       )}
     </View>
   ) : (
@@ -305,7 +285,7 @@ export function LiveScreenRedesign(props: Props) {
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
           <Text style={s.name} numberOfLines={1}>{camera.name}</Text>
-          <Text style={s.meta} numberOfLines={1}>{(camera.group?.name ?? 'Câmera')} · {resLabel} · {fpsLabel}</Text>
+          <Text style={s.meta} numberOfLines={1}>{(camera.group?.name ?? 'Câmera')} · {resLabel}{fpsLabel ? ` · ${fpsLabel}` : ''}</Text>
         </View>
         {isPlaying ? (
           <View style={s.dateBadge}><Text style={s.dateText}>{new Date(activePlayback!.recording.startedAt).toLocaleDateString('pt-BR')}</Text></View>
@@ -357,7 +337,7 @@ export function LiveScreenRedesign(props: Props) {
             <ActionBtn s={s} theme={theme} icon={recordingActive ? 'pause' : 'aperture'} label={props.recordingBusy ? (recordingActive ? 'Salvando…' : 'Preparando…') : recordingActive ? 'Parar clipe' : 'Clipe no celular'} active={recordingActive} danger={recordingActive} disabled={props.recordingBusy} onPress={() => onToggleRecording(camera)} />
             {props.onToggleSystemRecording && <ActionBtn s={s} theme={theme} icon="server" label={props.systemRecordingActive ? 'Parar manual' : 'Sistema: até 10 min'} active={props.systemRecordingActive} disabled={props.systemRecordingBusy} onPress={() => props.onToggleSystemRecording?.(camera)} />}
             <ActionBtn s={s} theme={theme} icon="bell" label={notificationsMuted ? 'Silenciada' : 'Notificar'} active={!notificationsMuted} onPress={() => onToggleNotifications(camera)} />
-            <ActionBtn s={s} theme={theme} icon="maximize" label={hdMode ? 'Economia' : 'HD+'} active={hdMode} onPress={toggleHd} />
+            <ActionBtn s={s} theme={theme} icon="maximize" label={hdMode ? 'HD+' : 'Economia'} hint={hdMode ? 'Toque para economizar dados' : 'Toque para usar HD+'} active={hdMode} onPress={toggleHd} />
             {canPtz ? (
               <ActionBtn s={s} theme={theme} icon="crosshair" label="PTZ" active={ptzOpen} onPress={() => setPtzOpen((open) => !open)} />
             ) : null}
@@ -710,10 +690,10 @@ function recentDateChips(): Array<{ key: string; dow: string; num: string }> {
   return out;
 }
 
-function ActionBtn({ s, theme, icon, label, active, danger, disabled, onPress }: { s: any; theme: any; icon: IconName; label: string; active?: boolean; danger?: boolean; disabled?: boolean; onPress: () => void }) {
+function ActionBtn({ s, theme, icon, label, hint, active, danger, disabled, onPress }: { s: any; theme: any; icon: IconName; label: string; hint?: string; active?: boolean; danger?: boolean; disabled?: boolean; onPress: () => void }) {
   const color = danger ? theme.danger : active ? theme.accent : theme.text;
   return (
-    <TouchableOpacity accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected: active, disabled: !!disabled }} style={[s.actionBtn, active && { backgroundColor: theme.accentBg, borderColor: theme.accent }, disabled && { opacity: 0.4 }]} disabled={disabled} onPress={onPress} activeOpacity={0.8}>
+    <TouchableOpacity accessibilityRole="button" accessibilityLabel={label} accessibilityHint={hint} accessibilityState={{ selected: active, disabled: !!disabled }} style={[s.actionBtn, active && { backgroundColor: theme.accentBg, borderColor: theme.accent }, disabled && { opacity: 0.4 }]} disabled={disabled} onPress={onPress} activeOpacity={0.8}>
       <Icon name={icon} size={20} color={color} />
       <Text style={[s.actionLabel, { color: active ? theme.accent : theme.textSub }]}>{label}</Text>
     </TouchableOpacity>

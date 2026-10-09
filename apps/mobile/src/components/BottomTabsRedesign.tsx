@@ -1,5 +1,5 @@
 /**
- * Tab bar do redesign — flutuante (Início/Câmeras/Ronda/Eventos/Ajustes).
+ * Tab bar do redesign — flutuante (Início/Câmeras/Eventos/Configurações).
  * Mapeia para as abas existentes do app (central/mosaico/alarmes/ajustes) para não mudar
  * a lógica de navegação. Reprodução continua acessível de dentro das telas.
  */
@@ -18,9 +18,8 @@ interface Props {
 const TABS: Array<{ id: Tab; label: string; icon: IconName }> = [
   { id: 'central', label: 'Início', icon: 'home' },
   { id: 'mosaico', label: 'Câmeras', icon: 'camera' },
-  { id: 'ronda', label: 'Ronda', icon: 'clock' },
   { id: 'alarmes', label: 'Eventos', icon: 'bell' },
-  { id: 'ajustes', label: 'Ajustes', icon: 'settings' },
+  { id: 'ajustes', label: 'Config.', icon: 'settings' },
 ];
 
 export function BottomTabsRedesign({ active, onChange, alarmCount = 0 }: Props) {
@@ -46,7 +45,7 @@ export function BottomTabsRedesign({ active, onChange, alarmCount = 0 }: Props) 
               accessibilityState={{ selected: on }}
               accessibilityLabel={
                 tab.id === 'alarmes' && alarmCount > 0 ? `${tab.label}, ${alarmCount} em aberto`
-                : tab.label
+                : tab.id === 'ajustes' ? 'Configurações' : tab.label
               }
             >
               <View>

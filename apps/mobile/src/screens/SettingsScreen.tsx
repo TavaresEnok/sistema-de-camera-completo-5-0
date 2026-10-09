@@ -51,7 +51,7 @@ export function SettingsScreen({
 
   return (
     <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-      <Text style={[styles.title, { color: theme.bgText }]}>Ajustes</Text>
+        <Text style={[styles.title, { color: theme.bgText }]}>Configurações</Text>
 
       {/* Perfil */}
       <View style={[styles.profile, { backgroundColor: theme.surface, borderColor: theme.border }]}>

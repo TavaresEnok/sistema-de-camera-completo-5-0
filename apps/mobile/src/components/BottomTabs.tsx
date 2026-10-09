@@ -18,10 +18,9 @@ interface BottomTabsProps {
 const TABS: Array<{ id: Tab; label: string; icon: IconName }> = [
   { id: 'central', label: 'Central', icon: 'home' },
   { id: 'mosaico', label: 'Mosaico', icon: 'grid' },
-  { id: 'ronda', label: 'Ronda', icon: 'clock' },
   { id: 'reproducao', label: 'Reprodução', icon: 'play' },
   { id: 'alarmes', label: 'Alarmes', icon: 'bell' },
-  { id: 'ajustes', label: 'Ajustes', icon: 'settings' },
+  { id: 'ajustes', label: 'Config.', icon: 'settings' },
 ];
 
 export function BottomTabs({ active, onChange, alarmCount = 0 }: BottomTabsProps) {
@@ -50,7 +49,7 @@ export function BottomTabs({ active, onChange, alarmCount = 0 }: BottomTabsProps
             style={styles.tab}
             onPress={() => onChange(tab.id)}
             accessibilityRole="tab"
-            accessibilityLabel={tab.label}
+            accessibilityLabel={tab.id === 'ajustes' ? 'Configurações' : tab.label}
             accessibilityState={{ selected: on }}
           >
             <View style={styles.iconWrap}>

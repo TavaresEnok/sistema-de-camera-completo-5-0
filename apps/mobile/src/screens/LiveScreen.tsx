@@ -9,7 +9,8 @@
  * PTZ, gravação e playback são ações reais via callbacks do App.
  */
 import { LinearGradient } from 'expo-linear-gradient';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { useLiveQuality } from '../hooks/useLiveQuality';
 import { FlatList, ActivityIndicator, Image, type LayoutChangeEvent, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DetectionOverlay } from '../components/DetectionOverlay';
@@ -35,7 +36,7 @@ interface LiveScreenProps {
   /** WebRTC/WHEP original: caminho prioritário do HD+ com baixa latência. */
   hdWhepUrl: string | null;
   onRequestHd: () => Promise<boolean>;
-  onExitHd: () => void;
+  onExitHd: () => Promise<boolean>;
   detections: LiveDetection[];
   ptzActive: Direction | null;
   ptzFeedback: string | null;
@@ -126,7 +127,7 @@ function tokensFor(glass: boolean, theme: Theme): ControlTokens {
 }
 
 export function LiveScreen({
-  camera, topInset = 0, streamUrl, whepUrl, posterUrl, hdWhepUrl, onRequestHd, onExitHd, detections, ptzActive, ptzFeedback,
+  camera, topInset = 0, streamUrl, whepUrl, posterUrl, hdUrl, hdWhepUrl, onRequestHd, onExitHd, detections, ptzActive, ptzFeedback,
   recordings, recordingsTotal, recordingsLoading, recordingsLoadingMore, recordingsError,
   myRecordings, onPlayLocal, onDeleteLocal, recordingDate, activePlayback, recordingActive, recordingBusy, snapshotBusy,
   onBack, onSendPtz, onToggleRecording, onSnapshot,
@@ -143,31 +144,13 @@ export function LiveScreen({
   useEffect(() => { setMuted(!audioLigado); }, [audioLigado]);
   // null = ainda não sabemos (conectando/HLS); false = stream sem faixa de áudio.
   const [audioAvailable, setAudioAvailable] = useState<boolean | null>(null);
-  // Diagnóstico: HD+ usa exclusivamente WebRTC/WHEP.
-  const [hdMode, setHdMode] = useState(true);
-  const [hdRequestFailed, setHdRequestFailed] = useState(false);
-  const hdAvailable = !!hdWhepUrl;
+  const { hdMode, qualityLoading, qualityFailed, toggleHd, retryQuality } = useLiveQuality(camera.id, onRequestHd, onExitHd, audioLigado);
+  const hdAvailable = !!hdWhepUrl || !!hdUrl;
   const hdActive = hdMode;
-  const requestHdRef = useRef(onRequestHd);
-  requestHdRef.current = onRequestHd;
   useEffect(() => {
-    setHdMode(true);
-    setHdRequestFailed(false);
-    setLiveStatus('connecting');
-    void requestHdRef.current().then((opened) => {
-      if (!opened) { setHdRequestFailed(true); setLiveStatus('offline'); }
-    });
-  }, [camera.id]);
-  const toggleHd = () => {
-    if (hdMode) { setHdMode(false); onExitHd(); }
-    else {
-      setHdMode(true);
-      setHdRequestFailed(false);
-      void onRequestHd().then((opened) => {
-        if (!opened) { setHdRequestFailed(true); setLiveStatus('offline'); }
-      });
-    }
-  };
+    if (qualityLoading) setLiveStatus('connecting');
+    else if (qualityFailed) setLiveStatus('offline');
+  }, [qualityLoading, qualityFailed]);
   const [fullscreen, setFullscreen] = useState(false);
   const [lowerMode, setLowerMode] = useState<'timeline' | 'ptz'>('timeline');
   const [recTab, setRecTab] = useState<'system' | 'mine'>('system');
@@ -225,26 +208,24 @@ export function LiveScreen({
     <>
       {playing ? (
         <PlaybackVideo uri={activePlayback!.url} posterUri={activePlayback!.recording.thumbnailUrl} onRetry={onRetryPlayback} onNaoDecodificou={onNaoDecodificou} onProgresso={onProgressoPlayback} initialPositionSeconds={activePlayback!.retomarEm ?? null} style={StyleSheet.absoluteFill} />
-      ) : hdMode && !hdAvailable ? (
+      ) : qualityLoading || qualityFailed || (hdMode && !hdAvailable) ? (
         <View style={[StyleSheet.absoluteFill, styles.qualityLoading]}>
-          {hdRequestFailed ? (
+          {qualityFailed ? (
             <>
-              <Text style={styles.qualityLoadingText}>A qualidade máxima está indisponível no momento.</Text>
-              <Pressable accessibilityRole="button" accessibilityLabel="Tentar HD+ novamente" onPress={() => {
-                setHdRequestFailed(false);
-                void onRequestHd().then((opened) => { if (!opened) setHdRequestFailed(true); });
-              }}><Text style={styles.qualityLoadingText}>Tentar novamente</Text></Pressable>
+              <Text style={styles.qualityLoadingText}>Não foi possível abrir o vídeo em {hdMode ? 'HD+' : 'Economia'}.</Text>
+              <Pressable accessibilityRole="button" accessibilityLabel="Tentar novamente" onPress={retryQuality}><Text style={styles.qualityLoadingText}>Tentar novamente</Text></Pressable>
             </>
           ) : (
-            <><ActivityIndicator color="#ffffff" /><Text style={styles.qualityLoadingText}>Preparando vídeo em alta qualidade…</Text></>
+            <><ActivityIndicator color="#ffffff" /><Text style={styles.qualityLoadingText}>Preparando vídeo em {hdMode ? 'HD+' : 'Economia'}…</Text></>
           )}
         </View>
       ) : hdActive ? (
-        // Sem fallback para HLS: a falha WebRTC deve permanecer visível no teste.
+        // Recuperação de codec usa o MESMO original, nunca reduz silenciosamente.
         <LiveVideo
-          uri={null}
+          uri={hdUrl}
           whepUri={hdWhepUrl}
           webrtcOnly
+          hlsOnConfirmedWhepIncompatibility
           posterUri={posterUrl}
           videoStyle={styles.videoFill}
           muted={muted}
@@ -254,6 +235,7 @@ export function LiveScreen({
           emptyTitleStyle={styles.videoEmptyTitle}
           emptyTextStyle={styles.videoEmptyText}
           onStatusChange={setLiveStatus}
+          onAudioAvailable={setAudioAvailable}
           onNeedRefresh={onRequestHd}
         />
       ) : (
@@ -304,12 +286,13 @@ export function LiveScreen({
       onPress={toggleHd}
       hitSlop={8}
       accessibilityRole="button"
-      accessibilityLabel={hdMode ? 'Usar economia de dados' : 'Usar máxima resolução'}
+      accessibilityLabel={hdMode ? 'HD+' : 'Economia'}
+      accessibilityHint={hdMode ? 'Toque para economizar dados' : 'Toque para usar HD+'}
       accessibilityState={{ selected: hdMode }}
       style={[styles.hdPill, hdMode ? { backgroundColor: theme.accent, borderColor: theme.accent } : null]}
     >
       <Icon name="aperture" size={11} color="#fff" strokeWidth={2.4} />
-      <Text style={styles.hdPillText}>{hdMode ? 'Economia' : 'HD+'}</Text>
+      <Text style={styles.hdPillText}>{hdMode ? 'HD+' : 'Economia'}</Text>
     </Pressable>
   ) : null;
 

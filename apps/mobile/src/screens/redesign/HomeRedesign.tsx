@@ -39,6 +39,7 @@ interface Props {
   onOpenAlarms: () => void;
   onOpenMosaic: () => void;
   onOpenPlayback: () => void;
+  onOpenSettings: () => void;
   facilityName?: string;
   /** Poster expirado/quebrado → pede um novo ao App. */
   onPosterError?: (cameraId: string) => void;
@@ -119,10 +120,10 @@ export function HomeRedesign(props: Props) {
       >
       {/* Header */}
       <View style={styles.header}>
-        <View style={{ flex: 1 }}>
+        <TouchableOpacity style={{ flex: 1, minHeight: 44, justifyContent: 'center' }} accessibilityRole="button" accessibilityLabel="Abrir configurações" onPress={props.onOpenSettings}>
           <Text style={styles.greet}>{greeting()},</Text>
           <Text style={styles.client} numberOfLines={1}>{clientName}</Text>
-        </View>
+        </TouchableOpacity>
         <TouchableOpacity accessibilityRole="button" accessibilityLabel="Adicionar câmera" style={[styles.iconBtn, { backgroundColor: theme.accent }]} onPress={() => setAddCameraOpen(true)} activeOpacity={0.8}>
           <Icon name="plus" size={20} color={theme.textOnAccent} strokeWidth={2.4} />
         </TouchableOpacity>
@@ -130,9 +131,9 @@ export function HomeRedesign(props: Props) {
           <Icon name="bell" size={19} color={theme.text} />
           {alarmCount > 0 ? <View style={styles.badgeDot} /> : null}
         </TouchableOpacity>
-        <View style={styles.avatar}>
+        <TouchableOpacity style={styles.avatar} hitSlop={8} accessibilityRole="button" accessibilityLabel="Configurações da conta" onPress={props.onOpenSettings}>
           <Text style={styles.avatarText}>{initials(user?.name)}</Text>
-        </View>
+        </TouchableOpacity>
       </View>
 
       {/* Pílulas de status */}

@@ -29,9 +29,7 @@ import { request, normalizeServerUrl, setTokenRefreshHandler, setUnauthorizedHan
 import { authenticatedMediaUrl, isSecureMediaUrl } from './src/services/media-urls';
 import { fetchBranding, isLightColor, loadCachedBranding, saveCachedBranding } from './src/services/branding';
 import { clearStreamUrlsCache, requestCachedStreamUrls, type ModoDeEntrega } from './src/services/stream-urls-cache';
-import { RondaScreen } from './src/screens/RondaScreen';
 import { lerPreferenciaDePush, salvarPreferenciaDePush } from './src/services/pushPreference';
-import type { MosaicoDoApp, RondaDoApp } from './src/utils/ronda';
 import {
   saveToGallery, addClip, listClips, removeClip, createClipThumbnail,
   listPendingClips, savePendingClip, removePendingClip,
@@ -153,9 +151,6 @@ function AppInner() {
     }, 15_000);
     return () => clearInterval(timer);
   }, [liveCamera?.id, session?.token]);
-  // RONDA: o servidor já marcava quais aparecem no celular e o app ignorava.
-  const [rondas, setRondas] = useState<RondaDoApp[]>([]);
-  const [mosaicos, setMosaicos] = useState<MosaicoDoApp[]>([]);
   const [canManageAlarms, setCanManageAlarms] = useState(false);
   const [streamUrls, setStreamUrls] = useState<Record<string, string | null>>({});
   const [streamWhep, setStreamWhep] = useState<Record<string, string | null>>({});
@@ -550,14 +545,12 @@ function AppInner() {
       // original (ex.: H.265) não existe na oferta WebRTC deste Android.
       setHdUrl(hls);
       setHdWhepUrl(whep);
-      void loadStream(cameraId, modoDaGrade());
       return true;
     } catch {
       if (sessionTokenRef.current !== token || hdRequestRef.current !== generation || liveCameraIdRef.current !== cameraId) return false;
       setHdUrl(null);
       setHdWhepUrl(null);
-      // O modo HD+ exibe a falha WHEP; Economia só abre por escolha do usuário.
-      void loadStream(cameraId, modoDaGrade(), true);
+      // Economia só é solicitada quando escolhida pelo usuário.
       return false;
     }
   };
@@ -741,7 +734,6 @@ function AppInner() {
       setLastSyncError(null);
       setSelectedCameraId((current) => (current && data.some((camera) => camera.id === current) ? current : data[0]?.id ?? null));
       void reloadAlarms();
-      void carregarRondas();
       // Status sonda a cada 30s; posters têm renovação própria (3,5 min) para
       // não forçar dezenas de frames a cada ciclo silencioso.
       if (!quiet) void loadAllPosters(data);
@@ -767,45 +759,21 @@ function AppInner() {
   /** Perfil de máxima qualidade, idem. */
   const modoMaxima = (): ModoDeEntrega => (audioAoVivoRef.current || (audioPreparadoCameraRef.current !== null && audioPreparadoCameraRef.current === liveCameraIdRef.current) ? 'original-audio' : 'original');
 
-  /**
-   * Rondas e mosaicos do usuário. Best-effort: instalação antiga (sem estas
-   * rotas) apenas fica sem a aba, em vez de quebrar o carregamento.
-   */
-  const carregarRondas = async () => {
-    if (!session) return;
-    const token = session.token;
-    const vazio = { items: [] as never[] };
-    const compatible = (error: unknown) => {
-      if ((error as { status?: number })?.status === 404) return vazio;
-      throw error;
-    };
-    try {
-      const [listaRondas, listaMosaicos] = await Promise.all([
-        request<{ items: RondaDoApp[] }>(session.apiUrl, '/rondas', session.token).catch(compatible),
-        request<{ items: MosaicoDoApp[] }>(session.apiUrl, '/live-layouts', session.token).catch(compatible),
-      ]);
-      if (sessionTokenRef.current !== token) return;
-      setRondas(listaRondas?.items ?? []);
-      setMosaicos(listaMosaicos?.items ?? []);
-    } catch {
-      if (sessionTokenRef.current === token) showAppNotice('Rondas não atualizadas', 'Não foi possível consultar as rondas e os mosaicos. Tente atualizar novamente.', 'warning');
-    }
-  };
-
-  const loadStream = async (cameraId: string, viewMode: ModoDeEntrega = 'original', force = false) => {
-    if (!session) return;
+  const loadStream = async (cameraId: string, viewMode: ModoDeEntrega = 'original', force = false): Promise<boolean> => {
+    if (!session) return false;
     const token = session.token;
     const generation = (streamRequestRef.current.get(cameraId) ?? 0) + 1;
     streamRequestRef.current.set(cameraId, generation);
     try {
       if (force) clearStreamUrlsCache(cameraId);
       const data = await requestCachedStreamUrls<StreamUrls>(session.apiUrl, cameraId, session.token, undefined, viewMode);
-      if (sessionTokenRef.current !== token || streamRequestRef.current.get(cameraId) !== generation) return;
+      if (sessionTokenRef.current !== token || streamRequestRef.current.get(cameraId) !== generation) return false;
       const hlsUrl = authenticatedMediaUrl(data.protocols?.hlsUrl, session.apiUrl, data.streamToken);
       const whepRaw =
         data.protocols?.whepUrl
         ?? (data.protocols?.webrtcUrl ? `${data.protocols.webrtcUrl.replace(/\/+$/, '')}/whep` : null);
       const whepUrl = authenticatedMediaUrl(whepRaw, session.apiUrl, data.streamToken);
+      if (!hlsUrl && !whepUrl) throw new Error('Vídeo indisponível no momento.');
       // Poster montado a partir do session.apiUrl (alcançável pelo celular), não
       // do host que a API devolve (pode ser interno do Docker atrás do nginx).
       const posterUrl = data.streamToken ? cameraPosterUrl(session.apiUrl, cameraId, data.streamToken) : null;
@@ -819,8 +787,9 @@ function AppInner() {
       if (session.apiUrl.startsWith('https://') && ((hlsUrl && !isSecureMediaUrl(hlsUrl)) || (whepUrl && !isSecureMediaUrl(whepUrl)))) {
         setLastSyncError('A mídia ao vivo precisa ser publicada por HTTPS nesta instalação.');
       }
+      return true;
     } catch (error) {
-      if (sessionTokenRef.current !== token || streamRequestRef.current.get(cameraId) !== generation) return;
+      if (sessionTokenRef.current !== token || streamRequestRef.current.get(cameraId) !== generation) return false;
       if (viewMode === 'grid-audio' && audioPreparadoCameraRef.current === cameraId) {
         audioPreparadoCameraRef.current = null;
       }
@@ -835,7 +804,15 @@ function AppInner() {
       if (motivo && liveCameraIdRef.current === cameraId && !/\b(401|403)\b/.test(motivo)) {
         setLastSyncError(motivo);
       }
+      return false;
     }
+  };
+
+  const exitHdStream = (cameraId: string): Promise<boolean> => {
+    hdRequestRef.current += 1;
+    setHdUrl(null);
+    setHdWhepUrl(null);
+    return loadStream(cameraId, modoDaGrade());
   };
 
   // Posters ficam em cache local por 3 dias. Somente um lote pequeno é renovado
@@ -1329,8 +1306,8 @@ function AppInner() {
     const cameraId = liveCameraIdRef.current;
     if (!cameraId || !ligado || audioPreparadoCameraRef.current === cameraId) return;
     audioPreparadoCameraRef.current = cameraId;
-    void loadStream(cameraId, 'grid-audio', true);
-    if (hdWhepUrl) void loadHdStream(cameraId);
+    // A tela renova o perfil selecionado pelo mesmo controlador da qualidade.
+    // Assim o som não cria uma requisição concorrente nem restaura o HD+.
   };
 
   /** Estado da gravação da câmera NO SISTEMA (a que vai para o acervo). */
@@ -1742,7 +1719,7 @@ function AppInner() {
             hdUrl={hdUrl}
             hdWhepUrl={hdWhepUrl}
             onRequestHd={() => loadHdStream(live.id)}
-            onExitHd={() => { void loadStream(live.id, 'grid'); }}
+            onExitHd={() => exitHdStream(live.id)}
             recordings={recordings}
             recordingsLoading={recordingsLoading}
             recordingsLoadingMore={recordingsLoadingMore}
@@ -1790,7 +1767,7 @@ function AppInner() {
             onThumbnailError={refreshExpiredThumbnails}
             onPlayLocal={playLocalClip}
             onDeleteLocal={deleteLocalClip}
-            onRefreshStream={() => { void loadStream(live.id, 'grid', true); }}
+            onRefreshStream={() => { void loadStream(live.id, modoDaGrade(), true); }}
             abrindoGravacaoId={abrindoGravacaoId}
           />
         ) : (
@@ -1803,7 +1780,7 @@ function AppInner() {
           hdUrl={hdUrl}
           hdWhepUrl={hdWhepUrl}
           onRequestHd={() => loadHdStream(live.id)}
-          onExitHd={() => { void loadStream(live.id, 'grid'); }}
+          onExitHd={() => exitHdStream(live.id)}
           detections={liveDetections}
           ptzActive={ptzActive}
           ptzFeedback={ptzFeedback}
@@ -1840,7 +1817,7 @@ function AppInner() {
           onLoadMoreRecordings={loadMoreRecordings}
           onRetryRecordings={() => { if (selectedCamera) void loadRecordings(selectedCamera.id, recordingDateRef.current); }}
           onThumbnailError={refreshExpiredThumbnails}
-          onRefreshStream={() => { void loadStream(live.id, 'grid', true); }}
+          onRefreshStream={() => { void loadStream(live.id, modoDaGrade(), true); }}
           canPlayback={capabilities.playback}
           canDownload={capabilities.exportEvidence}
           downloadingIds={downloadingIds}
@@ -1890,6 +1867,7 @@ function AppInner() {
               onOpenAlarms={() => setTab('alarmes')}
               onOpenMosaic={() => setTab('mosaico')}
               onOpenPlayback={() => setTab('reproducao')}
+              onOpenSettings={() => setTab('ajustes')}
               facilityName={branding.facilityName}
               onPosterError={(cameraId) => { void refreshPoster(cameraId); }}
               apiUrl={session.apiUrl}
@@ -1910,6 +1888,7 @@ function AppInner() {
             onOpenAlarms={() => setTab('alarmes')}
             onOpenMosaic={() => setTab('mosaico')}
             onOpenPlayback={() => setTab('reproducao')}
+            onOpenSettings={() => setTab('ajustes')}
             onPosterError={(cameraId) => { void refreshPoster(cameraId); }}
             apiUrl={session.apiUrl}
             token={session.token}
@@ -1978,21 +1957,6 @@ function AppInner() {
             onRetry={() => { if (selectedCamera) void loadRecordings(selectedCamera.id, recordingDateRef.current); }}
             onThumbnailError={refreshExpiredThumbnails}
             abrindoGravacaoId={abrindoGravacaoId}
-          />
-        )}
-
-        {tab === 'ronda' && (
-          <RondaScreen
-            rondas={rondas}
-            mosaicos={mosaicos}
-            cameras={cameras}
-            streamUrls={streamUrls}
-            streamWhep={streamWhep}
-            streamPosters={streamPosters}
-            refreshing={refreshing}
-            onRefresh={() => { void loadAll(); }}
-            onRequestStreams={(ids) => { void Promise.all(ids.map((id) => loadStream(id, modoDaGrade()))); }}
-            onOpenCamera={openLive}
           />
         )}
 
