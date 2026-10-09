@@ -162,7 +162,7 @@ export class CamerasController {
     await this.commercialPolicy.assertFeature('addCameras', user);
     // Teto contratado: a Central define quantas câmeras esta instalação pode ter.
     await this.commercialPolicy.assertCameraQuota(1, user);
-    const result = await this.camerasService.testConnectionDraft(dto);
+    const result = await this.camerasService.testConnectionDraft(dto, { quickSetup: true });
     await this.auditService.log(user.id, 'camera.test_private_connection', 'Camera', null, {
       ip: dto.ip,
       status: result.status,

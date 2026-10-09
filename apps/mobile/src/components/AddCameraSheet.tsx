@@ -23,7 +23,7 @@ import { discoverCameras, scanLocalNetwork, type ScanProgress } from '../service
 import { mergeDiscoveredCameras, parseCameraQr, type DiscoveredCamera } from '../services/camera-discovery-core';
 import { useTheme } from '../theme/ThemeProvider';
 import type { Theme } from '../theme/theme';
-import { cameraConnectionError, cameraConnectionPayload } from '../services/camera-setup';
+import { cameraConnectionError, cameraConnectionPayload, cameraConnectionTestPayload, cameraSetupFailureMessage } from '../services/camera-setup';
 import { Icon, type IconName } from './Icon';
 
 interface AddCameraSheetProps {
@@ -39,6 +39,7 @@ type Screen = 'home' | 'discover' | 'qr' | 'provision' | 'details' | 'review' | 
 type SourceMode = 'rtsp_pull' | 'rtmp_push';
 
 interface ConnectionResult {
+  failureCode?: string | null;
   status: 'ONLINE' | 'OFFLINE';
   rtspReachableAny: boolean;
   rtspAuthOk: boolean;
@@ -336,7 +337,7 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
       const result = await request<ConnectionResult>(apiUrl, '/cameras/mine/test-connection', token ?? undefined, {
         method: 'POST',
         signal: controller.signal, timeoutMs: 90_000,
-        body: JSON.stringify(cameraConnectionPayload(draft)),
+        body: JSON.stringify(cameraConnectionTestPayload(draft, automaticPort)),
       });
       if (operation !== operationRef.current) return;
       setConnection(result);
@@ -362,7 +363,10 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
           .catch(() => { if (operation === operationRef.current) setPreview({ ok: false, imageDataUrl: null, reason: 'A imagem de confirmação não ficou disponível.' }); })
           .finally(() => { if (operation === operationRef.current) setPreviewLoading(false); });
       }
-      else if (result.rtspReachableAny) {
+      else if (cameraSetupFailureMessage(result.failureCode)) {
+        setManualConnectionNeeded(true);
+        setError(cameraSetupFailureMessage(result.failureCode));
+      } else if (result.rtspReachableAny) {
         setManualConnectionNeeded(true);
         setError('O servidor encontrou a câmera, mas não abriu o vídeo. Confira usuário, senha e a porta do vídeo.');
       } else {

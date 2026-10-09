@@ -59,6 +59,7 @@ import {
   spawnWithSecretUrl,
 } from '../common/process/secret-url-process.helper';
 import { assessCameraCompatibility } from './helpers/camera-compatibility.helper';
+import { boundedMap, checkSetupRtsp, probeCameraSetup, setupRtspPorts } from './helpers/camera-setup-probe.helper';
 import {
   SNAPSHOT_MAX_BYTES,
   buildSnapshotFailure,
@@ -1273,7 +1274,64 @@ export class CamerasService implements OnApplicationBootstrap {
     };
   }
 
-  async testConnectionDraft(input: TestCameraConnectionDto) {
+  private async testCameraSetup(input: TestCameraConnectionDto) {
+    this.assertTestTargetAllowed(input.ip, input.rtspPort);
+    if (input.onvifPort != null) this.assertTestTargetAllowed(input.ip, input.onvifPort);
+    if (input.httpPort != null) this.assertTestTargetAllowed(input.ip, input.httpPort);
+    const startedAt = Date.now();
+    const deadline = startedAt + 60_000;
+    let media: { port: number | null; path: string | null; profiles: OnvifMediaProfile[]; errors: string[] } = { port: null, path: null, profiles: [], errors: [] };
+    let controlPorts: number[] = [];
+    const result = await probeCameraSetup({
+      port: input.rtspPort, mode: input.rtspPortMode, customPath: input.rtspPath?.trim(), deadline,
+      paths: this.buildRtspPathCandidates(input),
+    }, {
+      check: port => checkSetupRtsp(input.ip, port, Math.min(1500, Math.max(1, deadline - Date.now()))),
+      discover: async discoveryDeadline => {
+        if (!input.username || !input.password) return [];
+        const candidates = cameraControlPortCandidates(input, [80, 8000, 8080, 8899, 8075, 2020]);
+        const reachable = await boundedMap(candidates, 3, async port => ({
+          port, ok: Date.now() < discoveryDeadline && await this.portChecker.check(input.ip, port, Math.min(1000, Math.max(1, discoveryDeadline - Date.now()))),
+        }));
+        controlPorts = reachable.filter(item => item.ok).map(item => item.port);
+        media = await this.discoverOnvifMediaProfiles({
+          host: input.ip, ports: controlPorts, preferredPath: input.onvifPath,
+          username: input.username, password: input.password, deadline: discoveryDeadline,
+        });
+        return media.profiles;
+      },
+      probe: (port, paths, probeDeadline, concurrency) => this.probeRtspPaths({
+        ip: input.ip, rtspPorts: [port], username: input.username ?? '', password: input.password ?? '',
+        paths, concurrency, stopOnAuthDenied: true, skipBitrateEstimate: true, deadline: probeDeadline,
+      }),
+    });
+    const probe = result.probe;
+    const ok = probe?.ok === true;
+    return {
+      ip: input.ip, rtspPort: input.rtspPort, onvifPort: input.onvifPort ?? null, httpPort: input.httpPort ?? null,
+      rtspReachable: result.reachablePorts.includes(input.rtspPort), rtspReachableAny: result.reachablePorts.length > 0,
+      reachableRtspPorts: result.reachablePorts, onvifReachable: media.profiles.length > 0,
+      ptzDigestOk: false, reachableOnvifPorts: controlPorts, rtspAuthOk: ok,
+      selectedRtspPortAuthOk: ok && probe?.port === input.rtspPort,
+      detectedRtspPort: ok ? probe.port : null, detectedRtspPath: ok ? probe.path : null,
+      suggestedRtspPath: ok ? probe.path : null, detectedStream: ok ? probe.metadata : null,
+      rtspProbeError: probe?.error ?? null, failureCode: result.failure,
+      detectedOnvifPort: media.port, detectedOnvifPath: input.onvifPath ?? null,
+      detectedOnvifProfileToken: input.onvifProfileToken ?? null,
+      // Media service is not necessarily the PTZ endpoint; provisioning discovers it later.
+      hasEdgeAi: false, status: ok ? CameraStatus.ONLINE : CameraStatus.OFFLINE,
+      compatibility: assessCameraCompatibility({
+        selectedPath: ok ? probe.path : null, mainMetadata: ok ? probe.metadata : null,
+        rtspAuthenticated: ok, onvifProfilesFound: media.profiles.length,
+        onvifProfileNames: media.profiles.flatMap(profile => [profile.name, profile.rtspPath]),
+      }),
+      probeSteps: [{ key: 'camera_setup', label: 'Confirmar vídeo da câmera', status: ok ? 'ok' : 'warning', durationMs: Date.now() - startedAt }],
+      checkedAt: new Date().toISOString(),
+    };
+  }
+
+  async testConnectionDraft(input: TestCameraConnectionDto, options?: { quickSetup?: boolean }) {
+    if (options?.quickSetup) return this.testCameraSetup(input);
     this.assertTestTargetAllowed(input.ip, input.rtspPort);
     if (input.onvifPort != null) this.assertTestTargetAllowed(input.ip, input.onvifPort);
     if (input.httpPort != null) this.assertTestTargetAllowed(input.ip, input.httpPort);
@@ -1302,7 +1360,7 @@ export class CamerasService implements OnApplicationBootstrap {
       }
     };
     const rtspPortCandidates = Array.from(
-      new Set([input.rtspPort, 554, 8554, 10554, 5544, 51488, 51489, 51490].filter((v): v is number => Number.isFinite(v as number))),
+      new Set(setupRtspPorts(input.rtspPort, input.rtspPortMode)),
     );
     const reachableRtspPorts = await runStep(
       'rtsp_ports',
@@ -1493,9 +1551,9 @@ export class CamerasService implements OnApplicationBootstrap {
     const transmitindoAgora = null;
     const veredicto = decidirEstadoDaCamera({
       transmitindoAgora,
-      rtspAlcancavel: rtspReachable,
+      rtspAlcancavel: rtspReachableAny,
       onvifAlcancavel: onvifReachable,
-      autenticacaoRtspOk: selectedRtspPortAuthOk,
+      autenticacaoRtspOk: rtspAuthOk,
       temCredencial: Boolean(input.username),
     });
     const status: CameraStatus =
@@ -1930,6 +1988,7 @@ export class CamerasService implements OnApplicationBootstrap {
     username: string;
     password: string;
     timeout?: number;
+    deadline?: number;
   }): Promise<{ ok: boolean; message: string; responseBody?: string }> {
     const timeout = input.timeout ?? 3000;
     const baseHeaders = {
@@ -1939,9 +1998,26 @@ export class CamerasService implements OnApplicationBootstrap {
     };
 
     return new Promise((resolve) => {
+      const requests: http.ClientRequest[] = [];
+      let settled = false;
+      const finish = (value: { ok: boolean; message: string; responseBody?: string }) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        for (const request of requests) request.destroy();
+        resolve(value);
+      };
+      const timer = setTimeout(() => finish({ ok: false, message: 'ONVIF timeout' }),
+        Math.max(1, Math.min(timeout * 2, (input.deadline ?? Infinity) - Date.now())));
       const collect = (res: http.IncomingMessage, done: (value: { ok: boolean; message: string; responseBody?: string }) => void) => {
         const chunks: Buffer[] = [];
-        res.on('data', (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+        let bytes = 0;
+        res.on('error', () => finish({ ok: false, message: 'ONVIF resposta interrompida' }));
+        res.on('data', (chunk) => {
+          bytes += chunk.length;
+          if (bytes > 1024 * 1024) { finish({ ok: false, message: 'ONVIF resposta muito grande' }); res.destroy(); }
+          else chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        });
         res.on('end', () => {
           const text = Buffer.concat(chunks).toString('utf8');
           const parsed = this.parseSoapSuccess(res.statusCode, text);
@@ -1960,31 +2036,34 @@ export class CamerasService implements OnApplicationBootstrap {
 
       const req1 = http.request(requestOptions, (res1) => {
         if (res1.statusCode === 401) {
+          res1.resume();
           const authHeader = res1.headers['www-authenticate'];
           if (!authHeader || !String(authHeader).toLowerCase().startsWith('digest')) {
-            resolve({ ok: false, message: 'ONVIF auth não é Digest' });
+            finish({ ok: false, message: 'ONVIF auth não é Digest' });
             return;
           }
           const auth = this.buildDigestAuthorization('POST', input.path, String(authHeader), input.username, input.password);
           const req2 = http.request(
             { ...requestOptions, headers: { ...baseHeaders, Authorization: auth } },
-            (res2) => collect(res2, resolve),
+            (res2) => collect(res2, finish),
           );
-          req2.on('error', (error) => resolve({ ok: false, message: error.message }));
+          requests.push(req2);
+          req2.on('error', (error) => finish({ ok: false, message: error.message }));
           req2.on('timeout', () => {
             req2.destroy();
-            resolve({ ok: false, message: 'ONVIF timeout' });
+            finish({ ok: false, message: 'ONVIF timeout' });
           });
           req2.write(input.body);
           req2.end();
           return;
         }
-        collect(res1, resolve);
+        collect(res1, finish);
       });
-      req1.on('error', (error) => resolve({ ok: false, message: error.message }));
+      requests.push(req1);
+      req1.on('error', (error) => finish({ ok: false, message: error.message }));
       req1.on('timeout', () => {
         req1.destroy();
-        resolve({ ok: false, message: 'ONVIF timeout' });
+        finish({ ok: false, message: 'ONVIF timeout' });
       });
       req1.write(input.body);
       req1.end();
@@ -2504,6 +2583,7 @@ export class CamerasService implements OnApplicationBootstrap {
     preferredPath?: string | null;
     username: string;
     password: string;
+    deadline?: number;
   }) {
     const paths = Array.from(new Set([
       input.preferredPath?.trim(),
@@ -2515,6 +2595,7 @@ export class CamerasService implements OnApplicationBootstrap {
 
     for (const port of input.ports) {
       for (const path of paths) {
+        if (input.deadline != null && Date.now() >= input.deadline) return { port: null, path: null, profiles: [], errors };
         const profilesResult = await this.digestSoapRequest({
           host: input.host,
           port,
@@ -2522,7 +2603,8 @@ export class CamerasService implements OnApplicationBootstrap {
           body: this.buildGetProfilesSoapBody(),
           username: input.username,
           password: input.password,
-          timeout: 3000,
+          timeout: Math.min(3000, Math.max(1, (input.deadline ?? Infinity) - Date.now())),
+          deadline: input.deadline,
         });
         if (!profilesResult.ok) {
           errors.push(`${port}${path}: ${profilesResult.message}`);
@@ -2536,6 +2618,7 @@ export class CamerasService implements OnApplicationBootstrap {
 
         const withUris: OnvifMediaProfile[] = [];
         for (const profile of profiles.slice(0, 6)) {
+          if (input.deadline != null && Date.now() >= input.deadline) break;
           const uriResult = await this.digestSoapRequest({
             host: input.host,
             port,
@@ -2543,7 +2626,8 @@ export class CamerasService implements OnApplicationBootstrap {
             body: this.buildGetStreamUriSoapBody(profile.token),
             username: input.username,
             password: input.password,
-            timeout: 3000,
+            timeout: Math.min(3000, Math.max(1, (input.deadline ?? Infinity) - Date.now())),
+            deadline: input.deadline,
           });
           const rtspUri = uriResult.ok ? this.extractRtspUriFromSoap(uriResult.responseBody) : null;
           withUris.push({
@@ -2704,6 +2788,7 @@ export class CamerasService implements OnApplicationBootstrap {
     concurrency?: number;
     stopOnAuthDenied?: boolean;
     skipBitrateEstimate?: boolean;
+    deadline?: number;
   }) {
     let lastError: string | null = null;
     let authDenied = false;
@@ -2721,7 +2806,8 @@ export class CamerasService implements OnApplicationBootstrap {
       onInvalid: (message) => this.logger.warn(message),
     });
     const probePath = async (port: number, path: string) => {
-      const url = `rtsp://${encodeURIComponent(input.username)}:${encodeURIComponent(input.password)}@${input.ip}:${port}${path}`;
+      const host = input.ip.includes(':') ? `[${input.ip}]` : input.ip;
+      const url = `rtsp://${encodeURIComponent(input.username)}:${encodeURIComponent(input.password)}@${host}:${port}${path}`;
       const result = await new Promise<{ ok: boolean; error: string | null; metadata: ProbedStreamMetadata | null }>((resolve) => {
         const proc = spawnWithSecretUrl(
           'ffprobe',
@@ -2753,7 +2839,7 @@ export class CamerasService implements OnApplicationBootstrap {
         const killTimer = setTimeout(() => {
           proc.kill('SIGKILL');
           finish({ ok: false, error: 'ffprobe timeout', metadata: null });
-        }, this.rtspProbeKillTimeoutMs);
+        }, Math.min(this.rtspProbeKillTimeoutMs, Math.max(1, (input.deadline ?? Infinity) - Date.now())));
         let stdout = '';
         let stderr = '';
         proc.stdout!.on('data', (chunk) => {
@@ -2765,7 +2851,9 @@ export class CamerasService implements OnApplicationBootstrap {
         proc.on('error', (error) => finish({ ok: false, error: sanitizeSensitiveText(error), metadata: null }));
         proc.on('close', (code) => {
           if (code === 0) {
-            finish({ ok: true, error: null, metadata: this.parseProbedStreamMetadata(stdout) });
+            const metadata = this.parseProbedStreamMetadata(stdout);
+            const hasVideo = Boolean(metadata?.codec && Number(metadata.width) > 0 && Number(metadata.height) > 0);
+            finish({ ok: hasVideo, error: hasVideo ? null : 'Nenhum stream de vídeo confirmado', metadata: hasVideo ? metadata : null });
             return;
           }
           // O stderr do ffprobe imprime a URL de entrada INTEIRA (rtsp://user:senha@...).
@@ -2779,6 +2867,7 @@ export class CamerasService implements OnApplicationBootstrap {
 
     for (const port of input.rtspPorts) {
       for (let index = 0; index < input.paths.length; index += concurrency) {
+        if (input.deadline != null && Date.now() >= input.deadline) { lastError = 'ffprobe timeout'; break; }
         const batch = input.paths.slice(index, index + concurrency);
         const results = await Promise.all(batch.map((path) => probePath(port, path)));
         for (const item of results) {

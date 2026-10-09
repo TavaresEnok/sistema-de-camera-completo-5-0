@@ -1,9 +1,24 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { cameraConnectionError, cameraConnectionPayload, validCameraIp } from '../src/services/camera-setup';
+import { cameraConnectionError, cameraConnectionPayload, cameraConnectionTestPayload, cameraSetupFailureMessage, validCameraIp } from '../src/services/camera-setup';
 import { request } from '../src/services/api';
 
 const draft = { ip: ' 192.168.0.10 ', username: ' admin ', password: ' pass with spaces ', rtspPort: '', httpPort: '80', onvifPort: '', rtspPath: '' };
+
+test('test payload distinguishes manual from automatic without changing create payload', () => {
+  const manual = { ...draft, rtspPort: '5540' };
+  assert.equal(cameraConnectionTestPayload(manual, false).rtspPortMode, 'manual');
+  assert.equal(cameraConnectionTestPayload(draft, true).rtspPortMode, 'automatic');
+  assert.equal(cameraConnectionTestPayload(manual, false).rtspPort, 5540);
+  assert(!('rtspPortMode' in cameraConnectionPayload(manual)));
+});
+
+test('simple error messages distinguish refused password from port/video/timeout', () => {
+  assert.match(cameraSetupFailureMessage('auth_denied')!, /usuário e a senha/);
+  assert.match(cameraSetupFailureMessage('not_rtsp')!, /porta não fornece vídeo/);
+  assert.match(cameraSetupFailureMessage('timeout')!, /demorou/);
+  assert.equal(cameraSetupFailureMessage(undefined), null);
+});
 
 test('automatic connection preserves password and does not send absent optional fields', () => {
   assert.equal(cameraConnectionError(draft), null);

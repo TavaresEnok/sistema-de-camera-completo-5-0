@@ -1,4 +1,4 @@
-import { IsIP, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsIP, IsInt, IsIn, IsOptional, IsString, Max, Min } from 'class-validator';
 
 export class TestCameraConnectionDto {
   @IsString()
@@ -9,6 +9,10 @@ export class TestCameraConnectionDto {
   @Min(1)
   @Max(65535)
   rtspPort!: number;
+
+  @IsOptional()
+  @IsIn(['manual', 'automatic'])
+  rtspPortMode?: 'manual' | 'automatic';
 
   @IsOptional()
   @IsInt()

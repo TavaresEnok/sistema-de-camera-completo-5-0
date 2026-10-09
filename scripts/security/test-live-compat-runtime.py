@@ -55,8 +55,12 @@ def run(args):
             if check.returncode == 0: break
             time.sleep(1)
         media_ip = docker('inspect', media, '--format', '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}').strip()
+        setup_fixture = start('camera-setup-fixture', args.api,
+                              command=['/fixture.cjs'],
+                              extra=['--entrypoint', 'node', '-v', str(Path(__file__).parent / 'tests/camera-setup-ports-fixture.cjs') + ':/fixture.cjs:ro'])
+        setup_ip = docker('inspect', setup_fixture, '--format', '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}').strip()
         env = {'DATABASE_URL': 'postgresql://lab:' + secret + '@postgres:5432/lab', 'REDIS_HOST': 'redis',
-               'CAMERA_ALLOWED_CIDRS': media_ip + '/32',
+               'CAMERA_ALLOWED_CIDRS': media_ip + '/32,' + setup_ip + '/32',
                'JWT_SECRET': secrets.token_hex(32), 'CAMERA_SECRET_KEY': secrets.token_hex(32),
                'INTERNAL_SERVICE_TOKEN': secret, 'MEDIAMTX_API_USER': 'lab', 'MEDIAMTX_API_PASS': secret,
                'MEDIAMTX_AUTH_CALLBACK_TOKEN': secrets.token_hex(32),
@@ -104,6 +108,9 @@ def run(args):
         auth_script = "const fs=require('fs');const p=JSON.parse(fs.readFileSync(0,'utf8'));fetch('http://127.0.0.1:3000/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:'labadmin',password:p.password})}).then(async r=>{const data=await r.json();if(r.status!==201||!data.accessToken)throw Error('bootstrap_login_failed');console.log(JSON.stringify({status:r.status,accessToken:data.accessToken}))}).catch(()=>process.exitCode=1)"
         # The token remains solely in this process's memory and stdin, never logs.
         admin_login = json.loads(node(auth_script, input=json.dumps({'password': password})))
+        setup_script = (Path(__file__).parent / 'tests/camera-setup-ports-flow.cjs').read_text()
+        report['cameraSetupPorts'] = json.loads(node(setup_script, input=json.dumps({'fixtureIp': setup_ip, 'adminToken': admin_login['accessToken']})))
+        print('camera_setup_real_ports_and_video_passed', flush=True)
         privacy_script = (Path(__file__).parent / 'tests/web-private-camera-flow.cjs').read_text()
         report['privacy'] = json.loads(node(privacy_script, input=json.dumps({'password': password, 'mediaIp': media_ip, 'adminToken': admin_login['accessToken']})))
         print('private_camera_http_flow_passed', flush=True)
