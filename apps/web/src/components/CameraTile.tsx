@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { PlaySquare, Crosshair, Maximize2, Info, AlertTriangle, Circle, Lock } from 'lucide-react';
+import { motion } from 'framer-motion';
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
+import { PlaySquare, Crosshair, Maximize2, Info, AlertTriangle, Circle, Lock, MoreHorizontal, RefreshCw, X } from 'lucide-react';
 import { Camera } from '../store/vmsDataStore';
 import { LiveStreamPlayer, type LivePlayerStatus } from './LiveStreamPlayer';
 import { mostrarAvisoDeOffline } from '../lib/aviso-de-offline-no-tile';
@@ -14,6 +15,8 @@ interface CameraTileProps {
   onClick?: () => void;
   onDoubleClick?: () => void;
   onAction?: (action: string, camera: Camera) => void;
+  onReplace?: () => void;
+  onRemove?: () => void;
   recordingBusy?: boolean;
   compact?: boolean;
   streamStartDelayMs?: number;
@@ -42,6 +45,8 @@ export function CameraTile({
   onClick,
   onDoubleClick,
   onAction,
+  onReplace,
+  onRemove,
   recordingBusy = false,
   compact,
   streamStartDelayMs = 0,
@@ -58,6 +63,8 @@ export function CameraTile({
   const canRecord = useAuthStore(state => state.user?.role === 'admin' || state.user?.role === 'operator');
   const [playerStatus, setPlayerStatus] = useState<LivePlayerStatus | null>(null);
   const [audioControlContainer, setAudioControlContainer] = useState<HTMLDivElement | null>(null);
+  const [streamControlsContainer, setStreamControlsContainer] = useState<HTMLDivElement | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
   const storedWallMode = useGridStore((state) => state.wallMode);
   const wallMode = wallModeProp ?? storedWallMode;
 
@@ -79,11 +86,12 @@ export function CameraTile({
 
   return (
     <motion.div
+      data-camera-tile={camera.id}
       className={`relative w-full h-full rounded-sm overflow-hidden cursor-pointer select-none
         ${selected ? 'ring-2 ring-inset ring-[hsl(var(--primary))] shadow-[inset_0_0_0_1px_hsl(var(--primary)_/_0.28)]' : ''}
         ${isAlarm   ? 'alarm-glow ring-1 ring-[hsl(var(--status-alarm)_/_0.5)]' : ''}
       `}
-      style={{ background: 'hsl(var(--layer-base))', minHeight: 0 }}
+      style={{ background: 'hsl(var(--layer-base))', minHeight: 0, containerType: 'inline-size' }}
       onHoverStart={() => setHovered(true)}
       onHoverEnd={() => setHovered(false)}
       onFocusCapture={() => setKeyboardFocused(true)}
@@ -113,6 +121,8 @@ export function CameraTile({
             showOverlay={showDetectionOverlay && !wallMode && !showOfflineOverlay}
             showAudioControl={!showOfflineOverlay && routeActive && playbackEnabled}
             audioControlContainer={audioControlContainer}
+            streamControlsInMenu
+            streamControlsContainer={streamControlsContainer}
             showEssentialStatus
             aiEnabled={camera.aiEnabled}
             showDetectorPercentage={camera.showDetectorPercentage}
@@ -142,16 +152,6 @@ export function CameraTile({
 
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/10 via-transparent to-black/10" />
 
-      {/* Outside the player's paint containment and above the selection layer.
-          Empty space still selects the tile; only the audio button catches input.
-          Keep this host inside the tile so it also works in fullscreen/wall mode. */}
-      {!contentLocked && (
-        <div
-          ref={setAudioControlContainer}
-          className="pointer-events-none absolute right-1 top-1 z-40"
-        />
-      )}
-
       {/* Offline overlay — só quando o player também não tem imagem viva (status
           "offline" com stream tocando = sondagem desatualizada; mostra o vídeo). */}
       {showOfflineOverlay && (
@@ -165,105 +165,74 @@ export function CameraTile({
         </div>
       )}
 
-      {!wallMode && (
-        <>
-          {/* Top-left: camera name + status badge */}
-          <div className="pointer-events-none absolute top-1.5 left-1.5 right-14 z-20 flex items-center gap-1">
-            <span className="min-w-0 max-w-[220px] truncate rounded bg-black/65 px-2 py-1 text-[11px] font-medium text-white/95 shadow-sm backdrop-blur-[2px]">
+      {/* One layout owns every control. Portals escape player paint containment,
+          not this row; camera names shrink instead of covering buttons. */}
+      <div className={`camera-tile-topbar pointer-events-none absolute inset-x-1 top-1 z-40 flex min-w-0 flex-nowrap items-center gap-1 rounded-md bg-black/65 px-1 backdrop-blur-[2px] ${wallMode && !hovered && !selected && !keyboardFocused && !menuOpen ? 'camera-tile-wall-idle' : ''}`}>
+          <div className="min-w-0 flex-1 overflow-hidden">
+            <span className="block truncate px-1 text-[11px] font-medium text-white/95" title={camera.name}>
               {camera.name}
             </span>
-            {camera.isPrivate && (
-              <span className="inline-flex items-center gap-0.5 rounded-sm border border-white/20 bg-black/55 px-1.5 py-px text-[9px] text-white/70 backdrop-blur-[2px]" title="Câmera privada — conteúdo acessível somente ao cliente">
-                <Lock className="h-2.5 w-2.5" /> Privada
-              </span>
-            )}
-            {isAlarm && (
-              <span className="text-[9px] text-[hsl(var(--status-alarm))] bg-[hsl(var(--status-alarm)_/_0.18)] border border-[hsl(var(--status-alarm)_/_0.4)] px-1.5 py-px rounded-sm rec-pulse">
-                Alarme
-              </span>
-            )}
-            {isMotion && (
-              <span className="text-[9px] text-[hsl(var(--status-motion))] bg-[hsl(var(--status-motion)_/_0.15)] border border-[hsl(var(--status-motion)_/_0.35)] px-1.5 py-px rounded-sm">
-                Movimento
-              </span>
-            )}
-            {isManualRecordingActive && (
-              <span className="text-[9px] font-medium text-[hsl(var(--destructive))] bg-[hsl(var(--destructive)_/_0.18)] border border-[hsl(var(--destructive)_/_0.45)] px-1.5 py-px rounded-sm rec-pulse">
-                Gravação manual
-              </span>
-            )}
+            {(camera.isPrivate || isAlarm || isMotion || isManualRecordingActive) && <span className="block truncate px-1 text-[9px] text-white/80">
+              {[camera.isPrivate && 'Privada', isAlarm && 'Alarme', isMotion && 'Movimento', isManualRecordingActive && 'Gravação manual'].filter(Boolean).join(' · ')}
+            </span>}
           </div>
-
-          {/* Bottom gradient */}
-          <div className="absolute bottom-0 left-0 right-0 z-10 h-6 bg-gradient-to-t from-black/40 to-transparent pointer-events-none" />
-        </>
-      )}
-
-      {/* Hover action bar */}
-      <AnimatePresence>
-        {(hovered || selected || keyboardFocused) && !contentLocked && !showOfflineOverlay && !wallMode && (
-          <motion.div
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 6 }}
-            transition={{ duration: 0.12 }}
-            className="camera-touch-actions absolute bottom-1 left-1/2 -translate-x-1/2 z-30 flex items-center gap-0.5 rounded-md py-1.5 px-2 bg-black/75 backdrop-blur-[2px]"
-            onClick={e => e.stopPropagation()}
-          >
-            {camera.ptzCapable && <button
-              type="button"
-              aria-label={`Abrir controle PTZ de ${camera.name}`}
-              className="w-6 h-6 flex items-center justify-center rounded text-white/50 hover:text-[hsl(var(--primary))] hover:bg-white/8 transition-colors"
-              onClick={() => onAction?.('ptz', camera)}
-              title="Controle PTZ"
-            >
-              <Crosshair className="w-3 h-3" />
-            </button>}
+          {!contentLocked && <div ref={setAudioControlContainer} className="pointer-events-none flex shrink-0 items-center" />}
+          {!contentLocked && !showOfflineOverlay && !wallMode && <>
             {canRecord && camera.recordingMode !== 'continuous' && <button
               type="button"
               disabled={recordingBusy}
               aria-label={`${isManualRecordingActive ? 'Parar' : 'Iniciar'} gravação manual de ${camera.name}`}
-              className={`flex h-6 items-center justify-center gap-1 rounded border px-1.5 text-[9px] font-medium transition-colors ${
+              className={`camera-tile-record camera-tile-tool pointer-events-auto shrink-0 flex items-center justify-center rounded text-[9px] font-medium transition-colors ${
                 isManualRecordingActive
                   ? 'border-[hsl(var(--destructive)_/_0.6)] bg-[hsl(var(--destructive)_/_0.1)] text-[hsl(var(--destructive))] hover:bg-[hsl(var(--destructive)_/_0.2)]'
                   : 'border-[hsl(var(--status-online)_/_0.6)] bg-[hsl(var(--status-online)_/_0.1)] text-[hsl(var(--status-online))] hover:bg-[hsl(var(--status-online)_/_0.2)]'
               }`}
-              onClick={() => onAction?.(isManualRecordingActive ? 'record-stop' : 'record-start', camera)}
+              onClick={event => { event.stopPropagation(); onAction?.(isManualRecordingActive ? 'record-stop' : 'record-start', camera); }}
+              onDoubleClick={event => event.stopPropagation()}
               title={isManualRecordingActive ? 'Parar gravação manual' : 'Iniciar gravação manual (máximo de 10 minutos)'}
             >
               <Circle className={`w-3 h-3 ${isManualRecordingActive ? 'fill-current' : ''}`} />
-              <span>{recordingBusy ? 'Aguarde' : isManualRecordingActive ? 'Manual' : 'Gravar'}</span>
             </button>}
             <button
               type="button"
-              aria-label={`Abrir reprodução de ${camera.name}`}
-              className="w-6 h-6 flex items-center justify-center rounded text-white/50 hover:text-[hsl(var(--primary))] hover:bg-white/8 transition-colors"
-              onClick={() => onAction?.('playback', camera)}
-              title="Reprodução"
-            >
-              <PlaySquare className="w-3 h-3" />
-            </button>
-            <button
-              type="button"
               aria-label={`Abrir ${camera.name} em tela cheia`}
-              className="w-6 h-6 flex items-center justify-center rounded text-white/50 hover:text-[hsl(var(--primary))] hover:bg-white/8 transition-colors"
-              onClick={() => onAction?.('fullscreen', camera)}
+              className="camera-tile-expand camera-tile-tool pointer-events-auto shrink-0 flex items-center justify-center rounded text-white/80 hover:bg-white/15"
+              onClick={event => { event.stopPropagation(); onAction?.('fullscreen', camera); }}
+              onDoubleClick={event => event.stopPropagation()}
               title="Tela cheia"
             >
-              <Maximize2 className="w-3 h-3" />
+              <Maximize2 className="w-4 h-4" />
             </button>
-            <button
-              type="button"
-              aria-label={`Abrir detalhes de ${camera.name}`}
-              className="w-6 h-6 flex items-center justify-center rounded text-white/50 hover:text-[hsl(var(--primary))] hover:bg-white/8 transition-colors"
-              onClick={() => onAction?.('info', camera)}
-              title="Detalhes da câmera"
-            >
-              <Info className="w-3 h-3" />
-            </button>
-          </motion.div>
-        )}
-      </AnimatePresence>
+          </>}
+          <DropdownMenu.Root open={menuOpen} onOpenChange={setMenuOpen} modal={false}>
+            <DropdownMenu.Trigger asChild>
+              <button type="button" className="camera-tile-tool pointer-events-auto flex shrink-0 items-center justify-center rounded text-white/90 hover:bg-white/15"
+                aria-label={`Mais opções de ${camera.name}`} title="Mais opções"
+                onClick={event => event.stopPropagation()} onDoubleClick={event => event.stopPropagation()}>
+                <MoreHorizontal className="h-4 w-4" />
+              </button>
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Portal container={document.fullscreenElement as HTMLElement | null ?? document.body}>
+              <DropdownMenu.Content align="end" sideOffset={6} collisionPadding={8}
+                className="camera-tile-menu z-[100] max-h-[var(--radix-dropdown-menu-content-available-height)] w-64 max-w-[calc(100vw-16px)] overflow-y-auto rounded-lg border border-white/20 bg-[hsl(var(--popover))] p-1 text-[hsl(var(--popover-foreground))] shadow-xl"
+                onClick={event => event.stopPropagation()} onDoubleClick={event => event.stopPropagation()}>
+                <div className="truncate px-3 py-2 text-xs font-semibold" title={camera.name}>{camera.name}</div>
+                {!contentLocked && !showOfflineOverlay && <>
+                  {canRecord && camera.recordingMode !== 'continuous' && <DropdownMenu.Item disabled={recordingBusy} onSelect={() => onAction?.(isManualRecordingActive ? 'record-stop' : 'record-start', camera)}>
+                    <Circle className={isManualRecordingActive ? 'fill-current' : ''} />{recordingBusy ? 'Aguarde…' : isManualRecordingActive ? 'Parar gravação manual' : 'Gravar por 10 minutos'}
+                  </DropdownMenu.Item>}
+                  {camera.ptzCapable && <DropdownMenu.Item onSelect={() => onAction?.('ptz', camera)}><Crosshair />Mover câmera</DropdownMenu.Item>}
+                  <DropdownMenu.Item onSelect={() => onAction?.('playback', camera)}><PlaySquare />Ver gravações</DropdownMenu.Item>
+                  <DropdownMenu.Item onSelect={() => onAction?.('fullscreen', camera)}><Maximize2 />Tela cheia</DropdownMenu.Item>
+                  <DropdownMenu.Item onSelect={() => onAction?.('info', camera)}><Info />Detalhes da câmera</DropdownMenu.Item>
+                  <div ref={setStreamControlsContainer} className="border-t border-white/10 p-2" />
+                </>}
+                {!wallMode && onReplace && <DropdownMenu.Item onSelect={onReplace}><RefreshCw />Trocar câmera deste quadro</DropdownMenu.Item>}
+                {!wallMode && onRemove && <DropdownMenu.Item onSelect={onRemove}><X />Remover câmera deste quadro</DropdownMenu.Item>}
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
+      </div>
     </motion.div>
   );
 }

@@ -1322,38 +1322,9 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
                     routeActive={pageActive}
                     playbackEnabled={!focusedCameraId || focusedCameraId === cam.id}
                     onGridSourceIsOriginal={markGridSourceIsOriginal}
+                    onReplace={() => selectSlotForCamera(i, cam)}
+                    onRemove={() => removeCameraFromSlot(i)}
                   />
-                  <div // Aparecem também quando o quadro está SELECIONADO: em tela sensível
-                    // ao toque não existe hover, e "Trocar"/"Remover" ficavam
-                    // inalcançáveis — montar a grade era impossível no hardware
-                    // típico de sala de operação.
-                    className={wallMode
-                      ? 'hidden'
-                      : `absolute top-9 right-1.5 z-40 flex items-center gap-1.5 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 ${
-                          selectedCam === cam.id ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'
-                        }`}>
-                    <button
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        selectSlotForCamera(i, cam);
-                      }}
-                      className="h-7 rounded-md border border-white/15 bg-black/70 px-2 text-[10px] font-mono text-white backdrop-blur hover:bg-black"
-                      title="Trocar câmera deste quadro"
-                    >
-                      Trocar
-                    </button>
-                    <button
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        removeCameraFromSlot(i);
-                      }}
-                      className="h-7 w-7 rounded-md border border-white/15 bg-black/70 text-white backdrop-blur hover:bg-[hsl(var(--destructive)_/_0.8)]"
-                      title="Remover câmera deste quadro"
-                      aria-label={`Remover ${cam.name} do quadro ${i + 1}`}
-                    >
-                      <X className="w-3.5 h-3.5 mx-auto" />
-                    </button>
-                  </div>
                 </>
               ) : (
                 <button

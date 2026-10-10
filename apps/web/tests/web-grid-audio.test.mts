@@ -16,7 +16,8 @@ test('audio escapes player containment into a tile-local host above selection, a
   assert.match(player, /contain: 'layout paint style', isolation: 'isolate'/);
   assert.match(player, /createPortal\(audioControl, audioControlContainer\)/);
   assert.match(tile, /className="absolute inset-0 z-\[15\]/);
-  assert.match(tile, /!contentLocked && \([\s\S]*?ref=\{setAudioControlContainer\}[\s\S]*?pointer-events-none absolute right-1 top-1 z-40/);
+  assert.match(tile, /camera-tile-topbar[^\n]*z-40/);
+  assert.match(tile, /!contentLocked && <div ref=\{setAudioControlContainer\}/);
   assert.match(player, /pointer-events-auto relative h-11 w-11/);
 });
 

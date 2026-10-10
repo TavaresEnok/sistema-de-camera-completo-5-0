@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import axios from 'axios';
 import { AlertTriangle, LoaderCircle, VideoOff, Volume2, VolumeX } from 'lucide-react';
@@ -40,6 +40,9 @@ type LiveStreamPlayerProps = {
   showAudioControl?: boolean;
   /** A tile-local host above selection, outside the grid paint containment. */
   audioControlContainer?: HTMLElement | null;
+  /** Keep quality and diagnostics in the tile menu, away from its top row. */
+  streamControlsInMenu?: boolean;
+  streamControlsContainer?: HTMLElement | null;
   showDetectorPercentage?: boolean;
   detectionDisplayMode?: 'selected' | 'grid';
   aiEnabled?: boolean;
@@ -322,6 +325,10 @@ function createLiveViewSessionId(cameraId: string) {
   return `live-${cameraId}-${Date.now().toString(36)}-${randomPart}`;
 }
 
+function StreamControls({ inMenu, container, children }: { inMenu: boolean; container?: HTMLElement | null; children: ReactNode }) {
+  return inMenu ? (container ? createPortal(children, container) : null) : children;
+}
+
 export function LiveStreamPlayer({
   cameraId,
   cameraName,
@@ -331,6 +338,8 @@ export function LiveStreamPlayer({
   showOverlay = true,
   showAudioControl = showOverlay,
   audioControlContainer,
+  streamControlsInMenu = false,
+  streamControlsContainer,
   showDetectorPercentage = false,
   detectionDisplayMode = 'selected',
   aiEnabled = true,
@@ -2605,7 +2614,7 @@ export function LiveStreamPlayer({
           if (!nextMuted) void playMedia(element);
         }
       }}
-      className={`${audioControlContainer ? 'pointer-events-auto relative h-11 w-11' : 'absolute bottom-2 right-2 z-30 h-11 w-11'} flex items-center justify-center rounded-full border border-white/10 bg-black/55 text-white/80 transition-colors hover:bg-black/70 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-white`}
+      className={`${audioControlContainer ? 'camera-tile-tool pointer-events-auto relative h-11 w-11 shrink-0' : 'absolute bottom-2 right-2 z-30 h-11 w-11'} flex items-center justify-center rounded-md border border-white/10 bg-black/55 text-white/80 transition-colors hover:bg-black/70 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-white`}
       title={isMuted ? 'Ativar áudio' : 'Desativar áudio'}
       aria-label={`${isMuted ? 'Ativar áudio' : 'Desativar áudio'} de ${cameraName}`}
       aria-pressed={!isMuted}
@@ -2768,7 +2777,8 @@ export function LiveStreamPlayer({
       )}
 
       {showOverlay && (activeProtocol || displayFps != null || liveViewMode === 'selected') && (
-        <div className={`absolute top-2 ${audioControlContainer ? 'right-14' : 'right-2'} z-30 flex max-w-[78%] flex-wrap items-center justify-end gap-1.5 opacity-85 transition-opacity hover:opacity-100`}>
+        <StreamControls inMenu={streamControlsInMenu} container={streamControlsContainer}>
+        <div className={streamControlsInMenu ? 'flex flex-wrap items-center gap-2' : `absolute top-2 ${audioControlContainer ? 'right-14' : 'right-2'} z-30 flex max-w-[78%] flex-wrap items-center justify-end gap-1.5 opacity-85 transition-opacity hover:opacity-100`}>
           {liveViewMode === 'selected' && (
             <span
               role="group"
@@ -2863,6 +2873,7 @@ export function LiveStreamPlayer({
           </span>
           )}
         </div>
+        </StreamControls>
       )}
 
       {showOverlay && !compactLiveOverlay && (activeProtocol === 'HLS' || activeProtocol === 'LL-HLS') && (

@@ -2,6 +2,22 @@
 
 /* Camada comum para páginas operacionais e portais Radix. Diagramas, vídeo e
    tabelas preservam sua geometria; a rolagem fica no próprio componente. */
+.camera-tile-tool { width: 44px; height: 44px; min-width: 44px; min-height: 44px; touch-action: manipulation; }
+.camera-tile-menu [role="menuitem"] { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 8px 12px; border-radius: 4px; font-size: 12px; outline: none; cursor: pointer; }
+.camera-tile-menu [role="menuitem"][data-highlighted] { background: hsl(var(--accent)); }
+.camera-tile-menu [role="menuitem"][data-disabled] { opacity: .5; pointer-events: none; }
+.camera-tile-menu [role="menuitem"] > svg { width: 16px; height: 16px; flex-shrink: 0; }
+/* Adapt to the actual tile, not the browser: a desktop 6x6 tile is small too. */
+@container (max-width: 359px) { .camera-tile-record { display: none; } }
+@container (max-width: 259px) { .camera-tile-expand { display: none; } }
+@container (max-width: 119px) {
+  .camera-tile-topbar { gap: 0; padding-inline: 0; }
+  .camera-tile-topbar > :first-child { display: none; }
+}
+@media (hover: hover) and (pointer: fine) {
+  .camera-tile-wall-idle { background: transparent; backdrop-filter: none; }
+  .camera-tile-wall-idle > :first-child { opacity: 0; }
+}
 @media (max-width: 1199px) {
   .app-shell { padding-inline: env(safe-area-inset-left) env(safe-area-inset-right); }
   .app-header { height: auto; min-height: 56px; padding-top: env(safe-area-inset-top); }
@@ -43,7 +59,6 @@
   }
   .camera-filters { width: 100%; margin-left: 0; }
   .camera-filters > * { flex: 1 1 150px; min-width: 0; }
-  .camera-touch-actions { max-width: calc(100% - 8px); flex-wrap: wrap; justify-content: center; }
   .playback-timeline, .playback-minimap { min-height: 44px; }
   .responsive-side-panel { overscroll-behavior: contain; }
   .investigation-workspace { overflow-y: auto; }
