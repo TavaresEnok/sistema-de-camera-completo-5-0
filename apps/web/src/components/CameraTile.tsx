@@ -204,6 +204,16 @@ export function CameraTile({
               <Maximize2 className="w-4 h-4" />
             </button>
           </>}
+          {!wallMode && onReplace && <button type="button" className="camera-tile-layout-action camera-tile-tool pointer-events-auto flex shrink-0 items-center justify-center rounded text-white/80 hover:bg-white/15"
+            aria-label={`Trocar ${camera.name} deste quadro`} title="Trocar câmera deste quadro"
+            onClick={event => { event.stopPropagation(); onReplace(); }} onDoubleClick={event => event.stopPropagation()}>
+            <RefreshCw className="h-4 w-4" />
+          </button>}
+          {!wallMode && onRemove && <button type="button" className="camera-tile-layout-action camera-tile-tool pointer-events-auto flex shrink-0 items-center justify-center rounded text-white/80 hover:bg-red-500/30"
+            aria-label={`Remover ${camera.name} deste quadro`} title="Remover câmera deste quadro"
+            onClick={event => { event.stopPropagation(); onRemove(); }} onDoubleClick={event => event.stopPropagation()}>
+            <X className="h-4 w-4" />
+          </button>}
           <DropdownMenu.Root open={menuOpen} onOpenChange={setMenuOpen} modal={false}>
             <DropdownMenu.Trigger asChild>
               <button type="button" className="camera-tile-tool pointer-events-auto flex shrink-0 items-center justify-center rounded text-white/90 hover:bg-white/15"

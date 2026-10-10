@@ -18,6 +18,7 @@ test('one nonwrapping top row owns audio and actions, not independent absolute l
 
 test('small tiles keep all actions in an accessible menu, including fullscreen', () => {
   assert.match(css, /@container \(max-width: 359px\).*camera-tile-record/);
+  assert.match(css, /@container \(max-width: 419px\).*camera-tile-layout-action/);
   assert.match(css, /@container \(max-width: 259px\).*camera-tile-expand/);
   assert.match(tile, /DropdownMenu\.Portal container=\{document.fullscreenElement/);
   for (const action of ['record-stop', 'ptz', 'playback', 'fullscreen', 'info']) assert.ok(tile.includes(action));
