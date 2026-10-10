@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { createPortal } from 'react-dom';
 import axios from 'axios';
 import { AlertTriangle, LoaderCircle, VideoOff, Volume2, VolumeX } from 'lucide-react';
 import { getApiBaseUrl } from '../lib/api-base';
@@ -35,6 +36,10 @@ type LiveStreamPlayerProps = {
   autoPlay?: boolean;
   muted?: boolean;
   showOverlay?: boolean;
+  /** Audio is independent of AI/technical overlays; hidden players stay silent. */
+  showAudioControl?: boolean;
+  /** A tile-local host above selection, outside the grid paint containment. */
+  audioControlContainer?: HTMLElement | null;
   showDetectorPercentage?: boolean;
   detectionDisplayMode?: 'selected' | 'grid';
   aiEnabled?: boolean;
@@ -324,6 +329,8 @@ export function LiveStreamPlayer({
   autoPlay = true,
   muted = true,
   showOverlay = true,
+  showAudioControl = showOverlay,
+  audioControlContainer,
   showDetectorPercentage = false,
   detectionDisplayMode = 'selected',
   aiEnabled = true,
@@ -2577,6 +2584,36 @@ export function LiveStreamPlayer({
     };
   }, [accessToken, aiOverlayEnabled, cameraId, error]);
 
+  const audioControl = showAudioControl && !error && (!isLoading || hasLiveFrame || audioSwitchMessage) ? (
+    <button
+      type="button"
+      onDoubleClick={event => event.stopPropagation()}
+      onClick={event => {
+        event.stopPropagation();
+        const nextMuted = !isMuted;
+        if (!nextMuted && !gridAudioRequested) {
+          // Request audio only for this player, never for every tile in the grid.
+          if (hasFrameRef.current) preserveFrameOnReloadRef.current = true;
+          setAudioSwitchMessage('Ativando áudio…');
+          setGridAudioRequested(true);
+        }
+        setIsMuted(nextMuted);
+        const element = videoRef.current;
+        if (element) {
+          element.muted = nextMuted;
+          element.volume = nextMuted ? element.volume : 1;
+          if (!nextMuted) void playMedia(element);
+        }
+      }}
+      className={`${audioControlContainer ? 'pointer-events-auto relative h-11 w-11' : 'absolute bottom-2 right-2 z-30 h-11 w-11'} flex items-center justify-center rounded-full border border-white/10 bg-black/55 text-white/80 transition-colors hover:bg-black/70 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-white`}
+      title={isMuted ? 'Ativar áudio' : 'Desativar áudio'}
+      aria-label={`${isMuted ? 'Ativar áudio' : 'Desativar áudio'} de ${cameraName}`}
+      aria-pressed={!isMuted}
+    >
+      {isMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+    </button>
+  ) : null;
+
   return (
     <div
       ref={containerRef}
@@ -2731,7 +2768,7 @@ export function LiveStreamPlayer({
       )}
 
       {showOverlay && (activeProtocol || displayFps != null || liveViewMode === 'selected') && (
-        <div className="absolute top-2 right-2 z-30 flex max-w-[78%] flex-wrap items-center justify-end gap-1.5 opacity-85 transition-opacity hover:opacity-100">
+        <div className={`absolute top-2 ${audioControlContainer ? 'right-14' : 'right-2'} z-30 flex max-w-[78%] flex-wrap items-center justify-end gap-1.5 opacity-85 transition-opacity hover:opacity-100`}>
           {liveViewMode === 'selected' && (
             <span
               role="group"
@@ -2843,36 +2880,7 @@ export function LiveStreamPlayer({
         </button>
       )}
 
-      {showOverlay && !isLoading && !error && (
-        <button
-          type="button"
-          onClick={() => {
-            const nextMuted = !isMuted;
-            if (!nextMuted && !gridAudioRequested) {
-              // Só o clique que liga/desliga áudio reconecta este tile. A
-              // grade inteira continua no H.264 em passthrough, sem áudio.
-              if (hasFrameRef.current) preserveFrameOnReloadRef.current = true;
-              setAudioSwitchMessage('Ativando áudio…');
-              setGridAudioRequested(true);
-            }
-            setIsMuted(nextMuted);
-            const element = videoRef.current;
-            if (element) {
-              element.muted = nextMuted;
-              element.volume = nextMuted ? element.volume : 1;
-              if (!nextMuted) {
-                void playMedia(element);
-              }
-            }
-          }}
-          className="absolute bottom-2 right-2 z-30 flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-black/55 text-white/80 transition-colors hover:bg-black/70 hover:text-white"
-          title={isMuted ? 'Ativar áudio' : 'Mutar áudio'}
-          aria-label={isMuted ? 'Ativar áudio' : 'Desativar áudio'}
-          aria-pressed={!isMuted}
-        >
-          {isMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
-        </button>
-      )}
+      {audioControlContainer ? createPortal(audioControl, audioControlContainer) : audioControl}
 
       {!cameraId && (
         <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/60">

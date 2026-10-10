@@ -59,6 +59,11 @@ def allow_schema_transition(current_hash, body, approved=False, object_notice_ap
     raise ValueError('Schema change requires the reviewed detector-label migration approval')
 
 
+def validate_web_only_update(body, api_before, migration_approved):
+    if migration_approved or body['images']['api']['imageId'] != api_before['Image']:
+        raise ValueError('Web-only updates must keep the API image and database schema unchanged')
+
+
 def restore_legacy_shutdown(snapshot):
     # Only the OLD API desarms on shutdown. Restore eligible choices BEFORE
     # starting the fixed API. Never override an operator action or expired timer.
@@ -91,6 +96,7 @@ def main():
     parser.add_argument('manifest', type=Path)
     parser.add_argument('--approve-detector-percentage-schema', action='store_true')
     parser.add_argument('--approve-object-notice-schema', action='store_true')
+    parser.add_argument('--web-only', action='store_true', help='Keep the running API and media services untouched')
     args = parser.parse_args()
     root = args.root.resolve()
     signed = json.loads(args.manifest.read_text())
@@ -115,6 +121,8 @@ def main():
         state = verify_signature(json.loads(installed_viewing.read_text()), root / 'infra/release-public.pem')
     migration_approved = allow_schema_transition(state.get('databaseSchemaHash'), body, args.approve_detector_percentage_schema, args.approve_object_notice_schema)
     media_before, api_before = media_state(), inspect('vms-api')
+    if args.web_only:
+        validate_web_only_update(body, api_before, migration_approved)
     files = []
     for name in ['vms-api', 'vms-web']:
         for value in inspect(name)['Config']['Labels']['com.docker.compose.project.config_files'].split(','):
@@ -156,27 +164,35 @@ def main():
             expected_sql = '-- Avisos independentes desligados por padrão; preserva gravações e alertas existentes.\nALTER TABLE "Camera" ADD COLUMN "objectNoticeEnabled" BOOLEAN NOT NULL DEFAULT false;\nALTER TABLE "Camera" ADD COLUMN "objectNoticeClasses" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];\n'.encode()
         if statement != expected_sql:
             raise ValueError('Image does not contain the narrowly reviewed additive migration')
-    configuration['services']['api'].setdefault('environment', {})['DRAC_VERSION'] = body['commit']
+    if not args.web_only:
+        configuration['services']['api'].setdefault('environment', {})['DRAC_VERSION'] = body['commit']
     compose = ['docker', 'compose', '--project-name', api_before['Config']['Labels'].get('com.docker.compose.project', 'infra'),
                '--env-file', str(root / 'infra/.env')]
     for path in files:
         compose += ['-f', str(path)]
     if persistent not in files:
         compose += ['-f', str(persistent)]
-    up = ['up', '-d', '--no-build', '--pull', 'never', '--no-deps', '--wait', '--wait-timeout', '180', 'api', 'web']
+    up = ['up', '-d', '--no-build', '--pull', 'never', '--no-deps', '--wait', '--wait-timeout', '180']
+    up += ['web'] if args.web_only else ['api', 'web']
     snapshot = json.loads(sql('''SELECT json_build_object('at',now(),'cameras',
       COALESCE(json_agg(json_build_object('id',id,'enabled',enabled,'recordingMode',"recordingMode",
       'recordingEnabled',"recordingEnabled")),'[]'::json)) FROM "Camera";'''))
     (backup / 'recording-choices-before.json').write_text(json.dumps(snapshot))
     os.chmod(backup / 'recording-choices-before.json', 0o600)
     try:
-        command(['docker', 'stop', '--time', '45', 'vms-api'])
-        restored = restore_legacy_shutdown(snapshot)
+        restored = 0
+        if not args.web_only:
+            command(['docker', 'stop', '--time', '45', 'vms-api'])
+            restored = restore_legacy_shutdown(snapshot)
         persistent.write_text(json.dumps(configuration))
         os.chmod(persistent, 0o600)
         command(compose + up)
         if media_state() != media_before:
             raise ValueError('A media service changed unexpectedly')
+        if args.web_only:
+            api_after = inspect('vms-api')
+            if (api_after['Id'], api_after['State']['StartedAt']) != (api_before['Id'], api_before['State']['StartedAt']):
+                raise ValueError('Web-only update unexpectedly changed the API container')
         readiness = json.loads(command(['docker', 'exec', 'vms-api', 'node', '-e',
             "fetch('http://127.0.0.1:3000/health/ready').then(r=>r.json()).then(x=>console.log(JSON.stringify(x)))"]).stdout)
         if not readiness.get('ready'):
@@ -194,10 +210,12 @@ def main():
     except Exception:
         persistent.write_bytes(original)
         os.chmod(persistent, 0o600)
-        restore_legacy_shutdown(snapshot)
+        if not args.web_only:
+            restore_legacy_shutdown(snapshot)
         command(compose + up)
         raise
     result = {'commit': body['commit'], 'signed': True, 'ready': True, 'mediaServicesUnchanged': True,
+              'webOnly': args.web_only, 'apiContainerUnchanged': args.web_only,
               'legacyRecordingChoicesRestored': restored, 'cssFilesVerified': len(styles), 'reviewedAdditiveMigration': migration_approved}
     (backup / 'result.json').write_text(json.dumps(result))
     (root / 'infra/viewing-release.json').write_text(json.dumps(signed))

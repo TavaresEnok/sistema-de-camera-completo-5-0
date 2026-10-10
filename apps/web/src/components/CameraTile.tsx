@@ -57,6 +57,7 @@ export function CameraTile({
   const [keyboardFocused, setKeyboardFocused] = useState(false);
   const canRecord = useAuthStore(state => state.user?.role === 'admin' || state.user?.role === 'operator');
   const [playerStatus, setPlayerStatus] = useState<LivePlayerStatus | null>(null);
+  const [audioControlContainer, setAudioControlContainer] = useState<HTMLDivElement | null>(null);
   const storedWallMode = useGridStore((state) => state.wallMode);
   const wallMode = wallModeProp ?? storedWallMode;
 
@@ -110,6 +111,8 @@ export function CameraTile({
             cameraId={camera.id}
             cameraName={camera.name}
             showOverlay={showDetectionOverlay && !wallMode && !showOfflineOverlay}
+            showAudioControl={!showOfflineOverlay && routeActive && playbackEnabled}
+            audioControlContainer={audioControlContainer}
             showEssentialStatus
             aiEnabled={camera.aiEnabled}
             showDetectorPercentage={camera.showDetectorPercentage}
@@ -137,7 +140,17 @@ export function CameraTile({
         <span className="sr-only">Selecionar {camera.name}</span>
       </button>
 
-      <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-transparent to-black/10" />
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/10 via-transparent to-black/10" />
+
+      {/* Outside the player's paint containment and above the selection layer.
+          Empty space still selects the tile; only the audio button catches input.
+          Keep this host inside the tile so it also works in fullscreen/wall mode. */}
+      {!contentLocked && (
+        <div
+          ref={setAudioControlContainer}
+          className="pointer-events-none absolute right-1 top-1 z-40"
+        />
+      )}
 
       {/* Offline overlay — só quando o player também não tem imagem viva (status
           "offline" com stream tocando = sondagem desatualizada; mostra o vídeo). */}
@@ -155,8 +168,8 @@ export function CameraTile({
       {!wallMode && (
         <>
           {/* Top-left: camera name + status badge */}
-          <div className="absolute top-1.5 left-1.5 z-20 flex items-center gap-1">
-            <span className="max-w-[220px] truncate rounded bg-black/65 px-2 py-1 text-[11px] font-medium text-white/95 shadow-sm backdrop-blur-[2px]">
+          <div className="pointer-events-none absolute top-1.5 left-1.5 right-14 z-20 flex items-center gap-1">
+            <span className="min-w-0 max-w-[220px] truncate rounded bg-black/65 px-2 py-1 text-[11px] font-medium text-white/95 shadow-sm backdrop-blur-[2px]">
               {camera.name}
             </span>
             {camera.isPrivate && (
