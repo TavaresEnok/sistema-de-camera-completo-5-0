@@ -2584,7 +2584,7 @@ export function LiveStreamPlayer({
     };
   }, [accessToken, aiOverlayEnabled, cameraId, error]);
 
-  const audioControl = showAudioControl && !error && (!isLoading || hasLiveFrame || audioSwitchMessage) ? (
+  const audioControl = showAudioControl && (!error || !isMuted) && (!isLoading || hasLiveFrame || audioSwitchMessage) ? (
     <button
       type="button"
       onDoubleClick={event => event.stopPropagation()}

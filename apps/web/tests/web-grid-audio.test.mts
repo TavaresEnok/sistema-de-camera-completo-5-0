@@ -21,7 +21,7 @@ test('audio escapes player containment into a tile-local host above selection, a
 });
 
 test('audio interaction does not select or expand the camera; pending activation can be muted', () => {
-  assert.match(player, /const audioControl = showAudioControl && !error && \(!isLoading \|\| hasLiveFrame \|\| audioSwitchMessage\)/);
+  assert.match(player, /const audioControl = showAudioControl && \(!error \|\| !isMuted\) && \(!isLoading \|\| hasLiveFrame \|\| audioSwitchMessage\)/);
   assert.match(player, /onDoubleClick=\{event => event.stopPropagation\(\)\}/);
   assert.match(player, /onClick=\{event => \{\s*event.stopPropagation\(\);\s*const nextMuted = !isMuted/);
   assert.match(player, /element.muted = nextMuted/);
