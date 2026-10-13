@@ -28,11 +28,12 @@
     <p>Disponibilize uma integração chamada <strong>S2Cam</strong>. Os campos abaixo são parâmetros de ativação, não novos desenvolvimentos para cada cliente.</p>
     <div class="table-wrap"><table><thead><tr><th>Campo</th><th>Funcionamento</th></tr></thead><tbody>
       <tr><td>Endereço S2Cam</td><td>URL HTTPS da instalação, por exemplo <code>https://vibe.s2cam.com.br</code>. Acrescente <code>/api/integrations/v1/sgp</code> para formar a URL base desta integração.</td></tr>
-      <tr><td>Chave da integração</td><td>Fornecida pelo administrador S2Cam em <strong>Integrações</strong>. Guardar como segredo, sem exibir em logs. Enviar no cabeçalho <code>Authorization: Bearer SUA_CHAVE</code>. Não compartilhar chaves entre provedores.</td></tr>
+      <tr><td>Chave da integração</td><td>Gerada na <strong>Central → Instalações → instalação escolhida → Integrações → Gerar token SGP</strong>. O token completo aparece somente uma vez. Aguarde a confirmação de aplicação pela instalação antes de utilizá-lo. Guardar como segredo, sem exibir em logs. Enviar no cabeçalho <code>Authorization: Bearer SUA_CHAVE</code>. Não compartilhar chaves entre provedores.</td></tr>
       <tr><td>Planos ou serviços participantes</td><td>Definir quais serviços usam S2Cam. Não enviar todos os clientes de internet indiscriminadamente. A lista de planos permitidos também pode ser limitada no S2Cam.</td></tr>
       <tr><td>Situações e fuso horário</td><td>Combinar os valores reais de <code>servico.status</code> e seu significado. O administrador configura no S2Cam a correspondência com ativo, suspenso e arquivado. Padrão das datas nativas: UTC−3.</td></tr>
     </tbody></table></div>
     <h3>Primeiros ambientes</h3>
+    <p>A Central também permite substituir e revogar o token. Essas mudanças passam a valer após a confirmação da instalação. Se ela estiver sem comunicação, a chave anterior pode continuar válida até receber a alteração. Gerar ou revogar uma chave não suspende clientes nem altera câmeras ou gravações; apenas controla as chamadas da integração.</p>
     <div class="table-wrap"><table><thead><tr><th>Instalação</th><th>URL base da API SGP</th></tr></thead><tbody><tr><td>Vibe</td><td><code>https://vibe.s2cam.com.br/api/integrations/v1/sgp</code></td></tr><tr><td>IB Telecom</td><td><code>https://ibtelecom.s2cam.com.br/api/integrations/v1/sgp</code></td></tr></tbody></table></div>
     <p class="muted">O SGP da Vibe é <code>https://vibetelecom.sgp.net.br/</code>. Esse é o ambiente que envia os eventos, não o endereço de destino da API.</p>
   </section>

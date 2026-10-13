@@ -1307,6 +1307,7 @@
               <button data-tab="nuvem">Armazenamento em nuvem</button>
               <button data-tab="escala">Escala</button>
               <button data-tab="alertas">Alertas</button>
+              <button data-tab="integracoes">Integrações</button>
               <button data-tab="manutencao">Manutenção</button>
             </nav>
             <div id="detail-panel"></div>
@@ -2100,6 +2101,7 @@
         } catch { return false; }
       }
       function setAuthenticated(user) {
+        if (!user) clearSgpToken();
         state.user = user;
         const technicalAllowed = Boolean(user?.permissions?.includes(TECHNICAL_DOCUMENTATION_PERMISSION));
         document.querySelector('#technical-nav')?.classList.toggle('hidden', !technicalAllowed);
@@ -2960,6 +2962,75 @@
         { key: 'object', nome: 'Detecção de objeto', desc: 'Pesada. Reconhece pessoa, carro, moto…' },
         { key: 'face', nome: 'Reconhecimento facial', desc: 'Pesada e sensível (LGPD).' },
       ];
+      function clearSgpToken() {
+        const modal = document.getElementById('sgp-token-dialog');
+        if (!modal) return;
+        const input = modal.querySelector('#sgp-issued-token');
+        if (input) input.value = '';
+        modal.remove();
+      }
+      function showSgpToken(item, token) {
+        clearSgpToken();
+        const modal = document.createElement('dialog');
+        modal.id = 'sgp-token-dialog'; modal.dataset.installationId = item.id;
+        modal.style.cssText = 'max-width:560px;width:calc(100% - 32px);padding:24px;border:1px solid var(--line);border-radius:14px;background:var(--surface);color:var(--ink)';
+        modal.innerHTML = `<h2 style="margin:0 0 10px">Token SGP gerado</h2><p id="sgp-token-client"></p><p>Copie e guarde agora. Este token não será exibido novamente.</p><label for="sgp-issued-token">Token exclusivo desta instalação</label><input id="sgp-issued-token" type="password" readonly autocomplete="off" spellcheck="false" style="width:100%;margin:8px 0" aria-label="Token SGP gerado"><p id="sgp-token-delivery" class="subtext"></p><div class="license-actions"><button id="sgp-copy-token" class="primary">Copiar token</button><button id="sgp-show-token">Mostrar</button><button id="sgp-close-token">Fechar</button></div><p id="sgp-copy-result" role="status" class="subtext"></p>`;
+        document.body.append(modal);
+        modal.querySelector('#sgp-token-client').textContent = displayName(item);
+        const input = modal.querySelector('#sgp-issued-token'); input.value = token;
+        modal.querySelector('#sgp-token-delivery').textContent = 'Aguardando confirmação da instalação. Não considere o token ativo antes dessa confirmação.';
+        modal.querySelector('#sgp-show-token').onclick = event => { input.type = input.type === 'password' ? 'text' : 'password'; event.target.textContent = input.type === 'password' ? 'Mostrar' : 'Ocultar'; };
+        modal.querySelector('#sgp-copy-token').onclick = async () => {
+          try { await navigator.clipboard.writeText(input.value); modal.querySelector('#sgp-copy-result').textContent = 'Token copiado.'; }
+          catch { input.type = 'text'; input.select(); modal.querySelector('#sgp-copy-result').textContent = 'Selecione e copie o token manualmente.'; }
+        };
+        modal.querySelector('#sgp-close-token').onclick = clearSgpToken;
+        modal.addEventListener('close', clearSgpToken); modal.addEventListener('cancel', event => { event.preventDefault(); clearSgpToken(); });
+        modal.showModal();
+      }
+      function renderSgpSection(item) {
+        const revealed = document.getElementById('sgp-token-dialog');
+        if (revealed && revealed.dataset.installationId !== item.id) clearSgpToken();
+        const body = document.getElementById('sgp-body');
+        if (!body) return;
+        const sgp = item.sgpIntegration || { status: 'NONE', revision: 0 };
+        const labels = { NONE: 'Nenhum token gerado.', PENDING: 'Aguardando confirmação da instalação.', APPLIED: 'Token aplicado e confirmado pela instalação.', REVOKED: 'Revogação confirmada pela instalação.', FAILED: 'A instalação não conseguiu aplicar a alteração. Nova tentativa automática.', UNSUPPORTED: 'Atualize esta instalação para gerenciar o token SGP pela Central.', PAUSED: 'Token cadastrado. A integração está pausada na instalação.' };
+        if (body.dataset.installationId !== item.id) {
+          body.dataset.installationId = item.id;
+          body.innerHTML = `<p>Entregue ao SGP o endereço abaixo e o token exclusivo desta instalação.</p><div class="field"><label for="sgp-installation-address">Endereço da instalação</label><input id="sgp-installation-address" readonly autocomplete="off"><div id="sgp-webhook-address" class="subtext" style="overflow-wrap:anywhere"></div></div><p id="sgp-delivery-status" role="status"></p><p id="sgp-token-suffix" class="subtext"></p><div class="license-actions"><button id="sgp-generate-token" class="primary">Gerar token SGP</button><button id="sgp-revoke-token" class="danger">Revogar token</button><a class="button" href="https://s2cam.com.br/developers/sgp" target="_blank" rel="noopener noreferrer">Instruções para o SGP</a></div><p id="sgp-action-result" role="status" class="subtext"></p><p class="subtext">Trocas e revogações valem depois que a instalação confirmar. Se ela estiver sem comunicação, o token anterior pode continuar válido até a sincronização.</p><p class="subtext">Após gerar o primeiro token, confira as situações de ativo, suspenso e cancelado em Integrações, na instalação. Situações desconhecidas são recusadas. Gerar ou revogar um token não altera câmeras nem gravações.</p>`;
+          const change = async revoke => {
+            if (body.dataset.busy === 'true') return;
+            const current = state.installations.find(value => value.id === item.id);
+            if (!current || state.selectedId !== item.id) return;
+            const info = current.sgpIntegration || { revision: 0 };
+            const question = revoke ? 'Revogar o token SGP desta instalação? O SGP deixará de enviar alterações após a confirmação.' : info.hasToken ? 'Substituir o token SGP desta instalação? O token anterior deixará de funcionar após a confirmação. Atualize-o também no SGP.' : 'Gerar um token SGP exclusivo para esta instalação?';
+            if (!window.confirm(question)) return;
+            body.dataset.busy = 'true'; renderSgpSection(current);
+            const feedback = body.querySelector('#sgp-action-result'); feedback.textContent = 'Enviando solicitação…';
+            try {
+              const response = await fetch(centralUrl(`/api/admin/installations/${encodeURIComponent(item.id)}/sgp/token`), { method: revoke ? 'DELETE' : 'POST', credentials: 'include', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ confirmInstallationId: item.id, expectedRevision: info.revision, requestId: crypto.randomUUID() }) });
+              const data = await response.json();
+              if (!response.ok) throw new Error(data.message || 'Não foi possível concluir. Atualize a página e tente novamente.');
+              current.sgpIntegration = data.sgpIntegration;
+              if (data.token && state.selectedId === item.id && state.view === 'detalhe') showSgpToken(current, data.token);
+              feedback.textContent = 'Solicitação guardada. Aguardando confirmação da instalação.';
+              await load();
+            } catch (error) { feedback.textContent = error.message || 'Não foi possível concluir agora.'; }
+            finally { body.dataset.busy = 'false'; const live = state.installations.find(value => value.id === item.id); if (live) renderSgpSection(live); }
+          };
+          body.querySelector('#sgp-generate-token').onclick = () => change(false);
+          body.querySelector('#sgp-revoke-token').onclick = () => change(true);
+        }
+        body.querySelector('#sgp-installation-address').value = sgp.connection?.installationUrl || 'Endereço HTTPS ainda não cadastrado';
+        body.querySelector('#sgp-webhook-address').textContent = sgp.connection?.webhookUrl ? 'Recebimento: ' + sgp.connection.webhookUrl : '';
+        body.querySelector('#sgp-delivery-status').textContent = labels[sgp.status] || labels.PENDING;
+        body.querySelector('#sgp-token-suffix').textContent = sgp.hasToken ? 'Token cadastrado, final …' + sgp.tokenSuffix : 'Nenhum token disponível. O token completo aparece somente ao gerar.';
+        body.querySelector('#sgp-generate-token').textContent = sgp.hasToken ? 'Substituir token SGP' : 'Gerar token SGP';
+        body.querySelector('#sgp-generate-token').disabled = body.dataset.busy === 'true' || !sgp.connection || sgp.status === 'UNSUPPORTED';
+        body.querySelector('#sgp-revoke-token').disabled = body.dataset.busy === 'true' || !sgp.hasToken || sgp.status === 'UNSUPPORTED';
+        const modal = document.getElementById('sgp-token-dialog');
+        if (modal?.dataset.installationId === item.id) modal.querySelector('#sgp-token-delivery').textContent = labels[sgp.status] || labels.PENDING;
+      }
       function renderAiSection(item) {
         const body = document.getElementById('ai-body');
         if (!body) return;
@@ -4042,6 +4113,9 @@
             ${archivePanel}
           </div>
 
+          <div class="detail-tab-panel" data-tab-panel="integracoes">
+            <section class="panel"><div class="panel-head"><div><div class="panel-title">Integração SGP</div><div class="panel-subtitle">Token exclusivo desta instalação</div></div></div><div class="detail-body" id="sgp-body"></div></section>
+          </div>
           <div class="detail-tab-panel" data-tab-panel="alertas">
             <div class="grid-2">
               <section class="panel">
@@ -4185,6 +4259,7 @@
         renderAiSection(item);
         renderCloudSection(item);
         renderScaleSection(item.id);
+        renderSgpSection(item);
         if (!trocou) return;
         // O innerHTML acima recriou os painéis; sem reaplicar, a aba escolhida
         // some e o operador volta para "Visão geral" a cada atualização.
@@ -4756,6 +4831,7 @@
 
       /* ── Navegação ─────────────────────────────────────────────────────── */
       function setView(view, { updateHistory = true } = {}) {
+        if (view !== 'detalhe') clearSgpToken();
         const previousView = state.view;
         if (view === 'tecnico' && !canReadTechnicalDocumentation()) view = 'operacao';
         state.view = view;

@@ -957,6 +957,7 @@ const TECHNICAL_DOCUMENTATION = {
                 ['Gpu', 'Descoberta, autoteste e decisão de aceleração.', 'Driver, runtime ou hardware ausente.'],
                 ['RolePermissions', 'Permissões funcionais por papel.', 'Regra persistida e guard de permissão.'],
                 ['CloudConnector', 'Heartbeat, licença e configuração enviada pela Central.', 'Central/rede indisponível e revisão ainda não aplicada.'],
+                ['Sgp', 'Cadastro e suspensão de clientes por integração SGP, com token exclusivo gerenciado na Central.', 'Token pendente de aplicação, status não mapeado e operações de câmera ainda não confirmadas.'],
                 ['CloudStorage', 'Cadastro, teste, seleção e leitura de storages S3.', 'Credencial, endpoint, rede ou bucket.'],
                 ['Metrics/Observability', 'Métricas de processo, câmera e Prometheus.', 'Coleta parcial deve aparecer como desconhecida.'],
                 ['Health', 'Liveness/readiness e resumo das dependências.', 'Não substitui saúde funcional por câmera.'],

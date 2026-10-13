@@ -16,6 +16,7 @@ parser.add_argument('--installations',nargs='*',default=[])
 parser.add_argument('--promote-default',action='store_true')
 parser.add_argument('--notes',default='')
 parser.add_argument('--require-sgp',action='store_true')
+parser.add_argument('--require-central-sgp',action='store_true')
 args=parser.parse_args()
 metadata=json.loads(args.metadata.read_text())
 report=json.loads(args.report.read_text())
@@ -30,6 +31,13 @@ if args.require_sgp:
                 'archivePreservesData', 'keyRotationAndDisable', 'publicOpenApi']
     if any(report.get('sgpIntegration', {}).get(name) is not True for name in expected):
         raise SystemExit('SGP production evidence invalid')
+if args.require_central_sgp:
+    expected = ['realCentralAndApiHttp', 'authenticatedOutboundHeartbeat', 'applicationAcknowledged',
+                'rotationAndRevocation', 'hashedAtInstallation', 'tokenNotListed',
+                'preservedIntegrationSettings', 'localRotationProtected', 'installationIsolation',
+                'staleDeliveryIgnored', 'cameraSettingsPreserved']
+    if any(report.get('centralSgpCredential', {}).get(name) is not True for name in expected):
+        raise SystemExit('Central SGP credential evidence invalid')
 spec=importlib.util.spec_from_file_location('bundle',Path(__file__).parent/'runtime-bundle.py')
 verifier=importlib.util.module_from_spec(spec);spec.loader.exec_module(verifier)
 archive=args.metadata.with_name(metadata['commit']+'.tar.gz')

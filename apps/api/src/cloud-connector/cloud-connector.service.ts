@@ -26,6 +26,7 @@ import { SettingsService } from '../settings/settings.service';
 import { decidirSobreVpn, type PerfilDeVpn } from './helpers/perfil-de-vpn.helper';
 import { deviceIdentity, deviceProof, trustedLicenseKeys, verifyLicense, licenseVerificationRequired } from '../common/licensing/signed-license';
 import { CommercialPolicyService } from '../commercial-policy/commercial-policy.service';
+import { SgpService } from '../sgp/sgp.service';
 
 type LicenseStatus = 'UNKNOWN' | 'ACTIVE' | 'GRACE' | 'RESTRICTED' | 'SUSPENDED';
 
@@ -88,6 +89,11 @@ const SETTING_KEYS = [
   'cloud.appliedConfigRevision',
   'cloud.configApplyStatus',
   'cloud.configApplyError',
+  'cloud.sgpManagedId',
+  'cloud.sgpAppliedRevision',
+  'cloud.sgpApplyStatus',
+  'cloud.sgpAttemptId',
+  'cloud.sgpAttemptRevision',
   // Hash confirmado pela Central do último snapshot de marca. O logo pode ter
   // centenas de KB; sem ACK ele viajaria de novo a cada minuto.
   'cloud.brandingReportedHash',
@@ -271,6 +277,22 @@ export class CloudConnectorService implements OnModuleInit, OnModuleDestroy {
       if (payload.brandingStateHash
         && response.data?.brandingAcceptedHash === payload.brandingStateHash) {
         await this.writeSetting('cloud.brandingReportedHash', payload.brandingStateHash);
+      }
+
+      // Isolated from license/storage application: a failed SGP delivery must
+      // never stop cameras or falsely confirm that its credential was applied.
+      if (response.data?.sgpCredential != null) {
+        try {
+          await this.moduleRef.get(SgpService, { strict: false }).applyCentralCredential(response.data.sgpCredential);
+        } catch {
+          const incoming = response.data.sgpCredential;
+          await Promise.all([
+            this.writeSetting('cloud.sgpApplyStatus', 'FAILED'),
+            this.writeSetting('cloud.sgpAttemptId', /^[0-9a-f-]{36}$/.test(incoming?.integrationId) ? incoming.integrationId : ''),
+            this.writeSetting('cloud.sgpAttemptRevision', Number.isSafeInteger(incoming?.revision) ? String(incoming.revision) : '0'),
+          ]);
+          this.logger.warn('Não foi possível aplicar o token SGP da Central. Nova tentativa automática.');
+        }
       }
 
       // Cancelamento/recontratação usa o mesmo canal de saída do heartbeat. A
@@ -588,6 +610,17 @@ export class CloudConnectorService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  private async collectSgpState(settings: Record<string, string>) {
+    if (settings['cloud.sgpApplyStatus'] === 'FAILED') return {
+      integrationId: settings['cloud.sgpAttemptId'], revision: Number(settings['cloud.sgpAttemptRevision'] || 0), status: 'FAILED', enabled: false,
+    };
+    const id = settings['cloud.sgpManagedId'];
+    if (!id) return null;
+    const current = await this.prisma.sgpIntegration.findUnique({ where: { id }, select: { enabled: true, keyHash: true } });
+    return { integrationId: id, revision: Number(settings['cloud.sgpAppliedRevision'] || 0),
+      status: current ? 'APPLIED' : 'FAILED', enabled: Boolean(current?.enabled && current.keyHash) };
+  }
+
   private async collectPayload() {
     const recordingsRoot = process.env.RECORDINGS_ROOT ?? '/storage';
     const now = new Date();
@@ -776,8 +809,9 @@ export class CloudConnectorService implements OnModuleInit, OnModuleDestroy {
         applyError: applied['cloud.configApplyError'] || null,
         // Campos que ESTA versão entende. A Central usa isto para não marcar
         // como "pendente para sempre" uma config que a instalação nem conhece.
-        supports: ['licenseStatus', 'restrictions', 'aiPolicy', 'cloudStorage', 'branding', 'resourceLimits'],
+        supports: ['licenseStatus', 'restrictions', 'aiPolicy', 'cloudStorage', 'branding', 'resourceLimits', 'sgpIntegration'],
       },
+      sgpState: await this.collectSgpState(applied),
       ...(shouldReportBranding ? { brandingState, brandingStateHash } : {}),
       summary: {
         status: appReadinessStatus === 'blocked' ? 'blocked' : appReadinessStatus === 'attention' ? 'attention' : 'ok',

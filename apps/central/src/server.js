@@ -30,6 +30,7 @@ const {
 const alertas = require('./alertas');
 const notifications = require('./notification-engine');
 const releases = require('./releases');
+const sgpIntegration = require('./sgp-integration');
 const {launchCommand, deliverInstaller, secretLog} = require('./remote-install-runtime');
 const operations = require('./operations');
 const { testS3Access, measureS3Performance, diagnosticarConexao, localizarServidor } = require('./s3-probe');
@@ -1150,6 +1151,7 @@ function publicInstallation(item, release = null) {
     // presente (booleano) para a tela poder desenhar o estado do interruptor sem
     // adivinhar; ausente no registro = desligado.
     schedulerEnabled: item.schedulerEnabled === true,
+    sgpIntegration: sgpIntegration.publicState(item, deriveClientApiUrl(item)),
     // Política de IA sempre presente (normalizada) para a tela desenhar os
     // interruptores sem adivinhar o que "ausente" significa.
     aiPolicy: normalizeAiPolicy(item.aiPolicy),
@@ -1868,6 +1870,7 @@ async function handleHeartbeat(req, res) {
     existing.supportedConfigKeys = null;
   }
   const receivedAlerts = Array.isArray(metrics.alerts) ? metrics.alerts : Array.isArray(body.alerts) ? body.alerts : [];
+  sgpIntegration.acknowledge(existing, body.sgpState, now);
   const alerts = receivedAlerts.slice(0, 100).map(alertas.normalizarAlertaOperacional);
   const memoryUsagePercent = body.server?.totalMemoryBytes
     ? Math.round(((Number(body.server.totalMemoryBytes) - Number(body.server.freeMemoryBytes || 0)) / Number(body.server.totalMemoryBytes)) * 100)
@@ -1958,6 +1961,7 @@ async function handleHeartbeat(req, res) {
     ...(signedLicense ? { signedLicense } : {}),
     ...licenseResponse(item),
     // A versão aprovada desce pelo canal que JÁ existe. Abrir porta na
+    sgpCredential: sgpIntegration.delivery(item),
     // instalação para empurrar atualização funcionaria mal atrás de NAT, que é
     // a maioria delas — aqui quem pergunta é sempre a instalação.
     release: releases.releaseParaInstalacao(releaseAtual(db), item),
@@ -4092,6 +4096,22 @@ async function route(req, res) {
       if (req.method === 'GET' && url.pathname === '/api/admin/summary') {
         await saveDb(db);
         return json(req, res, 200, fleetSummary(Object.values(db.installations)));
+      }
+      const sgpToken = url.pathname.match(/^\/api\/admin\/installations\/([^/]+)\/sgp\/token$/);
+      if (sgpToken && ['POST', 'DELETE'].includes(req.method)) {
+        const id = decodeURIComponent(sgpToken[1]);
+        const item = db.installations[id];
+        if (!item) return json(req, res, 404, { error: 'installation_not_found' });
+        const body = await readBody(req);
+        if (body.confirmInstallationId !== id) return json(req, res, 400, { error: 'confirmation_required', message: 'Confirme a instalação escolhida.' });
+        if (!sgpIntegration.connection(deriveClientApiUrl(item))) return json(req, res, 409, { error: 'installation_address_required', message: 'Cadastre primeiro o endereço HTTPS desta instalação.' });
+        if (Array.isArray(item.supportedConfigKeys) && !item.supportedConfigKeys.includes('sgpIntegration')) return json(req, res, 409, { error: 'installation_update_required', message: 'Atualize esta instalação antes de gerar ou revogar o token SGP pela Central.' });
+        let token;
+        try { token = sgpIntegration.changeToken(item, body, actor.email, req.method === 'DELETE'); }
+        catch (error) { return json(req, res, error.status || 400, { error: 'sgp_token_rejected', message: error.message }); }
+        addAuditEvent(db, req, { type: req.method === 'DELETE' ? 'installation.sgp_token_revoked' : 'installation.sgp_token_generated', actor: actor.email, result: 'accepted', installationId: id, revision: item.sgpIntegration?.revision || 0 });
+        await saveDb(db);
+        return json(req, res, 200, { ...(token ? { token } : {}), sgpIntegration: sgpIntegration.publicState(item, deriveClientApiUrl(item)) });
       }
       if (req.method === 'POST' && url.pathname === '/api/admin/provision') {
         return handleProvision(req, res, db, actor);

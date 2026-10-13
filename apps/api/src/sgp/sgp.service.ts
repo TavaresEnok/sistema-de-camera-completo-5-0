@@ -12,7 +12,43 @@ const safeConfig = { id: true, name: true, enabled: true, keyPrefix: true, statu
 export class SgpService {
   constructor(private readonly prisma: PrismaService, private readonly commercial: CommercialPolicyService, private readonly audit: AuditService) {}
 
-  list() { return this.prisma.sgpIntegration.findMany({ select: { ...safeConfig, _count: { select: { customers: true } } }, orderBy: { createdAt: 'desc' } }); }
+  async list() {
+    const [rows, managed] = await Promise.all([
+      this.prisma.sgpIntegration.findMany({ select: { ...safeConfig, _count: { select: { customers: true } } }, orderBy: { createdAt: 'desc' } }),
+      this.prisma.systemSetting.findUnique({ where: { key: 'cloud.sgpManagedId' } }),
+    ]);
+    return rows.map(row => ({ ...row, managedByCentral: row.id === managed?.value }));
+  }
+
+  /** Authenticated outbound Central heartbeat only; no public provisioning route. */
+  async applyCentralCredential(value: unknown) {
+    const input = object(value);
+    const id = text(input.integrationId, 'integração', 36);
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id)
+      || !Number.isSafeInteger(input.revision) || input.revision < 1
+      || !(input.keyHash === null || /^[0-9a-f]{64}$/.test(input.keyHash))
+      || !(input.keyHash === null ? input.keyPrefix === null : /^[A-Za-z0-9_-]{6}$/.test(input.keyPrefix))) {
+      throw new BadRequestException('Configuração SGP recebida da Central inválida.');
+    }
+    return this.locked(async tx => {
+      const managed = await tx.systemSetting.findUnique({ where: { key: 'cloud.sgpManagedId' } });
+      const applied = await tx.systemSetting.findUnique({ where: { key: 'cloud.sgpAppliedRevision' } });
+      if (managed?.value && managed.value !== id) throw new ConflictException('Vínculo SGP da Central diferente do cadastro local.');
+      const current = await tx.sgpIntegration.findUnique({ where: { id } });
+      if (current && managed?.value !== id) throw new ConflictException('Integração SGP local já existente.');
+      const appliedRevision = Number(applied?.value || 0);
+      if (input.revision < appliedRevision) return { revision: appliedRevision, ignored: true };
+      const changed = !current || input.revision > appliedRevision || current.keyHash !== input.keyHash;
+      const credential = { keyHash: input.keyHash, keyPrefix: input.keyPrefix, enabled: input.keyHash !== null };
+      if (!current) await tx.sgpIntegration.create({ data: { id, name: 'SGP · Central', ...credential, statusMap: { ATIVO: 'ACTIVE' }, utcOffsetMinutes: -180, planIds: [] } });
+      else if (changed) await tx.sgpIntegration.update({ where: { id }, data: credential });
+      for (const [key, setting] of Object.entries({ 'cloud.sgpManagedId': id, 'cloud.sgpAppliedRevision': String(input.revision), 'cloud.sgpApplyStatus': 'APPLIED', 'cloud.sgpAttemptId': '', 'cloud.sgpAttemptRevision': '' })) {
+        await tx.systemSetting.upsert({ where: { key }, create: { key, value: setting }, update: { value: setting } });
+      }
+      if (changed) await tx.auditLog.create({ data: { action: input.keyHash === null ? 'sgp.central.key.revoke' : 'sgp.central.key.apply', entityType: 'SgpIntegration', entityId: id, metadata: { revision: input.revision } } });
+      return { revision: input.revision, changed };
+    });
+  }
   private config(body: unknown) {
     const value = object(body);
     if (typeof value.enabled !== 'boolean') throw new BadRequestException({ error: 'Informe se a integração está ativada.' });
@@ -28,6 +64,8 @@ export class SgpService {
     return result;
   }
   async rotateKey(actorId: string, id: string, revoke = false) {
+    const managed = await this.prisma.systemSetting.findUnique({ where: { key: 'cloud.sgpManagedId' } });
+    if (managed?.value === id) throw new ConflictException({ error: 'Este token é gerenciado pela Central. Gere, substitua ou revogue o token no cadastro desta instalação na Central.' });
     const key = `s2sgp_${id}.${randomBytes(32).toString('base64url')}`;
     await this.prisma.sgpIntegration.update({ where: { id }, data: { keyHash: revoke ? null : hash(key), keyPrefix: revoke ? null : key.slice(-6) } });
     await this.audit.log(actorId, revoke ? 'sgp.key.revoke' : 'sgp.key.rotate', 'SgpIntegration', id);

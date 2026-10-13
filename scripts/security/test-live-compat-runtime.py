@@ -49,6 +49,17 @@ def run(args):
         start('redis', 'redis:7-alpine')
         media = start('mediamtx', 'bluenviron/mediamtx:1-ffmpeg', extra=[
             '-v', str(Path(__file__).parent / 'tests/live-compat-mediamtx.yml') + ':/mediamtx.yml:ro'])
+        central_installation = None
+        if args.central:
+            central = start('central', args.central, {
+                'DRAC_CENTRAL_ADMIN_TOKEN': secret, 'DRAC_CENTRAL_PORT': '9765',
+                'DRAC_CENTRAL_PUBLIC_URL': 'https://central.example.invalid',
+                'DRAC_CENTRAL_HOST': '0.0.0.0', 'DRAC_CENTRAL_DATA_FILE': '/tmp/sgp-lab-installations.json',
+                'DRAC_CENTRAL_INSTALLER_COMMIT': '1' * 40, 'DRAC_CENTRAL_INSTALLER_SHA256': 'a' * 64,
+                'DRAC_CENTRAL_INSTALLER_URL_TEMPLATE': 'https://example.invalid/{commit}/install.sh',
+            })
+            provision = """(async()=>{for(let i=0;i<60;i++){try{const r=await fetch('http://127.0.0.1:9765/api/ready');if(r.ok)break;}catch{}await new Promise(r=>setTimeout(r,500));}const r=await fetch('http://127.0.0.1:9765/api/admin/provision',{method:'POST',headers:{Authorization:'Bearer '+process.env.DRAC_CENTRAL_ADMIN_TOKEN,'Content-Type':'application/json'},body:JSON.stringify({customerName:'SGP Central lab',installationId:'sgp-central-lab',serverAddress:'https://sgp-lab.example.invalid'})});if(r.status!==201)throw Error('central_fixture_failed');const x=await r.json();console.log(JSON.stringify({licenseKey:x.licenseKey}));})().catch(()=>process.exitCode=1)"""
+            central_installation = json.loads(docker('exec', '-w', '/app/apps/central', central, 'node', '-e', provision))
         ai_extra = ['--cpus', '2']
         if args.models: ai_extra += ['-v', str(args.models.resolve()) + ':/app/models:ro']
         start('ai-service', args.ai, {'API_BASE_URL': 'http://api:3000', 'INTERNAL_SERVICE_TOKEN': secret}, extra=ai_extra)
@@ -72,6 +83,10 @@ def run(args):
                'MEDIAMTX_SOURCE_ON_DEMAND_START_TIMEOUT': '15s', 'GRID_SOURCE_PROFILE': 'camera',
                'MEDIAMTX_TRACK_HEALTH_ENABLED': 'false', 'MEDIAMTX_REAP_DUPLICATE_SESSIONS_ENABLED': 'false',
                'RTSP_SOURCE_SHARED_ENABLED': 'false', 'TRUST_PROXY_HOPS': '1'}
+        if central_installation:
+            env.update({'CLOUD_CONNECTOR_ENABLED': 'true', 'CLOUD_API_URL': 'http://central:9765',
+                        'CLOUD_INSTALLATION_ID': 'sgp-central-lab', 'CLOUD_LICENSE_KEY': central_installation['licenseKey'],
+                        'CLOUD_HEARTBEAT_INTERVAL_SECONDS': '3600'})
         api = start('api', args.api, env, extra=['-v', volume + ':/storage', '--cpus', '4'])
         start('web', args.web, extra=['--tmpfs', '/var/run:rw,noexec,nosuid,nodev,size=8m,uid=101,gid=101',
                                      '--tmpfs', '/var/cache/nginx:rw,noexec,nosuid,nodev,size=64m,uid=101,gid=101'])
@@ -113,6 +128,9 @@ def run(args):
         if args.sgp_only:
             sgp_script = (Path(__file__).parent / 'tests/sgp-integration-flow.cjs').read_text()
             report['sgpIntegration'] = json.loads(node(sgp_script, input=json.dumps({'adminToken': admin_login['accessToken'], 'mediaIp': media_ip})))
+            if args.central:
+                central_script = (Path(__file__).parent / 'tests/sgp-central-credential-flow.cjs').read_text()
+                report['centralSgpCredential'] = json.loads(node(central_script, input=json.dumps({'adminToken': admin_login['accessToken']})))
             report['commit'] = args.commit
             if args.output: args.output.write_text(json.dumps(report, indent=2))
             print(json.dumps(report))
@@ -239,6 +257,10 @@ console.log(JSON.stringify({bootstrapLogin:{status:l.status,tokenPresent:!!login
             sgp_script = (Path(__file__).parent / 'tests/sgp-integration-flow.cjs').read_text()
             report['sgpIntegration'] = json.loads(node(sgp_script, input=json.dumps({'adminToken': admin_login['accessToken'], 'mediaIp': media_ip})))
             print('sgp_real_http_database_recording_and_reader_flow_passed', flush=True)
+        if args.central:
+            central_script = (Path(__file__).parent / 'tests/sgp-central-credential-flow.cjs').read_text()
+            report['centralSgpCredential'] = json.loads(node(central_script, input=json.dumps({'adminToken': admin_login['accessToken']})))
+            print('central_sgp_token_real_heartbeat_flow_passed', flush=True)
         report['commit'] = args.commit
         if args.output: args.output.write_text(json.dumps(report, indent=2))
         print(json.dumps(report))
@@ -259,5 +281,6 @@ if __name__ == '__main__':
     parser.add_argument('--keep-failed', action='store_true')
     parser.add_argument('--models', type=Path)
     parser.add_argument('--sgp', action='store_true')
+    parser.add_argument('--central', help='Central image for real authenticated SGP token delivery tests')
     parser.add_argument('--sgp-only', action='store_true', help='Focused SGP diagnostics; insufficient for full release approval')
     run(parser.parse_args())
