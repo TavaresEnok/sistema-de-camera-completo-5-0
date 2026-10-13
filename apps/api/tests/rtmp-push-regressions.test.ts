@@ -377,7 +377,10 @@ test('edição de câmera RTMP ignora o marcador de rede sem afrouxar câmera RT
   service.normalizeLiveProtocol = () => 'webrtc';
   service.cryptoService = { encrypt: () => 'encrypted' };
   service.prisma = {
+    $transaction: async (run: any) => run(service.prisma),
+    $queryRaw: async () => [{ id: existing.id }],
     camera: {
+      findUniqueOrThrow: async () => existing,
       update: async (input: any) => {
         writes.push(input);
         return { ...existing, ...input.data, ip: existing.ip };

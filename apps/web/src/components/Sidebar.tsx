@@ -82,6 +82,7 @@ const NAV_SECTIONS: NavSection[] = [
       { path: '/mosaicos', label: 'Mosaicos e rondas', icon: LayoutGrid, roles: ['admin'] },
       { path: '/roles',   label: 'Funções',     icon: ShieldCheck, roles: ['admin'] },
       { path: '/settings',label: 'Configurações',icon: Settings,   roles: ['admin'] },
+      { path: '/integrations', label: 'Integrações', icon: Server, roles: ['admin'] },
       { path: '/audit-logs', label: 'Auditoria', icon: ScrollText,  roles: ['admin'] },
       // Geração de APK é exclusiva da DRAC Central (painel mestre) — a
       // instalação não tem mais essa tela nem a rota.

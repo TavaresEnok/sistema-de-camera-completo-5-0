@@ -61,6 +61,9 @@ export class CameraGroupsService {
 
   async update(id: string, dto: UpdateCameraGroupDto) {
     await this.ensureExists(id);
+    if ((dto.isActive !== undefined || dto.accessStatus !== undefined) && await this.prisma.sgpCustomer.findUnique({ where: { groupId: id } })) {
+      throw new ConflictException('Este grupo é vinculado ao SGP. Gerencie a situação pela integração.');
+    }
     return this.prisma.cameraGroup.update({ where: { id }, data: dto, include: { cameras: { select: cameraSummary } } });
   }
 
@@ -68,6 +71,7 @@ export class CameraGroupsService {
     const group = await this.ensureExists(id);
     return this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT "id" FROM "CameraGroup" WHERE "id" = ${id} FOR UPDATE`;
+      if (await tx.sgpCustomer.findUnique({ where: { groupId: id } })) throw new ConflictException('Este grupo é vinculado ao SGP. Use Arquivar na página Integrações.');
       await tx.camera.updateMany({ where: { groupId: id, retentionFollowsGroup: true }, data: { retentionDays: group.retentionDays, retentionFollowsGroup: false } });
       await tx.camera.updateMany({ where: { groupId: id }, data: { groupId: null } });
       return tx.cameraGroup.update({ where: { id }, data: { isActive: false, cameras: { set: [] } }, include: { cameras: { select: cameraSummary } } });

@@ -22,6 +22,7 @@ import { BottomTabsRedesign } from './src/components/BottomTabsRedesign';
 import { LiveScreen } from './src/screens/LiveScreen';
 import { LiveScreenRedesign } from './src/screens/redesign/LiveScreenRedesign';
 import { LoginScreen } from './src/screens/LoginScreen';
+import { FirstPasswordScreen } from './src/screens/FirstPasswordScreen';
 import { MosaicScreen } from './src/screens/MosaicScreen';
 import { PlaybackScreen } from './src/screens/PlaybackScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
@@ -226,8 +227,8 @@ function AppInner() {
   recordingDateRef.current = recordingDate;
   recordingsRef.current = recordings;
 
-  const { alarms, total: alarmsTotal, loadMore: loadMoreAlarms, openAlarmCount, reload: reloadAlarms, ack: ackAlarm, resolve: resolveAlarm, erro: alarmesErro, carregando: alarmesCarregando } = useAlarms(session);
-  const liveDetections = useLiveDetections(session, liveCamera != null && !activePlayback, liveCamera?.id ?? null);
+  const { alarms, total: alarmsTotal, loadMore: loadMoreAlarms, openAlarmCount, reload: reloadAlarms, ack: ackAlarm, resolve: resolveAlarm, erro: alarmesErro, carregando: alarmesCarregando } = useAlarms(session?.user.mustChangePassword ? null : session);
+  const liveDetections = useLiveDetections(session?.user.mustChangePassword ? null : session, liveCamera != null && !activePlayback, liveCamera?.id ?? null);
 
   const operationalMessages = buildOperationalMessages(cameras, lastSyncError);
   const statusBarStyle = isLightColor(theme.bg) ? 'dark' : 'light';
@@ -415,7 +416,7 @@ function AppInner() {
   }, [session?.token]);
 
   useEffect(() => {
-    if (!session) { setCanManageAlarms(false); return; }
+    if (!session || session.user.mustChangePassword) { setCanManageAlarms(false); return; }
     const token = session.token;
     let cancelled = false;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -726,7 +727,7 @@ function AppInner() {
   };
 
   const loadAll = async (quiet = false) => {
-    if (!session) return;
+    if (!session || session.user.mustChangePassword) return;
     const token = session.token;
     const generation = ++camerasRequestRef.current;
     if (!quiet) setRefreshing(true);
@@ -1710,6 +1711,8 @@ function AppInner() {
   }
 
   // Ao vivo: overlay em tela cheia, sem BottomTabs.
+  if (session.user.mustChangePassword) return <SafeAreaView style={[styles.screen, { backgroundColor: theme.bg }]}><StatusBar style={statusBarStyle} /><FirstPasswordScreen session={session} onComplete={async value => { await saveStoredSession(value); activateSession(value); }} onExit={() => void logout()} /></SafeAreaView>;
+
   if (liveCamera) {
     const live = cameras.find((c) => c.id === liveCamera.id) ?? liveCamera;
     return (

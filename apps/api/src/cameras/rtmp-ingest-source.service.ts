@@ -136,6 +136,46 @@ export class RtmpIngestSourceService {
     }
   }
 
+  /** Stop only publishers belonging to this camera; credentials never leave memory. */
+  async pausePublishers(camera: PushCameraSource) {
+    const candidates = new Set(this.candidatePaths(camera));
+    if (!candidates.size) return;
+    const { user, pass } = this.mediaMtxCredentials();
+    const mediaBase = (this.configService.get<string>('mediaMtxApiBaseUrl') ?? 'http://mediamtx:9997').replace(/\/+$/, '');
+    const headers = { Authorization: `Basic ${Buffer.from(`${user}:${pass}`).toString('base64')}` };
+    const routes: Record<string, string> = { rtmpConn: 'rtmpconns', rtspSession: 'rtspsessions', srtConn: 'srtconns' };
+    for (const path of candidates) {
+      const runtime = await this.apiGet(`/v3/paths/get/${encodeURIComponent(path)}`);
+      if (runtime.status === 404) continue;
+      if (runtime.status !== 200) throw new Error('Aguardando confirmação da ingestão.');
+      const source = JSON.parse(runtime.body).source;
+      if (source?.id && routes[source.type]) {
+        const response = await fetch(`${mediaBase}/v3/${routes[source.type]}/kick/${encodeURIComponent(source.id)}`, { method: 'POST', headers, signal: AbortSignal.timeout(5000) });
+        if (!response.ok && response.status !== 404) throw new Error('Aguardando parada da ingestão.');
+      }
+    }
+    // The legacy RTMP translator can keep its forward alive after MediaMTX is kicked.
+    const base = 'http://rtmp-callback:8080/discovery-srs';
+    const token = this.configService.get<string>('mediaMtxAuthCallbackToken') ?? '';
+    if (token.length < 32) throw new Error('Controle da ingestão não configurado.');
+    const controlHeaders = { 'X-Discovery-Token': token };
+    for (let start = 0; start < 1_000_000; start += 1000) {
+      const response = await fetch(`${base}/clients/?start=${start}&count=1000`, { headers: controlHeaders, signal: AbortSignal.timeout(5000) });
+      if (!response.ok) throw new Error('Aguardando confirmação do tradutor RTMP.');
+      const result: any = await response.json();
+      if (result.code !== 0 || !Array.isArray(result.clients)) throw new Error('Resposta inválida do tradutor RTMP.');
+      for (const client of result.clients) {
+        const path = String(client.url ?? '').replace(/^\//, '').replace(/^__defaultVhost__\//, '').split('?')[0];
+        if (!candidates.has(path) || !client.id) continue;
+        const stopped = await fetch(`${base}/clients/${encodeURIComponent(client.id)}`, { method: 'DELETE', headers: controlHeaders, signal: AbortSignal.timeout(5000) });
+        if (!stopped.ok && stopped.status !== 404) throw new Error('Aguardando parada do publicador RTMP.');
+        if (stopped.ok && (await stopped.json() as any).code !== 0) throw new Error('Aguardando confirmação da parada RTMP.');
+      }
+      if (result.clients.length < 1000) return;
+    }
+    throw new Error('Quantidade de publicadores RTMP excedida.');
+  }
+
   private normalizeTracks(input: unknown): string[] {
     if (!Array.isArray(input)) return [];
     return input

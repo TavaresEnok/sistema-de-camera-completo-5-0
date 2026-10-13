@@ -54,6 +54,24 @@ export class RecordingsController {
     private readonly retentionService: RetentionService,
   ) {}
 
+  private watchIntegrationPlayback(user: AuthUser, cameraId: string, res: Response) {
+    if (!user.integrationGroupId) return;
+    let checking = false;
+    const timer = setInterval(() => {
+      if (checking) return;
+      checking = true;
+      void this.authService.me(user.id)
+        .then(current => this.accessControlService.assertCanPlaybackCamera(current, cameraId))
+        .catch(() => res.destroy())
+        .finally(() => { checking = false; });
+    }, 2000);
+    timer.unref();
+    const cleanup = () => clearInterval(timer);
+    res.once('close', cleanup);
+    res.once('finish', cleanup);
+    res.once('error', cleanup);
+  }
+
   private extractBearerToken(req: Request): string | null {
     const authHeader = req.headers.authorization;
     if (typeof authHeader !== 'string') return null;
@@ -630,6 +648,7 @@ export class RecordingsController {
     const compatibleFlag = ['1', 'true', 'yes'].includes(String(compatible ?? '').toLowerCase());
     const forceDirectFlag = ['1', 'true', 'yes'].includes(String(forceDirect ?? '').toLowerCase());
     const autoPreferCompatible = forceDirectFlag ? false : await this.recordingsService.shouldPreferCompatiblePlayback(id);
+    this.watchIntegrationPlayback(tokenUser, recording.cameraId, res);
     const useCompatible = compatibleFlag || autoPreferCompatible;
     // UMA linha de auditoria por ABERTURA, não por Range: o navegador emite
     // dezenas de Ranges por sessão de vídeo (cada seek é um), e cada um virava

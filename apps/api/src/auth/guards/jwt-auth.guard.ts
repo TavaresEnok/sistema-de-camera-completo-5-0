@@ -1,4 +1,4 @@
-import { ExecutionContext, Injectable } from '@nestjs/common';
+import { ExecutionContext, Injectable, ForbiddenException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { AuthGuard } from '@nestjs/passport';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
@@ -18,5 +18,12 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       return true;
     }
     return super.canActivate(context);
+  }
+
+  handleRequest<TUser = any>(err: any, user: any, info: any, context: ExecutionContext): TUser {
+    const result = super.handleRequest(err, user, info, context);
+    const allowed = this.reflector.getAllAndOverride<boolean>('allow_initial_password', [context.getHandler(), context.getClass()]);
+    if (result?.mustChangePassword && !allowed) throw new ForbiddenException({ code: 'password_change_required', message: 'Troque sua senha inicial para acessar as câmeras.' });
+    return result;
   }
 }

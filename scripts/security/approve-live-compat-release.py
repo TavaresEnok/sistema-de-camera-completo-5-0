@@ -15,6 +15,7 @@ parser.add_argument('--public-key',type=Path,required=True)
 parser.add_argument('--installations',nargs='*',default=[])
 parser.add_argument('--promote-default',action='store_true')
 parser.add_argument('--notes',default='')
+parser.add_argument('--require-sgp',action='store_true')
 args=parser.parse_args()
 metadata=json.loads(args.metadata.read_text())
 report=json.loads(args.report.read_text())
@@ -22,6 +23,13 @@ if (report.get('commit')!=metadata['commit'] or not report.get('freshIsolatedRun
     or not report.get('databaseSchemaVerified') or not report.get('sourceFreeAI')
     or not report.get('readiness',{}).get('ready') or len(report.get('cases',[]))!=6
     or report.get('hls',{}).get('status')!=200):raise SystemExit('Lab evidence invalid')
+if args.require_sgp:
+    expected = ['realHttpAndPostgres', 'initialPasswordRequired', 'passwordPreserved', 'deduplicationConflictRejected',
+                'staleEventsIgnored', 'integrationIsolation', 'liveReaderRevoked', 'sharedViewerPreserved',
+                'actualRecordingStoppedAndResumed', 'cameraSettingsRestored', 'disabledCameraPreserved',
+                'archivePreservesData', 'keyRotationAndDisable', 'publicOpenApi']
+    if any(report.get('sgpIntegration', {}).get(name) is not True for name in expected):
+        raise SystemExit('SGP production evidence invalid')
 spec=importlib.util.spec_from_file_location('bundle',Path(__file__).parent/'runtime-bundle.py')
 verifier=importlib.util.module_from_spec(spec);spec.loader.exec_module(verifier)
 archive=args.metadata.with_name(metadata['commit']+'.tar.gz')

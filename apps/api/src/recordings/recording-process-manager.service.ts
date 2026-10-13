@@ -266,8 +266,8 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
   private initializeDurableManual() {
     this.durableManual = new ManualRecordingSessions(this.prisma, {
       protected: async cameraId => {
-        const camera = await this.prisma.camera.findUnique({ where: { id: cameraId }, select: { recordingMode: true } });
-        const protectedRecording = !camera || camera.recordingMode === 'continuous';
+        const camera = await this.prisma.camera.findUnique({ where: { id: cameraId }, select: { recordingMode: true, enabled: true } });
+        const protectedRecording = !camera || camera.enabled === false || camera.recordingMode === 'continuous';
         if (protectedRecording) this.durableManualActive.delete(cameraId);
         return protectedRecording;
       },
@@ -2623,7 +2623,7 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
     this.active.set(cameraId, state);
     try {
       await this.prisma.camera.update({
-        where: { id: cameraId },
+        where: { id: cameraId, enabled: true, integrationEnabledBeforeBlock: null },
         data: { recordingEnabled: true, ...(await this.resolveRecordingModeUpdate(cameraId, options?.recordingMode)) },
       });
     } catch (error) {
@@ -2694,6 +2694,35 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
     };
   }
 
+  /** Commercial suspension pauses capture without overwriting its configured mode. */
+  async pauseForIntegration(cameraId: string) {
+    if (this.controlMode !== 'local') throw new ServiceUnavailableException('Aguardando confirmação do gravador externo.');
+    this.clearMotionStopTimer(cameraId);
+    this.cancelPendingRestart(cameraId);
+    this.diskGuardSuspended.delete(cameraId);
+    this.durableManualActive.delete(cameraId);
+    await this.prisma.$executeRaw`DELETE FROM "ManualRecordingSession" WHERE "cameraId" = ${cameraId}`;
+    await this.prisma.camera.updateMany({ where: { id: cameraId, recordingMode: 'manual', recordingEnabled: true, integrationEnabledBeforeBlock: { not: null } }, data: { recordingEnabled: false } });
+    await this.stopPreBuffer(cameraId);
+    const state = this.active.get(cameraId);
+    if (state) {
+      clearInterval(state.watcher);
+      state.stopRequested = true;
+      await this.stopProcessAndWait(state);
+      await this.finalizeRecordingState(cameraId, state, state.process.exitCode);
+    }
+  }
+
+  async resumeForIntegration(cameraId: string) {
+    const camera = await this.prisma.camera.findUniqueOrThrow({ where: { id: cameraId } });
+    if (!camera.enabled) return;
+    if (camera.recordingMode === 'continuous' && camera.recordingEnabled) {
+      await this.start(cameraId, this.configService.get<number>('recordingSegmentSeconds') ?? 300);
+    } else if (modoArmado(camera.recordingMode)) {
+      await this.startPreBuffer(cameraId);
+    }
+  }
+
   /** Nº de gravações locais ativas (gauge de /metrics — agregado, sem PII). */
   getActiveRecordingCount(): number {
     return this.active.size;
@@ -2719,7 +2748,7 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
    * `DISTINCT ON` resolve "a última por câmera" numa consulta só por tipo.
    */
   private async contextoDeStatus(cameraIds: string[]): Promise<{
-    cams: Map<string, { recordingEnabled: boolean | null }>;
+    cams: Map<string, { recordingEnabled: boolean | null; enabled?: boolean }>;
     ultimasGravacoes: Map<string, { startedAt: Date; endedAt: Date | null; filePath: string }>;
     ultimasReconexoes: Map<string, { type: string; occurredAt: Date }>;
   }> {
@@ -2727,7 +2756,7 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
       return { cams: new Map(), ultimasGravacoes: new Map(), ultimasReconexoes: new Map() };
     }
     const [cams, ultimas, reconexoes] = await Promise.all([
-      this.prisma.camera.findMany({ where: { id: { in: cameraIds } }, select: { id: true, recordingEnabled: true } }),
+      this.prisma.camera.findMany({ where: { id: { in: cameraIds } }, select: { id: true, recordingEnabled: true, enabled: true } }),
       this.prisma.$queryRaw<Array<{ cameraId: string; startedAt: Date; endedAt: Date | null; filePath: string }>>(
         Prisma.sql`SELECT DISTINCT ON ("cameraId") "cameraId", "startedAt", "endedAt", "filePath"
           FROM "Recording" WHERE "cameraId" IN (${Prisma.join(cameraIds)})
@@ -2771,7 +2800,7 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
     const writeProgress = this.safeRecordingWriteProgress(cameraId);
 
     if (this.controlMode === 'worker') {
-      const intended = Boolean(cam?.recordingEnabled);
+      const intended = Boolean(cam?.recordingEnabled) && cam?.enabled !== false;
       const isRecording = intended && inferredRecentRecording;
       const staleCandidate = intended && (lastSegmentAgeSeconds == null ? true : lastSegmentAgeSeconds > staleThresholdSeconds);
       const autoRecovering = Boolean(
@@ -2804,7 +2833,7 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
 
     const state = this.active.get(cameraId);
     if (!state) {
-      const intended = Boolean(cam?.recordingEnabled);
+      const intended = Boolean(cam?.recordingEnabled) && cam?.enabled !== false;
       const isRecording = intended && inferredRecentRecording;
       const staleCandidate = intended && (lastSegmentAgeSeconds == null ? true : lastSegmentAgeSeconds > staleThresholdSeconds);
       const autoRecovering = Boolean(

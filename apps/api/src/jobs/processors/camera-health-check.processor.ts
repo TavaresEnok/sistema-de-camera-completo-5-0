@@ -220,7 +220,7 @@ export class CameraHealthCheckProcessor extends WorkerHost {
     const cameras = await this.prisma.camera.findMany({
       // Em modo motion, recordingEnabled representa processo ATIVO, não o
       // armamento. Esse modo possui health próprio baseado em frames da IA.
-      where: { recordingEnabled: true, recordingMode: { not: 'motion' } },
+      where: { enabled: true, recordingEnabled: true, recordingMode: { notIn: ['motion', 'object'] } },
       select: { id: true, name: true, status: true },
     });
     if (!cameras.length) return;
@@ -421,7 +421,7 @@ export class CameraHealthCheckProcessor extends WorkerHost {
 
   private async checkMotionDetectorHealth() {
     const cameras = await this.prisma.camera.findMany({
-      where: { recordingMode: 'motion', motionTrigger: 'SYSTEM' },
+      where: { enabled: true, recordingMode: 'motion', motionTrigger: 'SYSTEM' },
       select: { id: true, name: true, status: true },
       take: 500,
     });
@@ -537,7 +537,7 @@ export class CameraHealthCheckProcessor extends WorkerHost {
     const fpsAutoRemediationCooldownSeconds = envNumber('HEALTH_STREAM_FPS_REMEDIATION_COOLDOWN_SECONDS', 900, { min: 60 });
     const fpsRemediationCooldownAt = new Date(Date.now() - fpsAutoRemediationCooldownSeconds * 1000);
     const cameras = await this.prisma.camera.findMany({
-      where: { OR: [{ recordingEnabled: true }, { recordingMode: 'motion' }] },
+      where: { enabled: true, OR: [{ recordingEnabled: true }, { recordingMode: 'motion' }] },
       select: { id: true, name: true, preferredLiveProtocol: true, streamFps: true, recordingEnabled: true },
       take: maxPerRun,
       orderBy: { updatedAt: 'asc' },

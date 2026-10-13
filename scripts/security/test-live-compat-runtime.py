@@ -23,7 +23,9 @@ def run(args):
         if result.returncode:
             # Docker stderr can contain environment values: never echo it.
             safe_error = re.search(r'(?m)^(bootstrap_login_failed|private_flow_[a-z0-9_-]+|urls_failed_[a-z0-9_-]+|hls_failed_[a-z0-9_-]+|media_not_advancing_[a-z0-9_-]+|encode_policy_wrong_[a-z0-9_-]+|bad_audio_not_isolated|healthy_audio_not_preserved|notice_[a-z0-9_-]+|detector_label_[a-z0-9_-]+|cpu_measurement_failed|real_motion_did_not_generate_notice)\s*$', result.stderr)
+            sgp_error = re.search(r'(?m)^(sgp_failed_[a-zA-Z0-9_]+)\s*$', result.stderr)
             if safe_error: print('fixture_failure: ' + safe_error.group(1), flush=True)
+            if sgp_error: print('fixture_failure: ' + sgp_error.group(1), flush=True)
             raise RuntimeError('lab_operation_failed_' + str(result.returncode) + '_' + cmd[0])
         return result.stdout
     def start(name, image, env=None, command=None, extra=None):
@@ -36,7 +38,7 @@ def run(args):
         containers.append(full)
         return full
     def node(script, input=None):
-        return docker('exec', '-i', '-w', '/app/apps/api', api, 'node', '-e', script, input=input)
+        return docker('exec', '-i', '-w', '/app/apps/api', api, 'node', '-e', script, input=input, timeout=900)
     try:
         docker('network', 'create', network)
         docker('volume', 'create', volume)
@@ -69,7 +71,7 @@ def run(args):
                'CLOUD_CONNECTOR_ENABLED': 'false', 'MEDIAMTX_WARM_PATHS_ON_BOOT': 'false',
                'MEDIAMTX_SOURCE_ON_DEMAND_START_TIMEOUT': '15s', 'GRID_SOURCE_PROFILE': 'camera',
                'MEDIAMTX_TRACK_HEALTH_ENABLED': 'false', 'MEDIAMTX_REAP_DUPLICATE_SESSIONS_ENABLED': 'false',
-               'RTSP_SOURCE_SHARED_ENABLED': 'false'}
+               'RTSP_SOURCE_SHARED_ENABLED': 'false', 'TRUST_PROXY_HOPS': '1'}
         api = start('api', args.api, env, extra=['-v', volume + ':/storage', '--cpus', '4'])
         start('web', args.web, extra=['--tmpfs', '/var/run:rw,noexec,nosuid,nodev,size=8m,uid=101,gid=101',
                                      '--tmpfs', '/var/cache/nginx:rw,noexec,nosuid,nodev,size=64m,uid=101,gid=101'])
@@ -108,6 +110,13 @@ def run(args):
         auth_script = "const fs=require('fs');const p=JSON.parse(fs.readFileSync(0,'utf8'));fetch('http://127.0.0.1:3000/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:'labadmin',password:p.password})}).then(async r=>{const data=await r.json();if(r.status!==201||!data.accessToken)throw Error('bootstrap_login_failed');console.log(JSON.stringify({status:r.status,accessToken:data.accessToken}))}).catch(()=>process.exitCode=1)"
         # The token remains solely in this process's memory and stdin, never logs.
         admin_login = json.loads(node(auth_script, input=json.dumps({'password': password})))
+        if args.sgp_only:
+            sgp_script = (Path(__file__).parent / 'tests/sgp-integration-flow.cjs').read_text()
+            report['sgpIntegration'] = json.loads(node(sgp_script, input=json.dumps({'adminToken': admin_login['accessToken'], 'mediaIp': media_ip})))
+            report['commit'] = args.commit
+            if args.output: args.output.write_text(json.dumps(report, indent=2))
+            print(json.dumps(report))
+            return
         setup_script = (Path(__file__).parent / 'tests/camera-setup-ports-flow.cjs').read_text()
         report['cameraSetupPorts'] = json.loads(node(setup_script, input=json.dumps({'fixtureIp': setup_ip, 'adminToken': admin_login['accessToken']})))
         print('camera_setup_real_ports_and_video_passed', flush=True)
@@ -226,6 +235,10 @@ console.log(JSON.stringify({bootstrapLogin:{status:l.status,tokenPresent:!!login
             video = next((s for s in case['deliveredTracks'] if s.get('codec_type') == 'video'), {})
             if video.get('codec_name') != 'h264' or video.get('has_b_frames') != 0:
                 raise RuntimeError('delivered_video_not_browser_compatible')
+        if args.sgp:
+            sgp_script = (Path(__file__).parent / 'tests/sgp-integration-flow.cjs').read_text()
+            report['sgpIntegration'] = json.loads(node(sgp_script, input=json.dumps({'adminToken': admin_login['accessToken'], 'mediaIp': media_ip})))
+            print('sgp_real_http_database_recording_and_reader_flow_passed', flush=True)
         report['commit'] = args.commit
         if args.output: args.output.write_text(json.dumps(report, indent=2))
         print(json.dumps(report))
@@ -245,4 +258,6 @@ if __name__ == '__main__':
     parser.add_argument('--output', type=Path)
     parser.add_argument('--keep-failed', action='store_true')
     parser.add_argument('--models', type=Path)
+    parser.add_argument('--sgp', action='store_true')
+    parser.add_argument('--sgp-only', action='store_true', help='Focused SGP diagnostics; insufficient for full release approval')
     run(parser.parse_args())

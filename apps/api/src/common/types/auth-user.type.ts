@@ -1,6 +1,8 @@
 import { UserRole } from '@prisma/client';
 
 export type AuthUser = {
+  mustChangePassword?: boolean;
+  integrationGroupId?: string | null;
   id: string;
   username: string;
   /** Identificador legado e e-mail de recuperação quando configurado. */

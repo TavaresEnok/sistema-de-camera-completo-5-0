@@ -46,7 +46,7 @@ def verify_signature(signed, public_key):
     return body
 
 
-def allow_schema_transition(current_hash, body, approved=False, object_notice_approved=False):
+def allow_schema_transition(current_hash, body, approved=False, object_notice_approved=False, sgp_approved=False):
     if current_hash == body.get('databaseSchemaHash'):
         return False
     transition = body.get('reviewedSchemaTransition') or {}
@@ -55,6 +55,10 @@ def allow_schema_transition(current_hash, body, approved=False, object_notice_ap
         return True
     if (object_notice_approved and transition.get('from') == current_hash and transition.get('kind') == 'additive'
             and transition.get('migration') == '20261008210000_camera_object_notice'):
+        return True
+    if (sgp_approved and transition.get('from') == current_hash and transition.get('kind') == 'additive'
+            and transition.get('migration') == '20261010160000_sgp_integration'
+            and transition.get('migrationSha256') == 'ad8156582c068dbfb207c2516d5f144149e0e9229ecb9edebb84de7c8e08b2b5'):
         return True
     raise ValueError('Schema change requires the reviewed detector-label migration approval')
 
@@ -96,6 +100,7 @@ def main():
     parser.add_argument('manifest', type=Path)
     parser.add_argument('--approve-detector-percentage-schema', action='store_true')
     parser.add_argument('--approve-object-notice-schema', action='store_true')
+    parser.add_argument('--approve-sgp-schema', action='store_true')
     parser.add_argument('--web-only', action='store_true', help='Keep the running API and media services untouched')
     args = parser.parse_args()
     root = args.root.resolve()
@@ -119,7 +124,7 @@ def main():
     installed_viewing = root / 'infra/viewing-release.json'
     if installed_viewing.exists():
         state = verify_signature(json.loads(installed_viewing.read_text()), root / 'infra/release-public.pem')
-    migration_approved = allow_schema_transition(state.get('databaseSchemaHash'), body, args.approve_detector_percentage_schema, args.approve_object_notice_schema)
+    migration_approved = allow_schema_transition(state.get('databaseSchemaHash'), body, args.approve_detector_percentage_schema, args.approve_object_notice_schema, args.approve_sgp_schema)
     media_before, api_before = media_state(), inspect('vms-api')
     if args.web_only:
         validate_web_only_update(body, api_before, migration_approved)
@@ -162,6 +167,10 @@ def main():
         expected_sql = '-- Preferência visual. Padrão sem texto no grid; não muda detecção/gravação.\nALTER TABLE "Camera" ADD COLUMN "showDetectorPercentage" BOOLEAN NOT NULL DEFAULT false;\n'.encode()
         if migration == '20261008210000_camera_object_notice':
             expected_sql = '-- Avisos independentes desligados por padrão; preserva gravações e alertas existentes.\nALTER TABLE "Camera" ADD COLUMN "objectNoticeEnabled" BOOLEAN NOT NULL DEFAULT false;\nALTER TABLE "Camera" ADD COLUMN "objectNoticeClasses" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];\n'.encode()
+        if migration == '20261010160000_sgp_integration':
+            if hashlib.sha256(statement).hexdigest() != 'ad8156582c068dbfb207c2516d5f144149e0e9229ecb9edebb84de7c8e08b2b5':
+                raise ValueError('Image does not contain the reviewed SGP migration')
+            expected_sql = statement
         if statement != expected_sql:
             raise ValueError('Image does not contain the narrowly reviewed additive migration')
     if not args.web_only:

@@ -6,6 +6,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { AuthUser } from '../common/types/auth-user.type';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { AllowInitialPassword } from '../auth/decorators/initial-password.decorator';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UsersService } from './users.service';
@@ -42,6 +43,7 @@ export class UsersController {
 
   @Roles(UserRole.VIEWER)
   @Patch('me/password')
+  @AllowInitialPassword()
   async changeOwnPassword(@CurrentUser() actor: AuthUser, @Body() dto: ChangePasswordDto, @Req() req: Request) {
     const result = await this.usersService.changeOwnPassword(actor, dto);
     await this.auditService.log(actor.id, 'user.password.change_self', 'User', actor.id, undefined, req);

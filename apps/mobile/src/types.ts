@@ -42,6 +42,7 @@ export type User = {
   username?: string;
   email: string;
   role: 'SUPER_ADMIN' | 'ADMIN' | 'OPERATOR' | 'VIEWER';
+  mustChangePassword?: boolean;
 };
 
 export type Camera = {

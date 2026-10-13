@@ -24,6 +24,7 @@ import { LiveCapacityException } from './helpers/live-capacity.helper';
 import { CamerasService } from '../cameras/cameras.service';
 import { ingestKeyFromPathName } from '../cameras/helpers/rtmp-ingest.helper';
 import { PendingIngestRegistry } from '../cameras/pending-ingest.registry';
+import { PrismaService } from '../common/prisma/prisma.service';
 import {
   GRID_LIVE_MAX_HEIGHT,
   GRID_LIVE_MAX_WIDTH,
@@ -41,6 +42,7 @@ import {
 
 type LiveProtocol = 'auto' | 'flv' | 'hls' | 'llhls' | 'webrtc' | 'mjpeg';
 type MediaMtxAuthRequest = {
+  id?: string;
   user?: string;
   password?: string;
   token?: string;
@@ -106,6 +108,7 @@ export class CameraStreamController {
     private readonly configService: ConfigService,
     private readonly pendingIngest: PendingIngestRegistry,
     @Optional() private readonly discovery?: RtmpDiscoveryService,
+    @Optional() private readonly prisma?: PrismaService,
   ) {}
 
   private extractBearerToken(req: Request): string | null {
@@ -335,6 +338,15 @@ export class CameraStreamController {
       await this.accessControlService.assertCanViewCamera(tokenUser, payload.cameraId);
       const camera = await this.camerasService.findOneInternal(payload.cameraId);
       if (!camera || camera.enabled === false) return deny('Câmera indisponível.');
+      if (tokenUser.integrationGroupId) {
+        if (!this.prisma) return deny('Controle de sessão indisponível.');
+        const protocol = String(body.protocol ?? '').toLowerCase();
+        if (protocol !== 'hls') {
+          if (!['webrtc', 'rtsp', 'rtmp', 'rtmps', 'srt'].includes(protocol) || !/^[0-9a-f-]{36}$/i.test(String(body.id ?? ''))) return deny('Sessão de vídeo inválida.');
+          const identity = { protocol, sessionId: String(body.id) };
+          await this.prisma.mediaReaderIdentity.upsert({ where: { protocol_sessionId: identity }, create: { ...identity, userId: tokenUser.id, cameraId: payload.cameraId }, update: { userId: tokenUser.id, cameraId: payload.cameraId } });
+        }
+      }
       return res.status(200).json({ authorized: true });
     } catch {
       return deny('Token de mídia inválido ou expirado.');
@@ -896,6 +908,15 @@ export class CameraStreamController {
     const tokenUser = await this.authService.me(payload.sub);
     await this.accessControlService.assertCanViewCamera(tokenUser, cameraId);
 
-    await this.ffmpegMjpegService.startFlvStream(cameraId, req, res);
+    let checking = false;
+    const timer = setInterval(() => {
+      if (checking) return;
+      checking = true;
+      void this.authService.me(payload.sub).then(user => this.accessControlService.assertCanViewCamera(user, cameraId)).catch(() => res.destroy()).finally(() => { checking = false; });
+    }, 2000);
+    timer.unref();
+    res.once('close', () => clearInterval(timer));
+    try { await this.ffmpegMjpegService.startFlvStream(cameraId, req, res); }
+    catch (error) { clearInterval(timer); throw error; }
   }
 }

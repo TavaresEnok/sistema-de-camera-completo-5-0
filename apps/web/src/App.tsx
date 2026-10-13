@@ -8,6 +8,7 @@ import { MotionConfig } from 'framer-motion';
 import { AppLayout } from './layouts/AppLayout';
 import { ActionConfirmation } from './components/ActionConfirmation';
 import { MotionNotices } from './components/MotionNotices';
+import FirstPasswordPage from './pages/FirstPasswordPage';
 
 import { useAuthStore } from './store/authStore';
 import { useThemeStore } from './store/themeStore';
@@ -52,6 +53,8 @@ function lazyWithReload<T extends ComponentType<any>>(factory: () => Promise<{ d
 }
 
 const LoginPage       = lazyWithReload(() => import('./pages/LoginPage'));
+const SgpApiPage = lazyWithReload(() => import('./pages/SgpApiPage'));
+const IntegrationsPage = lazyWithReload(() => import('./pages/IntegrationsPage'));
 const ResetPasswordPage = lazyWithReload(() => import('./pages/ResetPasswordPage'));
 const LiveViewPage    = lazyWithReload(() => import('./pages/LiveViewPage'));
 const PlaybackPage    = lazyWithReload(() => import('./pages/PlaybackPage'));
@@ -184,6 +187,7 @@ function ProtectedRoute({
 
   if (!isBootstrapped || isLoading) return <AppFallback />;
   if (!isAuthenticated) return null;
+  if (user?.mustChangePassword) return <FirstPasswordPage />;
   if (permission && user?.role === 'admin' && !permissionsLoaded) return <ContentFallback />;
   if (permission && user?.role === 'admin' && permissionsUnavailable) return <div className="p-6 text-sm">Não foi possível verificar seus acessos. <button className="underline" onClick={() => { const token = useAuthStore.getState().accessToken; if (token) void usePermissionsStore.getState().load(token); }}>Tentar novamente</button></div>;
   if (!hasAccess) return null;
@@ -304,6 +308,8 @@ function AppRoutes() {
       <LiveRouteWithGrace active={isLiveRoute} />
       {!isLiveRoute && <Switch>
       <Route path="/login" component={LoginPage} />
+      <Route path="/developers/sgp" component={SgpApiPage} />
+      <Route path="/integrations">{() => <ProtectedRoute component={IntegrationsPage} minRole="admin" />}</Route>
       <Route path="/reset-password" component={ResetPasswordPage} />
 
       {/* ── Rotas acessíveis a todos os usuários autenticados (viewer+) ── */}
@@ -402,18 +408,19 @@ function AppRoutes() {
 function App() {
   const accessToken = useAuthStore((state) => state.accessToken);
   const actorId = useAuthStore((state) => state.user?.id);
+  const mustChangePassword = useAuthStore((state) => state.user?.mustChangePassword === true);
   const permissionActor = useRef<string | undefined>(undefined);
   useEffect(() => {
     const store = usePermissionsStore.getState();
     if (permissionActor.current !== actorId || !accessToken) store.reset();
     permissionActor.current = actorId;
-    if (!accessToken) return;
+    if (!accessToken || mustChangePassword) return;
     void store.load(accessToken);
     const refresh = () => { if (document.visibilityState === 'visible') void store.load(accessToken); };
     const timer = window.setInterval(refresh, 15000);
     window.addEventListener('focus', refresh);
     return () => { window.clearInterval(timer); window.removeEventListener('focus', refresh); };
-  }, [accessToken, actorId]);
+  }, [accessToken, actorId, mustChangePassword]);
   const bootstrap = useAuthStore((state) => state.bootstrap);
   const revalidate = useAuthStore((state) => state.revalidate);
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
@@ -442,13 +449,13 @@ function App() {
   useEffect(() => {
     // Autenticado: carrega tudo. Desautenticado: cancela retentativas pendentes
     // e remove da memória os dados pertencentes à sessão anterior.
-    void loadData();
-  }, [isAuthenticated, loadData]);
+    if (!mustChangePassword) void loadData();
+  }, [isAuthenticated, mustChangePassword, loadData]);
 
   // A API ainda não expõe SSE/WebSocket para o estado operacional. Atualizamos
   // apenas os recursos leves em segundo plano, sem desmontar players ao vivo.
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!isAuthenticated || mustChangePassword) return;
 
     const refreshWhenVisible = () => {
       if (document.visibilityState === 'visible') void refreshOperational();
@@ -461,7 +468,7 @@ function App() {
       window.removeEventListener('focus', refreshWhenVisible);
       document.removeEventListener('visibilitychange', refreshWhenVisible);
     };
-  }, [isAuthenticated, refreshOperational]);
+  }, [isAuthenticated, mustChangePassword, refreshOperational]);
 
   return (
     <MotionConfig reducedMotion="user">

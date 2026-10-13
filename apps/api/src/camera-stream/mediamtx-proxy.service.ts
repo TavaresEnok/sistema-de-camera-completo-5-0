@@ -854,6 +854,29 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     return { complete };
   }
 
+  private readerRoute(protocol: string) {
+    return ({ webrtc: 'webrtcsessions', rtsp: 'rtspsessions', rtmp: 'rtmpconns', rtmps: 'rtmpconns', srt: 'srtconns' } as Record<string, string>)[protocol];
+  }
+
+  async revokeReader(protocol: string, sessionId: string) {
+    const route = this.readerRoute(protocol);
+    if (!route) throw new Error('Protocolo de leitura sem revogação.');
+    try { await this.apiRequest('POST', `/v3/${route}/kick/${encodeURIComponent(sessionId)}`); }
+    catch (error: any) { if (error?.status !== 404) throw error; }
+  }
+
+  async readerSessions(protocol: string): Promise<Set<string>> {
+    const route = this.readerRoute(protocol);
+    if (!route) throw new Error('Protocolo de leitura sem revogação.');
+    const ids = new Set<string>();
+    for (let page = 0; ; page++) {
+      const result = JSON.parse(await this.apiRequest('GET', `/v3/${route}/list?itemsPerPage=1000&page=${page}`));
+      for (const item of result.items ?? []) ids.add(String(item.id));
+      if (page + 1 >= (result.pageCount ?? 1)) return ids;
+      if (page >= 999) throw new Error('Limite de páginas das sessões excedido.');
+    }
+  }
+
   private async reapDuplicateWebrtcSessions() {
     if (!this.isEnabled()) return;
     if (!this.reapDuplicateSessionsEnabled) return;
@@ -2476,23 +2499,25 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
   /** Remove os paths de uma câmera no MediaMTX — usado ao
    * DESATIVAR a câmera, para o vídeo parar imediatamente (sem esperar o
    * closeAfter do on-demand). Best-effort: path inexistente é ignorado. */
-  async teardownPathsForCamera(cameraId: string): Promise<void> {
+  async teardownPathsForCamera(cameraId: string, strict = false): Promise<void> {
     if (!this.isEnabled()) return;
+    const remove = async (name: string) => {
+      try { await this.apiRequest('DELETE', `/v3/config/paths/delete/${encodeURIComponent(name)}`); }
+      catch (error: any) { if (strict && error?.status !== 404) throw error; }
+    };
     for (const mode of ['grid', 'grid-audio', 'grid-hevc', 'original', 'original-audio'] as const) {
       const pathName = this.pathNameFromCameraId(cameraId, mode);
       this.pathEnsureCache.delete(this.buildEnsureKey(cameraId, mode));
-      await this.apiRequest('DELETE', `/v3/config/paths/delete/${encodeURIComponent(pathName)}`).catch(() => undefined);
-      await this.apiRequest(
-        'DELETE',
-        `/v3/config/paths/delete/${encodeURIComponent(this.privateSourcePathName(pathName))}`,
-      ).catch(() => undefined);
+      await remove(pathName);
+      await remove(this.privateSourcePathName(pathName));
     }
     // Limpa também o path-base de compatibilidade criado por versões antigas.
     const legacyPath = `cam_${cameraId.replace(/[^a-zA-Z0-9]/g, '')}`;
-    await this.apiRequest('DELETE', `/v3/config/paths/delete/${encodeURIComponent(legacyPath)}`).catch(() => undefined);
-    await this.apiRequest('DELETE', `/v3/config/paths/delete/${encodeURIComponent(this.privateSourcePathName(legacyPath))}`).catch(() => undefined);
+    await remove(legacyPath);
+    await remove(this.privateSourcePathName(legacyPath));
     this.invalidateMainCodecCache(cameraId);
-    await this.sharedRtspSource?.removeCamera(cameraId).catch(() => undefined);
+    try { await this.sharedRtspSource?.removeCamera(cameraId); }
+    catch (error) { if (strict) throw error; }
   }
 
   ensurePathForCamera(cameraId: string, deliveryMode: LiveViewMode = 'original'): Promise<EnsuredCameraPath> {

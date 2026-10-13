@@ -1,0 +1,5 @@
+FROM drac-private-web:20261008
+USER root
+RUN rm -r /usr/share/nginx/html
+COPY . /usr/share/nginx/html/
+USER nginx

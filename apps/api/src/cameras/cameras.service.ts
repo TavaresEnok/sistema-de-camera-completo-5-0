@@ -760,6 +760,9 @@ export class CamerasService implements OnApplicationBootstrap {
     let camera: any;
     try {
       const persist = async (db: Prisma.TransactionClient) => {
+      await db.$queryRaw`SELECT "id" FROM "Camera" WHERE "id" = ${id} FOR UPDATE`;
+      const current = await db.camera.findUniqueOrThrow({ where: { id } });
+      const integrationBlocked = current.integrationEnabledBeforeBlock != null;
       const privacy = hasPrivacyFields(dto) ? await applyCameraPrivacy(db, id, dto) : {};
       return db.camera.update({
         where: { id, ...(dto.expectedUpdatedAt ? { updatedAt: new Date(dto.expectedUpdatedAt) } : {}) },
@@ -792,7 +795,8 @@ export class CamerasService implements OnApplicationBootstrap {
         latitude: dto.latitude,
         longitude: dto.longitude,
         groupId: dto.groupId,
-        enabled: dto.enabled !== undefined ? dto.enabled : existing.enabled,
+        enabled: integrationBlocked ? false : dto.enabled ?? current.enabled,
+        ...(integrationBlocked && dto.enabled !== undefined ? { integrationEnabledBeforeBlock: dto.enabled, integrationRuntimePending: true } : {}),
         recordingEnabled: dto.recordingEnabled !== undefined ? dto.recordingEnabled : existing.recordingEnabled,
         recordingMode: dto.recordingMode,
         retentionDays: dto.retentionDays,
@@ -873,9 +877,7 @@ export class CamerasService implements OnApplicationBootstrap {
         include: { site: true, area: true, group: true },
       });
       };
-      camera = hasPrivacyFields(dto)
-        ? await this.prisma.$transaction(persist, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable })
-        : await persist(this.prisma);
+      camera = await this.prisma.$transaction(persist, hasPrivacyFields(dto) ? { isolationLevel: Prisma.TransactionIsolationLevel.Serializable } : undefined);
     } catch (error) {
       if (dto.expectedUpdatedAt && (error as { code?: string })?.code === 'P2025') {
         throw new ConflictException('Esta câmera foi alterada por outra pessoa. Recarregue a configuração antes de salvar.');

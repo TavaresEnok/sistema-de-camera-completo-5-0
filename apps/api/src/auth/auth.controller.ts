@@ -4,6 +4,7 @@ import { Throttle } from '@nestjs/throttler';
 import { AuditService } from '../audit/audit.service';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { Public } from './decorators/public.decorator';
+import { AllowInitialPassword } from './decorators/initial-password.decorator';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { LoginDto } from './dto/login.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
@@ -100,11 +101,13 @@ export class AuthController {
   }
 
   @Get('me')
+  @AllowInitialPassword()
   me(@CurrentUser() user: AuthUser) {
     return this.authService.me(user.id);
   }
 
   @Post('logout')
+  @AllowInitialPassword()
   async logout(
     @CurrentUser() user: AuthUser,
     @Req() req: Request,

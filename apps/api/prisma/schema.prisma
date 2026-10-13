@@ -70,6 +70,8 @@ enum RecordingSource {
 }
 
 model Camera {
+  integrationEnabledBeforeBlock Boolean?
+  integrationRuntimePending Boolean @default(false)
   manualRecordingSession ManualRecordingSession?
   id                String  @id @default(uuid())
   /// Identificador operacional curto, único e imutável. O UUID continua sendo
@@ -479,6 +481,10 @@ model AlarmInstance {
 }
 
 model User {
+  mustChangePassword Boolean @default(false)
+  integrationGroupId String?
+  integrationSuspended Boolean @default(false)
+  sgpCustomer SgpCustomer?
   id           String   @id @default(uuid())
   name         String
   /// Identificador usado no login. Aceita e-mail, mas não DEPENDE dele:
@@ -703,6 +709,7 @@ model Area {
 }
 
 model CameraGroup {
+  sgpCustomer SgpCustomer?
   id                String            @id @default(uuid())
   name              String
   description       String?
@@ -746,6 +753,88 @@ model CameraPermission {
   @@index([userId])
   @@index([cameraId])
   @@index([groupId])
+}
+
+model SgpIntegration {
+  id String @id @default(uuid())
+  name String
+  enabled Boolean @default(false)
+  keyHash String?
+  keyPrefix String?
+  statusMap Json
+  utcOffsetMinutes Int @default(-180)
+  planIds String[] @default([])
+  lastReceivedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  customers SgpCustomer[]
+  services SgpService[]
+  operations SgpOperation[]
+}
+
+model SgpCustomer {
+  id String @id @default(uuid())
+  integrationId String
+  integration SgpIntegration @relation(fields: [integrationId], references: [id], onDelete: Restrict)
+  externalCustomerId String
+  groupId String @unique
+  group CameraGroup @relation(fields: [groupId], references: [id], onDelete: Restrict)
+  userId String @unique
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  state String @default("SUSPENDED")
+  archivedAt DateTime?
+  revision Int @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  services SgpService[]
+  operations SgpOperation[]
+  @@unique([integrationId, externalCustomerId])
+}
+
+model SgpService {
+  id String @id @default(uuid())
+  integrationId String
+  integration SgpIntegration @relation(fields: [integrationId], references: [id], onDelete: Restrict)
+  customerId String
+  customer SgpCustomer @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  externalServiceId String
+  externalContractId String
+  state String
+  sourceAt DateTime
+  sourceOrder String
+  payloadHash String
+  updatedAt DateTime @updatedAt
+  @@unique([integrationId, externalServiceId])
+  @@index([customerId])
+}
+
+model SgpOperation {
+  id String @id @default(uuid())
+  integrationId String
+  integration SgpIntegration @relation(fields: [integrationId], references: [id], onDelete: Restrict)
+  customerId String
+  customer SgpCustomer @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  dedupeKey String
+  requestHash String
+  state String @default("PENDING")
+  revision Int
+  attempts Int @default(0)
+  nextAttemptAt DateTime @default(now())
+  lastError String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@unique([integrationId, dedupeKey])
+  @@index([state, nextAttemptAt])
+}
+
+model MediaReaderIdentity {
+  protocol String
+  sessionId String
+  userId String
+  cameraId String
+  createdAt DateTime @default(now())
+  @@id([protocol, sessionId])
+  @@index([userId])
 }
 
 model SystemSetting {

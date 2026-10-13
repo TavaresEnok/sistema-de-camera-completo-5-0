@@ -37,9 +37,11 @@ import { RondasModule } from './rondas/rondas.module';
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { EventLoopLagService } from './common/observability/event-loop-lag.service';
+import { SgpModule } from './sgp/sgp.module';
 
 @Module({
   imports: [
+    SgpModule,
     RondasModule,
     GroupChatModule,
     ConfigModule.forRoot({

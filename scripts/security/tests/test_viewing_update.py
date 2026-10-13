@@ -8,6 +8,18 @@ spec.loader.exec_module(viewing)
 
 
 class RecordingChoiceMigrationTests(unittest.TestCase):
+    def test_sgp_transition_requires_exact_digest_and_separate_approval(self):
+        body = {'databaseSchemaHash': 'new', 'reviewedSchemaTransition': {
+            'from': 'old', 'kind': 'additive', 'migration': '20261010160000_sgp_integration',
+            'migrationSha256': 'ad8156582c068dbfb207c2516d5f144149e0e9229ecb9edebb84de7c8e08b2b5'}}
+        self.assertTrue(viewing.allow_schema_transition('old', body, sgp_approved=True))
+        for options in [{}, {'approved': True}, {'object_notice_approved': True}]:
+            with self.assertRaises(ValueError):
+                viewing.allow_schema_transition('old', body, **options)
+        body['reviewedSchemaTransition']['migrationSha256'] = 'unreviewed'
+        with self.assertRaises(ValueError):
+            viewing.allow_schema_transition('old', body, sgp_approved=True)
+
     def test_notice_transition_requires_separate_explicit_approval(self):
         body = {'databaseSchemaHash': 'new', 'reviewedSchemaTransition': {
             'from': 'old', 'kind': 'additive', 'migration': '20261008210000_camera_object_notice'}}

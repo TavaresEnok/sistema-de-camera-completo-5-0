@@ -118,10 +118,11 @@ export class AiService {
       const response: any = await firstValueFrom(this.httpService.post(
         `${this.aiBaseUrl}/analyze/stop/${cameraId}`,
         {},
-        { headers: this.internalHeaders() },
+        { headers: this.internalHeaders(), timeout: 5000 },
       ));
       return response.data;
     } catch (error: any) {
+      if (error?.response?.status === 404 && error.response.data?.detail === 'Processador não encontrado') return { status: 'not_running', cameraId };
       this.logger.error(`Failed to stop AI analysis for camera ${cameraId}: ${error.message}`);
       throw error;
     }

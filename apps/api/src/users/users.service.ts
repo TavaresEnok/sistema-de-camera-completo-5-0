@@ -161,6 +161,10 @@ export class UsersService {
       throw new NotFoundException('Usuário não encontrado.');
     }
 
+    if (existing.integrationGroupId && ((dto.role && dto.role !== UserRole.VIEWER) || (dto.username && dto.username !== existing.username))) {
+      throw new BadRequestException('Este usuário é vinculado ao SGP. Mantenha o perfil de visualização e o CPF do vínculo.');
+    }
+
     if (!this.isPrivileged(actor)) {
       await this.assertCanManageUser(actor, id);
       if (existing.role === UserRole.ADMIN || existing.role === UserRole.SUPER_ADMIN) {
@@ -225,10 +229,13 @@ export class UsersService {
     }
 
     await this.assertPasswordStrength(dto.newPassword);
+    if (user.mustChangePassword && (dto.newPassword === user.username || dto.newPassword === dto.currentPassword || dto.newPassword.length < 8)) {
+      throw new BadRequestException('Escolha uma nova senha com pelo menos 8 caracteres, diferente do CPF e da senha inicial.');
+    }
     const passwordHash = await bcrypt.hash(dto.newPassword, 10);
     await this.prisma.user.update({
       where: { id: user.id },
-      data: { passwordHash, authVersion: { increment: 1 } },
+      data: { passwordHash, mustChangePassword: false, authVersion: { increment: 1 } },
     });
     return { success: true };
   }

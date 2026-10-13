@@ -46,6 +46,8 @@ export class AuthService {
       // A UI nova recebe `username` e nunca precisa que isto seja um e-mail.
       email: user.email || user.username,
       role: user.role,
+      mustChangePassword: user.mustChangePassword,
+      integrationGroupId: user.integrationGroupId,
     };
   }
 
@@ -118,7 +120,7 @@ export class AuthService {
         })
       : await this.prisma.user.findUnique({ where: { email: normalizedUsername } });
 
-    if (!user || !user.isActive) {
+    if (!user || !user.isActive || user.integrationSuspended) {
       this.registerFailedAttempt(normalizedUsername, maxAttempts);
       throw new UnauthorizedException('Credenciais inválidas.');
     }
@@ -158,7 +160,7 @@ export class AuthService {
     });
     if (
       !session || session.revokedAt || session.expiresAt.getTime() <= now.getTime() ||
-      !session.user.isActive || session.authVersion !== session.user.authVersion
+      !session.user.isActive || session.user.integrationSuspended || session.authVersion !== session.user.authVersion
     ) {
       throw new UnauthorizedException('Sessão expirada. Entre novamente.');
     }
@@ -198,7 +200,7 @@ export class AuthService {
     }
 
     const user = await this.prisma.user.findUnique({ where: { id: payload.sub } });
-    if (!user || !user.isActive || payload.ver !== user.authVersion) {
+    if (!user || !user.isActive || user.integrationSuspended || payload.ver !== user.authVersion) {
       throw new UnauthorizedException('Usuário inativo ou inexistente.');
     }
 
@@ -207,7 +209,7 @@ export class AuthService {
 
   async me(userId: string) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (!user || !user.isActive) {
+    if (!user || !user.isActive || user.integrationSuspended) {
       throw new UnauthorizedException('Usuário inativo ou inexistente.');
     }
     return this.sanitizeUser(user);
@@ -344,6 +346,7 @@ export class AuthService {
     }
 
     await this.assertPasswordStrength(newPassword);
+    if (user.mustChangePassword && (newPassword === user.username || newPassword.length < 8)) throw new BadRequestException('Escolha uma senha diferente do CPF, com pelo menos 8 caracteres.');
     const passwordHash = await bcrypt.hash(newPassword, 10);
     await this.prisma.$transaction(async (tx) => {
       const consumed = await tx.user.updateMany({
@@ -354,6 +357,7 @@ export class AuthService {
         },
         data: {
           passwordHash,
+          mustChangePassword: false,
           resetTokenHash: null,
           resetTokenExpiresAt: null,
           authVersion: { increment: 1 },

@@ -14,6 +14,7 @@ export interface AuthUser {
   lastLogin: string;
   shift: 'morning' | 'afternoon' | 'night';
   active: boolean;
+  mustChangePassword?: boolean;
 }
 
 interface LoginResponse {
@@ -24,6 +25,7 @@ interface LoginResponse {
     username?: string;
     email: string;
     role: 'SUPER_ADMIN' | 'ADMIN' | 'OPERATOR' | 'VIEWER';
+    mustChangePassword?: boolean;
   };
 }
 
@@ -88,6 +90,7 @@ function mapUser(user: LoginResponse['user']): AuthUser {
     lastLogin: new Date().toISOString(),
     shift: 'morning',
     active: true,
+    mustChangePassword: user.mustChangePassword === true,
   };
 }
 

@@ -10,6 +10,7 @@ import { detectionNoticeMessage, selectMotionNotices, type MotionNotice } from '
 /** Mounted once, outside page layouts (including retained live layouts). */
 export function MotionNotices() {
   const token = useAuthStore(s => s.accessToken);
+  const initialPassword = useAuthStore(s => s.user?.mustChangePassword);
   const enabled = useVmsDataStore(s => s.cameras.some(c => c.enabled !== false && (c.motionNoticeEnabled || c.objectNoticeEnabled)));
   const [notices, setNotices] = useState<MotionNotice[]>([]);
   const [portal, setPortal] = useState<Element>(() => document.fullscreenElement ?? document.body);
@@ -22,7 +23,7 @@ export function MotionNotices() {
 
   useEffect(() => {
     setNotices([]);
-    if (!token || !enabled) return;
+    if (!token || !enabled || initialPassword) return;
     let cancelled = false;
     let cursor: string | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -44,7 +45,7 @@ export function MotionNotices() {
     };
     void poll();
     return () => { cancelled = true; controller.abort(); if (timer) clearTimeout(timer); };
-  }, [token, enabled]);
+  }, [token, enabled, initialPassword]);
 
   useEffect(() => {
     if (!notices.length) return;

@@ -18,6 +18,8 @@ parser.add_argument('--web', required=True)
 parser.add_argument('--key', type=Path, required=True)
 parser.add_argument('--approve-detector-percentage-schema', action='store_true')
 parser.add_argument('--approve-object-notice-schema', action='store_true')
+parser.add_argument('--approve-sgp-schema', action='store_true')
+parser.add_argument('--schema-base-commit')
 args = parser.parse_args()
 root = args.root.resolve()
 git = ['git', '-c', 'safe.directory=' + str(root), '-C', str(root)]
@@ -45,6 +47,24 @@ body = {'v': 1, 'kind': 'viewing-update-v1', 'commit': commit, 'protection': 'st
         'distributionApproval': 'approved-production-maintenance', 'issuedAt': now, 'expiresAt': now + 30 * 86400,
         'databaseSchemaHash': package.database_schema_hash(root / 'apps/api/prisma'),
         'images': images, 'sha256': package.sha(archive), 'size': archive.stat().st_size}
+if args.approve_sgp_schema:
+    if args.approve_detector_percentage_schema or args.approve_object_notice_schema or not args.schema_base_commit:
+        raise SystemExit('SGP migration requires its explicit schema base commit and no other migration flag')
+    migration = '20261010160000_sgp_integration'
+    expected_hash = 'ad8156582c068dbfb207c2516d5f144149e0e9229ecb9edebb84de7c8e08b2b5'
+    prisma = root / 'apps/api/prisma'
+    if package.sha(prisma / 'migrations' / migration / 'migration.sql') != expected_hash:
+        raise SystemExit('Reviewed SGP migration changed')
+    base = subprocess.check_output(git + ['rev-parse', '--verify', args.schema_base_commit + '^{commit}'], text=True).strip()
+    paths = subprocess.check_output(git + ['ls-tree', '-r', '--name-only', base, '--', 'apps/api/prisma'], text=True).splitlines()
+    previous = hashlib.sha256()
+    for path in sorted(path for path in paths if path == 'apps/api/prisma/schema.prisma' or (path.startswith('apps/api/prisma/migrations/') and path.endswith('.sql'))):
+        relative = path.removeprefix('apps/api/prisma/')
+        content = subprocess.check_output(git + ['show', base + ':' + path])
+        if relative != 'schema.prisma' and (prisma / relative).read_bytes() != content:
+            raise SystemExit('An existing migration was changed')
+        previous.update(relative.encode()); previous.update(content)
+    body['reviewedSchemaTransition'] = {'from': previous.hexdigest(), 'kind': 'additive', 'migration': migration, 'migrationSha256': expected_hash, 'baseCommit': base}
 if args.approve_detector_percentage_schema or args.approve_object_notice_schema:
     if args.approve_detector_percentage_schema and args.approve_object_notice_schema:
         raise SystemExit('Approve only one narrowly reviewed migration')

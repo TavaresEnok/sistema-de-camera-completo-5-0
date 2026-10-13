@@ -403,7 +403,7 @@ test('health-check: cooldown de reconexão continua protegendo o travamento por 
   }
 });
 
-test('health-check: modo motion continua EXCLUÍDO da varredura de travamento', async () => {
+test('health-check: câmeras desativadas e modos armados ficam fora da varredura de travamento', async () => {
   const previous = process.env.HEALTH_RECORDING_WRITE_STALL_ENABLED;
   process.env.HEALTH_RECORDING_WRITE_STALL_ENABLED = 'true';
   try {
@@ -411,8 +411,8 @@ test('health-check: modo motion continua EXCLUÍDO da varredura de travamento', 
     await runStalenessCheck(harness);
     assert.deepEqual(
       harness.cameraFindMany[0].where,
-      { recordingEnabled: true, recordingMode: { not: 'motion' } },
-      'câmera armada por movimento passa horas sem gravar de propósito',
+      { enabled: true, recordingEnabled: true, recordingMode: { notIn: ['motion', 'object'] } },
+      'câmeras suspensas não reiniciam; câmeras armadas podem ficar sem gravar de propósito',
     );
   } finally {
     if (previous == null) delete process.env.HEALTH_RECORDING_WRITE_STALL_ENABLED;

@@ -595,6 +595,7 @@ export class AiManagerService implements OnModuleInit {
       return { status: 'disabled', cameraId, reason: 'commercial_restriction' };
     }
     const cam = await this.camerasService.getCameraOrThrow(cameraId);
+    if (cam.enabled === false) return { status: 'camera_disabled', cameraId };
     if (!options?.simulationMode && (cam.aiEnabled === false || !isCameraAllowedByAiEnv(cam))) {
       return { status: 'camera_disabled', cameraId };
     }

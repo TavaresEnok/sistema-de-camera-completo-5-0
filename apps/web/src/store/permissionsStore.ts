@@ -30,5 +30,5 @@ export function hasPermission(key: PermissionKey) {
   return state.role === 'SUPER_ADMIN' || state.permissions[key] === true;
 }
 export const ADMIN_PAGE_PERMISSION: Record<string, PermissionKey> = {
-  '/groups': 'cameraConfig', '/roles': 'roleManage', '/settings': 'serverConfig', '/users': 'userManage',
+  '/groups': 'cameraConfig', '/roles': 'roleManage', '/settings': 'serverConfig', '/integrations': 'serverConfig', '/users': 'userManage',
 };

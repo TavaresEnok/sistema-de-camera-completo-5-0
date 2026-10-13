@@ -27,6 +27,12 @@ export class AccessControlService {
    * regra de sempre (admin vê todas; demais por grupo/permissão direta).
    */
   async getAccessibleCameraIds(user: AuthUser): Promise<string[]> {
+    if (user.mustChangePassword) return [];
+    if (user.integrationGroupId) {
+      const groups = await this.filterAllowedGroupIds([user.integrationGroupId]);
+      if (!groups.length) return [];
+      return (await this.prisma.camera.findMany({ where: { isPrivate: false, groups: { some: { id: user.integrationGroupId } } }, select: { id: true } })).map(camera => camera.id);
+    }
     // Câmeras privadas onde o usuário é o dono OU tem permissão DIRETA (o dono
     // compartilhou explicitamente). Valem para todos, inclusive admin.
     const [ownedPrivate, directPerms] = await Promise.all([
@@ -78,6 +84,7 @@ export class AccessControlService {
   }
 
   async getAdminGroupIds(user: AuthUser): Promise<string[]> {
+    if (user.integrationGroupId || user.mustChangePassword) return [];
     if (this.isPrivileged(user)) {
       const groups = await this.prisma.cameraGroup.findMany({ select: { id: true } });
       return groups.map((group) => group.id);
@@ -92,6 +99,7 @@ export class AccessControlService {
   }
 
   async canAdminGroup(user: AuthUser, groupId: string): Promise<boolean> {
+    if (user.integrationGroupId || user.mustChangePassword) return false;
     if (this.isPrivileged(user)) return true;
     const permission = await this.prisma.cameraPermission.findFirst({
       where: { userId: user.id, groupId, level: CameraPermissionLevel.ADMIN },
@@ -156,6 +164,12 @@ export class AccessControlService {
   }
 
   private async hasLevel(user: AuthUser, cameraId: string, minLevel: CameraPermissionLevel): Promise<boolean> {
+    if (user.mustChangePassword) return false;
+    if (user.integrationGroupId) {
+      if (minLevel !== CameraPermissionLevel.VIEW) return false;
+      const allowed = await this.filterAllowedGroupIds([user.integrationGroupId]);
+      return Boolean(allowed.length && await this.prisma.camera.findFirst({ where: { id: cameraId, isPrivate: false, groups: { some: { id: user.integrationGroupId } } }, select: { id: true } }));
+    }
     if (this.isPrivileged(user)) {
       return true;
     }
@@ -175,6 +189,8 @@ export class AccessControlService {
     cameraId: string,
     minLevel: CameraPermissionLevel,
   ): Promise<boolean | null> {
+    if (user.mustChangePassword) return false;
+    if (user.integrationGroupId) return minLevel === CameraPermissionLevel.VIEW ? this.hasLevel(user, cameraId, minLevel) : false;
     const camera = await this.prisma.camera.findUnique({
       where: { id: cameraId },
       select: { isPrivate: true, ownerUserId: true },
@@ -257,6 +273,10 @@ export class AccessControlService {
    */
   async canPlaybackCamera(user: AuthUser, cameraId: string): Promise<boolean> {
     if (!(await this.canViewCamera(user, cameraId))) return false;
+    if (user.integrationGroupId) {
+      const group = await this.prisma.cameraGroup.findUnique({ where: { id: user.integrationGroupId }, select: { isActive: true, accessStatus: true } });
+      return Boolean(group?.isActive && group.accessStatus === 'ACTIVE');
+    }
     if (this.isPrivileged(user)) return true;
 
     const camera = await this.prisma.camera.findUnique({ where: { id: cameraId }, select: { groupId: true, ownerUserId: true } });
