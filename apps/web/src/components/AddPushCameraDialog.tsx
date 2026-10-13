@@ -134,7 +134,7 @@ export function AddPushCameraDialog({
       }
       setAlvo(data.rtmpIngest);
       setCameraId(data.id ?? null);
-      // Equipamento que ignora o caminho que mandamos já está batendo na porta.
+      // Verifica conexões de equipamentos que usam um caminho próprio.
       // Mostrar aqui evita mandar o instalador procurar noutra tela.
       await axios
         .get(`${getApiBaseUrl()}/cameras/rtmp-ingest/pending`, { headers: { Authorization: `Bearer ${accessToken}` } })
