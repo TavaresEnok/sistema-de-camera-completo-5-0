@@ -2717,6 +2717,11 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
     const camera = await this.prisma.camera.findUniqueOrThrow({ where: { id: cameraId } });
     if (!camera.enabled) return;
     if (camera.recordingMode === 'continuous' && camera.recordingEnabled) {
+      const active = this.active.get(cameraId);
+      if (active) {
+        if (this.isPidAlive(active.pid)) return;
+        throw new ServiceUnavailableException('Aguardando recuperação do gravador.');
+      }
       await this.start(cameraId, this.configService.get<number>('recordingSegmentSeconds') ?? 300);
     } else if (modoArmado(camera.recordingMode)) {
       await this.startPreBuffer(cameraId);

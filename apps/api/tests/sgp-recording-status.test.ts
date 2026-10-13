@@ -21,3 +21,11 @@ test('suspended camera preserves recording policy without reporting a stopped pr
   assert.equal(status.stale, false);
   assert.equal(status.statusDetail, 'disabled');
 });
+
+test('reactivation does not rewrite settings when its recording is already running', async () => {
+  const service: any = Object.create(RecordingProcessManagerService.prototype);
+  service.prisma = { camera: { findUniqueOrThrow: async () => ({ enabled: true, recordingMode: 'continuous', recordingEnabled: true }) } };
+  service.active = new Map([['camera', { pid: process.pid }]]);
+  service.start = () => assert.fail('An already active recording must not be started or rewritten');
+  await service.resumeForIntegration('camera');
+});
