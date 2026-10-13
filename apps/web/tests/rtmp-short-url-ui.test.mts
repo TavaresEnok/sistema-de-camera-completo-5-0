@@ -12,16 +12,26 @@ test('cadastro RTMP recomenda URL compacta e nunca orienta recortar a chave', as
 
   assert.match(source, /fullUrlFitsSingleField/);
   assert.match(source, /usaEnderecoCompacto/);
-  assert.match(source, /Compatível com campos curtos/);
-  assert.match(source, /Nunca a recorte/);
+  assert.match(source, /Link curto, compatível/);
+  assert.match(source, /Copie-o completo, sem cortar nenhuma parte/);
   assert.match(source, /selecione Personalizado/);
   assert.match(source, /Não personalizado/);
   assert.match(source, /Servidor RTMP/);
   assert.match(source, /Chave do stream/);
-  assert.match(source, /Câmera usa um caminho próprio/);
+  assert.match(source, /Configuração avançada: caminho da câmera/);
   assert.match(source, /Vincular caminho/);
   assert.match(source, /setInterval\(carregarPendentes, 5_000\)/);
   assert.doesNotMatch(source, /pronto: não precisa configurar mais nada/);
+});
+
+test('cadastro RTMP mantém cabeçalho e ações acessíveis e limita a lista de equipamentos', async () => {
+  const source = await readFile(addDialogPath, 'utf8');
+  assert.match(source, /DialogContent className="[^"]*max-h-\[calc\(100dvh-24px\)\][^"]*flex-col overflow-hidden/);
+  assert.match(source, /DialogFooter className="shrink-0"/);
+  assert.match(source, /min-h-0 space-y-3 overflow-y-auto overscroll-contain/);
+  assert.match(source, /aria-label="Equipamentos encontrados" tabIndex=\{0\} className="max-h-48 space-y-2 overflow-y-auto overscroll-contain/);
+  assert.match(source, /Equipamentos encontrados/);
+  assert.doesNotMatch(source, /batendo na porta|128 bits|tentando publicar|\{p\.attempts\}/);
 });
 
 test('edição RTMP bloqueia a falsa recomendação quando a URL excede o equipamento', async () => {

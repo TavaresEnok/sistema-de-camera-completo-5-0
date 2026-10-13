@@ -753,19 +753,18 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
 
                       {pendentes.length > 0 && (
                         <details className="rounded-md border border-border p-3">
-                          <summary className="cursor-pointer text-xs font-medium">Vincular equipamento pendente</summary>
+                          <summary className="cursor-pointer text-xs font-medium">Equipamentos encontrados</summary>
                           <div className="space-y-2">
-                            <p className="text-[11px] font-semibold">Equipamentos tentando publicar</p>
                             <p className="text-[10px] leading-relaxed text-muted-foreground">
-                              Chegaram no servidor mas ainda não pertencem a nenhuma câmera. Se um deles
-                              for esta, vincule — o vídeo passa a entrar por aqui. A lista atualiza automaticamente.
+                              Selecione o equipamento desta câmera. Se o vídeo não aparecer, confira o link nas configurações RTMP.
                             </p>
+                            <div role="region" aria-label="Equipamentos encontrados" tabIndex={0} className="max-h-48 space-y-2 overflow-y-auto overscroll-contain pr-1">
                             {pendentes.map((p) => (
                               <div key={p.path} className="flex items-center gap-2 rounded-md border border-border bg-background/60 p-2">
                                 <div className="min-w-0 flex-1">
                                   <p className="truncate font-mono text-[11px]">{p.path}</p>
                                   <p className="text-[10px] text-muted-foreground">
-                                    {p.remoteAddr ?? 'origem desconhecida'} · {p.attempts} tentativa{p.attempts > 1 ? 's' : ''}
+                                    {p.remoteAddr ?? 'Endereço não informado'}
                                   </p>
                                 </div>
                                 <Button
@@ -775,10 +774,11 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
                                   onClick={() => void vincular(p.path)}
                                   className="h-8 shrink-0 text-[11px]"
                                 >
-                                  É esta câmera
+                                  Selecionar
                                 </Button>
                               </div>
                             ))}
+                            </div>
                           </div>
                         </details>
                       )}

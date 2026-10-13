@@ -177,20 +177,18 @@ export function AddPushCameraDialog({
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) fechar(); }}>
-      <DialogContent className="responsive-form max-w-lg">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-base">
-            <Radio className="h-4 w-4" />
-            {alvo ? 'Câmera cadastrada — configure o equipamento' : 'Nova câmera que envia vídeo (RTMP)'}
+      <DialogContent className="responsive-form flex max-h-[calc(100dvh-24px)] max-w-lg flex-col overflow-hidden">
+        <DialogHeader className="shrink-0 pr-6">
+          <DialogTitle className="flex items-center gap-2 text-base leading-snug">
+            <Radio className="h-4 w-4 shrink-0" />
+            {alvo ? 'Conectar câmera' : 'Gerar link para câmera'}
           </DialogTitle>
         </DialogHeader>
 
         {!alvo ? (
-          <div className="space-y-4 py-1">
+          <div className="min-h-0 space-y-4 overflow-y-auto overscroll-contain py-1 pr-1">
             <p className="text-[12px] leading-relaxed text-muted-foreground">
-              Use quando a câmera ou o DVR <strong className="text-foreground">manda o vídeo para o servidor</strong>.
-              Funciona atrás de CGNAT, 4G e redes sem porta aberta, porque a conexão nasce do lado de lá.
-              Não pedimos endereço nem senha, porque não há nada que o servidor precise acessar.
+              Dê um nome à câmera para gerar o link. Depois, cole esse link nas configurações RTMP da câmera ou do DVR.
             </p>
 
             <div className="space-y-1.5">
@@ -212,32 +210,24 @@ export function AddPushCameraDialog({
               allowed={allowed} motionAllowed={motionAllowed} loading={loadingCapabilities} onChange={setNotices} />
           </div>
         ) : (
-          <div className="space-y-3 py-1">
+          <div className="min-h-0 space-y-3 overflow-y-auto overscroll-contain py-1 pr-1">
             <p className="text-[12px] leading-relaxed text-muted-foreground">
-              Cole este endereço no equipamento, normalmente em{' '}
-              <span className="font-medium text-foreground">Rede → RTMP</span> (ou <em>Push Stream</em>).
-              Assim que ele começar a publicar, a câmera aparece na grade.
+              Cole o link abaixo em <span className="font-medium text-foreground">Rede → RTMP</span> na câmera ou no DVR.
+              Ao receber o vídeo, ele aparecerá na grade.
             </p>
             <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3">
               <p className="text-[11px] font-semibold text-amber-500">Intelbras/Positivo: selecione Personalizado</p>
               <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground">
-                Cole a URL completa no campo <strong className="text-foreground">Endereço personalizado</strong>.
-                Não use “Não personalizado” com apenas IP/porta: esse modo pode conectar com o serial do aparelho
-                sem enviar vídeo para um servidor RTMP genérico.
+                Cole o link completo em <strong className="text-foreground">Endereço personalizado</strong>.
+                Não use “Não personalizado”.
               </p>
             </div>
             {usaEnderecoCompacto && (
-              <div className="rounded-md border border-[hsl(var(--status-online)_/_0.35)] bg-[hsl(var(--status-online)_/_0.08)] p-3">
-                <p className="text-[11px] font-semibold text-[hsl(var(--status-online))]">Compatível com campos curtos</p>
-                <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground">
-                  O sistema selecionou o endereço público curto, com a porta RTMP explícita, para caber no limite de{' '}
-                  {alvo.singleFieldMaxLength ?? 63} caracteres da Intelbras. A chave continua com 128 bits e não foi enfraquecida.
-                </p>
-              </div>
+              <p className="text-[11px] text-muted-foreground">Link curto, compatível com o limite de {alvo.singleFieldMaxLength ?? 63} caracteres da câmera.</p>
             )}
             {urlCompletaCompativel ? (
               <Campo
-                rotulo="Endereço completo para campo único"
+                rotulo="Link para conectar a câmera"
                 valor={alvo.fullUrl}
                 hint={`até ${alvo.singleFieldMaxLength ?? 63} caracteres`}
                 copiado={copiado === 'f'}
@@ -266,20 +256,18 @@ export function AddPushCameraDialog({
                 <Separator />
                 <div className="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3">
                   <p className="text-[11px] font-semibold">
-                    Já tem equipamento batendo na porta
+                    Equipamentos encontrados
                   </p>
                   <p className="text-[10px] leading-relaxed text-muted-foreground">
-                    Estes aparelhos estão tentando publicar mas não deixam escolher o destino — usam
-                    caminho próprio e ignoram a chave acima. Se um deles for esta câmera, vincule para
-                    identificá-lo. Se continuar sem vídeo, configure o endereço Personalizado com a URL
-                    completa mostrada acima. A lista atualiza automaticamente.
+                    Selecione abaixo o equipamento desta câmera. Se o vídeo não aparecer, confira o link nas configurações RTMP.
                   </p>
+                  <div role="region" aria-label="Equipamentos encontrados" tabIndex={0} className="max-h-48 space-y-2 overflow-y-auto overscroll-contain pr-1">
                   {pendentes.map((p) => (
                     <div key={p.path} className="flex items-center gap-2 rounded-md border border-border bg-background/70 p-2">
                       <div className="min-w-0 flex-1">
                         <p className="truncate font-mono text-[11px]">{p.path}</p>
                         <p className="text-[10px] text-muted-foreground">
-                          {p.remoteAddr ?? 'origem desconhecida'} · {p.attempts} tentativa{p.attempts > 1 ? 's' : ''}
+                          {p.remoteAddr ?? 'Endereço não informado'}
                         </p>
                       </div>
                       <Button
@@ -290,19 +278,19 @@ export function AddPushCameraDialog({
                         className="h-8 shrink-0 gap-1.5 text-[11px]"
                       >
                         {vinculando === p.path && <LoaderCircle className="h-3 w-3 animate-spin" />}
-                        É esta câmera
+                        Selecionar
                       </Button>
                     </div>
                   ))}
+                  </div>
                 </div>
               </>
             )}
             <Separator />
-            <div className="space-y-2 rounded-md border border-border bg-muted/20 p-3">
-              <p className="text-[11px] font-semibold">Câmera usa um caminho próprio?</p>
+            <details className="space-y-2 rounded-md border border-border bg-muted/20 p-3">
+              <summary className="cursor-pointer text-[11px] font-semibold">Configuração avançada: caminho da câmera</summary>
               <p className="text-[10px] leading-relaxed text-muted-foreground">
-                Alguns modelos ignoram a chave e publicam com o número de série. Se a tentativa não
-                aparecer acima, informe o caminho exibido no log da câmera.
+                Use apenas se o equipamento enviar vídeo por um caminho diferente do link gerado.
               </p>
               <div className="flex items-center gap-2">
                 <Input
@@ -329,16 +317,15 @@ export function AddPushCameraDialog({
                   Vincular caminho
                 </Button>
               </div>
-            </div>
+            </details>
             <Separator />
             <p className="text-[10px] leading-relaxed text-muted-foreground">
-              A chave é uma senha de publicação — quem a tiver pode enviar vídeo como se fosse esta câmera.
-              Nunca a recorte para fazer a URL caber. Dá para trocá-la depois, na edição da câmera.
+              Não compartilhe este link. Copie-o completo, sem cortar nenhuma parte.
             </p>
           </div>
         )}
 
-        <DialogFooter>
+        <DialogFooter className="shrink-0">
           {!alvo ? (
             <>
               <Button variant="ghost" onClick={fechar} disabled={salvando} className="text-sm">Cancelar</Button>
