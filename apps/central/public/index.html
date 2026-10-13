@@ -4425,7 +4425,7 @@
         const linha = (item) => {
           const mem = item.server?.totalMemoryBytes ? Math.round(((item.server.totalMemoryBytes - item.server.freeMemoryBytes) / item.server.totalMemoryBytes) * 100) : null;
           return `<tr data-id="${escapeHtml(item.id)}">
-            <td data-label="Cliente"><div class="cell-id">${monogram(item)}<div class="cell-stack"><div class="client-name">${escapeHtml(displayName(item))}</div><div class="subtext" style="margin:0">${escapeHtml(item.id)}</div></div></div></td>
+            <td data-label="Cliente"><div class="cell-id">${monogram(item)}<div class="cell-stack"><div class="client-name">${escapeHtml(displayName(item))}</div><div class="subtext" style="margin:0">${escapeHtml(item.id)}</div><div><span class="badge ${communicationTone(item)}" aria-label="Comunicação: ${escapeHtml(communicationLabel(item))}">${item.status === 'ONLINE' ? 'Online' : item.status === 'PENDING_INSTALL' ? 'Aguardando instalação' : 'Offline'}</span></div></div></div></td>
             <td data-label="Servidor"><div class="cell-stack"><span>${escapeHtml(item.server?.hostname || '—')}</span><div class="subtext" style="margin:0">${escapeHtml(platformLabel(item.server?.platform))}</div></div></td>
             <td data-label="Processador">${escapeHtml(item.server?.cpuCount ?? '—')} núcleos</td>
             <td data-label="Memória">${mem == null ? '—' : progress(mem)}</td>
