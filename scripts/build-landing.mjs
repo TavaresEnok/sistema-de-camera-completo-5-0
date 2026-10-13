@@ -32,3 +32,4 @@ html = html.replace('<html>', '<html lang="pt-BR">')
 await mkdir(output, { recursive: true });
 await writeFile(new URL('index.html', output), html);
 console.log(fileURLToPath(new URL('index.html', output)));
+await import('./build-sgp-api-docs.mjs');

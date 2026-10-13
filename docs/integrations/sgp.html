@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<!-- Feito por by Enok Tavares https://github.com/TavaresEnok/ -->
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>S2Cam — Documentação oficial da integração SGP</title>
+  <meta name="description" content="Contrato único da integração SGP com o S2Cam. Instruções para implementar um conector reutilizável entre provedores, com cadastro, suspensão e reativação de clientes.">
+  <link rel="canonical" href="https://s2cam.com.br/developers/sgp">
+  <style>
+    /*! Feito por by Enok Tavares https://github.com/TavaresEnok/ */
+    :root{color-scheme:dark;--bg:#080c12;--card:#101824;--line:#293749;--text:#edf1f6;--muted:#b4c0cf;--blue:#85b7ff}
+    *{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:6rem}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.7 system-ui,-apple-system,Segoe UI,sans-serif}a{color:var(--blue);text-underline-offset:.2em}a:hover{color:white}a:focus-visible,summary:focus-visible{outline:3px solid var(--blue);outline-offset:4px}header{border-bottom:1px solid var(--line);background:#0d141e}header>div{max-width:1100px;margin:auto;padding:1rem 1.25rem;display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap}.brand{color:var(--text);font-size:1.45rem;font-weight:750;text-decoration:none}.brand span{color:var(--blue)}.version{font-size:.85rem;color:var(--muted)}main{max-width:960px;margin:auto;padding:3rem 1.25rem 4rem}h1{font-size:clamp(1.9rem,5vw,3rem);line-height:1.18;letter-spacing:-.04em;margin:.6rem 0 1.2rem}h2{font-size:1.45rem;line-height:1.35;margin:0 0 1rem}h3{font-size:1.05rem;margin:1.5rem 0 .5rem}p{margin:.75rem 0}.lead{color:var(--muted);font-size:1.1rem;max-width:780px}.eyebrow{color:var(--blue);font-size:.85rem;font-weight:650;letter-spacing:.06em;text-transform:uppercase}.actions,nav{display:flex;flex-wrap:wrap;gap:.8rem;margin:1.5rem 0}.button{display:inline-flex;align-items:center;min-height:44px;border:1px solid var(--line);border-radius:9px;padding:.55rem 1rem;text-decoration:none}.primary{background:#244c80;border-color:#487eba;color:white}section{margin-top:2.5rem;border-top:1px solid var(--line);padding-top:2rem}.note{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--blue);padding:1rem 1.2rem;border-radius:9px;margin:1.3rem 0}.note p:first-child{margin-top:0}.note p:last-child{margin-bottom:0}code{font: .9em/1.65 ui-monospace,SFMono-Regular,Consolas,monospace;overflow-wrap:anywhere;color:#c6defe}pre{margin:1rem 0;padding:1.2rem;border:1px solid var(--line);border-radius:10px;background:#0c121c;overflow:auto;max-width:100%;tab-size:2}pre code{overflow-wrap:normal;white-space:pre;color:var(--text)}.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:10px;margin:1rem 0}table{border-collapse:collapse;width:100%;font-size:.94rem;min-width:560px}th,td{text-align:left;vertical-align:top;padding:.8rem 1rem;border-bottom:1px solid var(--line)}th{background:var(--card);font-weight:650}tr:last-child td{border:0}ul,ol{padding-left:1.4rem}li{margin:.45rem 0}.muted{color:var(--muted)}details{margin:1rem 0;background:var(--card);padding:1rem;border:1px solid var(--line);border-radius:9px}summary{cursor:pointer;font-weight:600;min-height:32px}footer{margin-top:3rem;padding-top:1.5rem;border-top:1px solid var(--line);font-size:.9rem;color:var(--muted)}@media(max-width:480px){main{padding:2rem 1rem 3rem}header>div{padding:1rem}.note{padding:1rem}pre{padding:1rem;font-size:.82rem}section{margin-top:2rem}}@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+  </style>
+</head>
+<body>
+<header><div><a class="brand" href="https://s2cam.com.br/">S2<span>Cam</span></a><span class="version">Documentação oficial · API v1.0.0</span></div></header>
+<main>
+  <p class="eyebrow">Para a equipe de desenvolvimento do SGP</p>
+  <h1>Uma integração.<br>Todos os provedores.</h1>
+  <p class="lead">Implemente o conector <strong>S2Cam</strong> uma única vez no SGP. Depois, cada provedor poderá solicitar sua ativação, informando os dados de conexão. Vibe e IB Telecom são os primeiros ambientes; não são integrações diferentes.</p>
+  <div class="actions"><a class="button primary" href="/developers/sgp/openapi.json">Abrir contrato OpenAPI</a><a class="button" href="/developers/sgp/openapi.json" download="s2cam-sgp-openapi.json">Baixar OpenAPI</a><a class="button" href="#configuracao">Começar implementação</a></div>
+  <div class="note"><p><strong>Este é o endereço oficial da documentação.</strong> As chamadas da API usam o endereço S2Cam configurado para o provedor. Não fixe Vibe ou IB Telecom no código do conector e não envie as chamadas para <code>s2cam.com.br/api</code>: esse endereço não é um gateway central de eventos.</p></div>
+  <nav aria-label="Seções da documentação"><a href="#configuracao">Configuração</a><a href="#cliente">Tela do cliente</a><a href="#eventos">Eventos e exemplos</a><a href="#confirmacao">Confirmação e erros</a><a href="#homologacao">Homologação</a></nav>
+
+  <section id="configuracao">
+    <h2>1. Configuração por provedor</h2>
+    <p>Disponibilize uma integração chamada <strong>S2Cam</strong>. Os campos abaixo são parâmetros de ativação, não novos desenvolvimentos para cada cliente.</p>
+    <div class="table-wrap"><table><thead><tr><th>Campo</th><th>Funcionamento</th></tr></thead><tbody>
+      <tr><td>Endereço S2Cam</td><td>URL HTTPS da instalação, por exemplo <code>https://vibe.s2cam.com.br</code>. Acrescente <code>/api/integrations/v1/sgp</code> para formar a URL base desta integração.</td></tr>
+      <tr><td>Chave da integração</td><td>Fornecida pelo administrador S2Cam em <strong>Integrações</strong>. Guardar como segredo, sem exibir em logs. Enviar no cabeçalho <code>Authorization: Bearer SUA_CHAVE</code>. Não compartilhar chaves entre provedores.</td></tr>
+      <tr><td>Planos ou serviços participantes</td><td>Definir quais serviços usam S2Cam. Não enviar todos os clientes de internet indiscriminadamente. A lista de planos permitidos também pode ser limitada no S2Cam.</td></tr>
+      <tr><td>Situações e fuso horário</td><td>Combinar os valores reais de <code>servico.status</code> e seu significado. O administrador configura no S2Cam a correspondência com ativo, suspenso e arquivado. Padrão das datas nativas: UTC−3.</td></tr>
+    </tbody></table></div>
+    <h3>Primeiros ambientes</h3>
+    <div class="table-wrap"><table><thead><tr><th>Instalação</th><th>URL base da API SGP</th></tr></thead><tbody><tr><td>Vibe</td><td><code>https://vibe.s2cam.com.br/api/integrations/v1/sgp</code></td></tr><tr><td>IB Telecom</td><td><code>https://ibtelecom.s2cam.com.br/api/integrations/v1/sgp</code></td></tr></tbody></table></div>
+    <p class="muted">O SGP da Vibe é <code>https://vibetelecom.sgp.net.br/</code>. Esse é o ambiente que envia os eventos, não o endereço de destino da API.</p>
+  </section>
+
+  <section id="cliente">
+    <h2>2. Recursos na tela do cliente no SGP</h2>
+    <ul>
+      <li><strong>Criar vínculo no S2Cam:</strong> enviar o cadastro e guardar os identificadores retornados do vínculo e do grupo. A API cria o grupo e um usuário de visualização restrito a ele.</li>
+      <li><strong>Consultar situação:</strong> apresentar o estado do cliente e a confirmação da última operação, distinguindo “aguardando aplicação” de “concluído”.</li>
+      <li><strong>Arquivar vínculo:</strong> pedir confirmação antes de remover o acesso. O arquivamento preserva câmeras e gravações, sujeito à retenção normal.</li>
+      <li><strong>Restaurar vínculo:</strong> recuperar um vínculo arquivado. O acesso segue a última situação conhecida dos serviços.</li>
+    </ul>
+    <p>Além desses controles, o SGP deve enviar automaticamente as mudanças dos serviços participantes. Ao suspender, o S2Cam bloqueia o cliente e encerra seus vídeos abertos. Câmeras exclusivas de grupos suspensos têm gravação e análise pausadas. Uma câmera compartilhada com outro grupo ativo continua atendendo esse grupo.</p>
+    <p>A reativação preserva as configurações anteriores. Câmeras que já estavam desativadas continuam desativadas; gravações manuais encerradas não reiniciam sozinhas. Se houver vários serviços do mesmo cliente, um serviço ativo mantém seu grupo ativo.</p>
+    <div class="note"><p><strong>Login e senha inicial:</strong> CPF sem pontuação. O cliente precisa escolher uma nova senha antes de acessar câmeras. Eventos e reenvios não redefinem a senha escolhida. CPF já utilizado exige confirmação do vínculo pelo administrador; a integração não assume o controle de um usuário existente.</p><p>O contrato atual exige CPF válido. Cadastros com CNPJ precisam de uma regra combinada para enviar o CPF do responsável; CNPJ não é convertido em senha.</p></div>
+  </section>
+
+  <section id="eventos">
+    <h2>3. Enviar eventos</h2>
+    <p><code>POST {BASE}/webhook</code>, com JSON e autenticação Bearer. São aceitas as ações nativas <code>cadastrar</code>, <code>atualizar</code>, <code>alterar_plano</code> e <code>alterar_status</code>. Envie os campos completos em todas as ações.</p>
+    <pre><code>{
+  "acao": "cadastrar",
+  "data": "2026-10-13T10:00:00.123456-03:00",
+  "cliente": {
+    "id": "123",
+    "cpfcnpj": "52998224725",
+    "nome": "Cliente de exemplo"
+  },
+  "contrato": { "id": "456" },
+  "servico": {
+    "id": "789",
+    "status": "ATIVO",
+    "plano": { "id": "10" }
+  }
+}</code></pre>
+    <p><code>ATIVO</code> é um exemplo: configure as situações reais do SGP no S2Cam. Situações desconhecidas são recusadas. Use a data original da mudança, não a data de cada tentativa. A API aceita ISO 8601 com fuso ou o formato nativo <code>13/10/2026 10:00:00.123456</code>, no fuso configurado.</p>
+    <pre><code>curl --request POST "$S2CAM_BASE/webhook" \
+  --header "Authorization: Bearer $S2CAM_KEY" \
+  --header "Content-Type: application/json" \
+  --header "Idempotency-Key: evento-unico-do-sgp" \
+  --data @evento.json</code></pre>
+    <p class="muted">As variáveis representam a URL base e a chave guardada na configuração do conector. Não coloque chaves reais em código-fonte, arquivos de exemplo ou histórico de comandos.</p>
+    <details><summary>Compatibilidade com o Gateway Genérico do SGP</summary><p>O recebimento suporta o formato nativo do Gateway Genérico. Se a equipe SGP reutilizar esse mecanismo, configure os planos participantes e os cabeçalhos abaixo. Os controles de arquivar/restaurar e o acompanhamento das operações devem usar os endpoints explícitos.</p><pre><code>{
+  "url": "https://DOMINIO_DA_INSTALACAO/api/integrations/v1/sgp/webhook",
+  "headers": {
+    "Authorization": "Bearer SUA_CHAVE",
+    "Content-Type": "application/json"
+  }
+}</code></pre><p><a href="https://bookstack.sgp.net.br/books/api/page/integracao-gateway-generica" target="_blank" rel="noopener noreferrer">Referência oficial do SGP</a>. O S2Cam não altera diretamente o cadastro ou o banco do SGP.</p></details>
+    <h3>Endpoints — relativos a {BASE}</h3>
+    <div class="table-wrap"><table><thead><tr><th>Método</th><th>Caminho</th><th>Uso</th></tr></thead><tbody>
+      <tr><td>POST</td><td><code>/webhook</code></td><td>Cadastrar e atualizar o estado dos serviços.</td></tr>
+      <tr><td>GET</td><td><code>/customers/CLIENTE_ID</code></td><td>Consultar o vínculo de <code>cliente.id</code>.</td></tr>
+      <tr><td>DELETE</td><td><code>/customers/CLIENTE_ID</code></td><td>Arquivar e suspender, sem apagar câmeras ou gravações.</td></tr>
+      <tr><td>POST</td><td><code>/customers/CLIENTE_ID/restore</code></td><td>Restaurar vínculo arquivado.</td></tr>
+      <tr><td>GET</td><td><code>/operations/OPERACAO_ID</code></td><td>Acompanhar a aplicação da mudança.</td></tr>
+      <tr><td>GET</td><td><code>/capabilities</code></td><td>Consultar versão e ações disponíveis; público, sem chave.</td></tr>
+    </tbody></table></div>
+    <p>Codifique identificadores usados na URL com percent-encoding. Cada chave acessa somente os clientes de sua integração; consultas de outra integração retornam 404.</p>
+  </section>
+
+  <section id="confirmacao">
+    <h2>4. Confirmação, fila e tratamento de erros</h2>
+    <pre><code>{
+  "gateway_id": "identificador-do-vinculo",
+  "gateway_params_extra": "identificador-do-grupo",
+  "operation_id": "identificador-da-operacao",
+  "status": "PENDING",
+  "customer_status": "ACTIVE",
+  "repeated": false
+}</code></pre>
+    <p><strong>HTTP 200 confirma que o evento foi gravado, não que todos os serviços já foram ajustados.</strong> Guarde os identificadores. Consulte <code>GET {BASE}/operations/ID</code> até receber <code>COMPLETE</code>. <code>PENDING</code> significa que a aplicação continua em andamento; <code>IGNORED</code> indica evento antigo ou substituído por outro mais recente.</p>
+    <p>Mantenha uma fila durável no SGP. Em falhas de rede, 429 ou 503, reenvie o mesmo evento com espera progressiva — 5, 15, 30 e 60 segundos — respeitando <code>Retry-After</code>, quando presente. Preserve a data e, se utilizado, o <code>Idempotency-Key</code>. Um identificador reutilizado com dados diferentes retorna 409.</p>
+    <div class="table-wrap"><table><thead><tr><th>Resposta</th><th>Ação esperada do conector</th></tr></thead><tbody><tr><td>400</td><td>Revisar campos, CPF, plano, data ou situação não mapeada.</td></tr><tr><td>401 / 403</td><td>Revisar chave, ativação e autorização. Não entrar em repetição contínua.</td></tr><tr><td>404</td><td>Revisar vínculo e instalação; um cliente ainda não cadastrado precisa de <code>cadastrar</code>.</td></tr><tr><td>409</td><td>Revisar conflito de cadastro, evento ou vínculo arquivado. Não trocar a data apenas para esconder o conflito.</td></tr><tr><td>429 / 503 / falha de rede</td><td>Manter na fila e tentar novamente com espera progressiva.</td></tr></tbody></table></div>
+    <p>Reenvie periodicamente o estado atual dos serviços participantes, preservando a data da mudança. Essa reconciliação recupera divergências após falta de comunicação. A API não busca automaticamente o banco do SGP.</p>
+  </section>
+
+  <section id="homologacao">
+    <h2>5. Homologação do conector único</h2>
+    <ol><li>Configurar um provedor e uma chave próprios de homologação.</li><li>Cadastrar cliente de teste; conferir grupo, usuário e troca obrigatória da senha inicial.</li><li>Reenviar o cadastro e confirmar que não duplica o cliente nem redefine sua senha.</li><li>Suspender com vídeo aberto; aguardar <code>COMPLETE</code> e conferir encerramento do acesso e pausa dos serviços exclusivos.</li><li>Conferir que outro cliente continua assistindo à câmera compartilhada.</li><li>Reativar e conferir configurações restauradas, sem ativar câmeras originalmente desativadas.</li><li>Testar eventos fora de ordem, vários serviços, arquivamento/restauração, chave substituída e queda de comunicação.</li><li>Ativar o mesmo conector em outro provedor, mudando apenas configuração e chave.</li></ol>
+    <p class="muted">O backend S2Cam foi validado em ambiente isolado com HTTP, PostgreSQL, vídeo e gravação reais de fontes sintéticas. A homologação de ponta a ponta com o SGP deve ser realizada em conjunto, antes de enviar clientes reais.</p>
+  </section>
+  <footer>Contrato S2Cam–SGP v1.0.0 · <a href="/developers/sgp/openapi.json">OpenAPI</a> · <a href="https://s2cam.com.br/">Conhecer o S2Cam</a><p>Documentação única para todos os provedores. Nenhuma chave ou credencial real é publicada nesta página.</p></footer>
+</main>
+</body>
+</html>
