@@ -2770,7 +2770,7 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
       ),
     ]);
     return {
-      cams: new Map(cams.map((c) => [c.id, { recordingEnabled: c.recordingEnabled }])),
+      cams: new Map(cams.map((c) => [c.id, { recordingEnabled: c.recordingEnabled, enabled: c.enabled }])),
       ultimasGravacoes: new Map(ultimas.map((r) => [r.cameraId, r])),
       ultimasReconexoes: new Map(reconexoes.map((e) => [e.cameraId, e])),
     };
