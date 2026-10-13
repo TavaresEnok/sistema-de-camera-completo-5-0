@@ -1284,6 +1284,7 @@
             <div class="page-head" style="margin-bottom:12px">
               <div><button id="detalhe-voltar" class="ghost sm">← Voltar para Operação</button></div>
               <div class="page-head-actions">
+                <button id="delete-installation-top" class="danger sm" disabled>Excluir instalação</button>
                 <button id="detalhe-prev" class="sm" title="Instalação anterior">↑</button>
                 <button id="detalhe-next" class="sm" title="Próxima instalação">↓</button>
               </div>
@@ -3899,6 +3900,7 @@
         return '';
       }
       function renderDetailHero(item) {
+        document.getElementById('delete-installation-top').disabled = removingInstallation;
         document.getElementById('detalhe-titulo').textContent = displayName(item);
         document.getElementById('detalhe-subtitulo').textContent = item.id;
         document.getElementById('detalhe-status').innerHTML = `
@@ -3932,6 +3934,7 @@
         if (state.cloudEditing || digitandoNoDetalhe) return;
         const item = selectedItem();
         if (!item) {
+          document.getElementById('delete-installation-top').disabled = true;
           els.detail.innerHTML = `<section class="panel"><div class="empty">${state.installations.length
             ? 'Selecione um cliente na Operação.'
             : '<div><strong>Nenhum cliente ainda</strong><div class="subtext">Vá em <b>Instalação</b> para cadastrar o primeiro servidor e gerar o comando.</div></div>'}</div></section>`;
@@ -4104,7 +4107,6 @@
                   <div class="license-actions">
                     <button id="copy-selected-diagnostics" class="primary">Copiar diagnóstico</button>
                     <button id="ver-backups" class="primary">Cópias de segurança</button>
-                    <button id="remove-installation" class="danger">Remover instalação</button>
                     <button id="copy-selected-installer">Copiar reinstalador oficial</button>
                   </div>
                   <div class="subtext">O diagnóstico é sanitizado: não inclui chave de licença, token nem segredos.</div>`}
@@ -4362,7 +4364,6 @@
         els.detail.querySelector('#copy-selected-diagnostics')?.addEventListener('click', () => copyDiagnosticsFor(item.id));
         els.detail.querySelector('#copy-selected-installer')?.addEventListener('click', () => copyInstallerFor(item.id));
         els.detail.querySelector('#delete-pending-install')?.addEventListener('click', () => deletePendingInstallation(item.id));
-        els.detail.querySelector('#remove-installation')?.addEventListener('click', () => removeInstallation(item.id));
         els.detail.querySelector('#ver-backups')?.addEventListener('click', () => verBackups(item.id));
         els.detail.querySelector('#request-reactivation-archive')?.addEventListener('click', () => requestReactivationArchive(item.id));
         els.detail.querySelector('#delete-reactivation-archive')?.addEventListener('click', () => deleteReactivationArchive(item.id));
@@ -4881,6 +4882,10 @@
       }
       function wireDetailNavigation() {
         document.getElementById('detalhe-voltar')?.addEventListener('click', () => { setView('operacao'); render(); });
+        document.getElementById('delete-installation-top')?.addEventListener('click', () => {
+          const item = selectedItem();
+          if (item) void removeInstallation(item.id);
+        });
         document.getElementById('detalhe-prev')?.addEventListener('click', () => stepInstallation(-1));
         document.getElementById('detalhe-next')?.addEventListener('click', () => stepInstallation(1));
         document.querySelectorAll('#detalhe-abas button').forEach((btn) => btn.addEventListener('click', () => setDetailTab(btn.dataset.tab)));
@@ -5574,26 +5579,46 @@
         document.querySelector('#confirm-dialog').addEventListener('close', () => { btn.style.display = ''; }, { once: true });
       }
 
+      let removingInstallation = false;
       async function removeInstallation(id) {
+        if (removingInstallation) return;
         const digitado = window.prompt(
-          `Remover a instalação "${id}" da Central?\n\n`
-          + 'Ela perde a licença: restringe em 10 dias e SUSPENDE em 15.\n'
-          + 'Nada é apagado na máquina do cliente.\n\n'
+          `Excluir a instalação "${id}" da Central?\n\n`
+          + 'O cadastro será removido e a licença deixará de ser renovada.\n'
+          + 'Se o servidor ainda estiver em uso, seus serviços poderão ser bloqueados.\n'
+          + 'Câmeras, gravações e arquivos no servidor do cliente não serão apagados.\n\n'
           + `Para confirmar, digite o código da instalação: ${id}`,
         );
         if (digitado === null) return;
-        const res = await fetch(
-          centralUrl(`/api/admin/installations/${encodeURIComponent(id)}?confirmar=${encodeURIComponent(digitado.trim())}`),
-          { method: 'DELETE', credentials: 'include' },
-        );
-        if (!res.ok) {
-          const d = await res.json().catch(() => ({}));
-          showToast(d.message || 'Não foi possível remover a instalação.');
+        if (digitado.trim() !== id) {
+          showToast('O código não confere. A instalação não foi excluída.');
           return;
         }
-        showToast('Instalação removida da Central.');
-        state.selected = null;
-        await load();
+        removingInstallation = true;
+        document.getElementById('delete-installation-top').disabled = true;
+        try {
+          const res = await fetch(
+            centralUrl(`/api/admin/installations/${encodeURIComponent(id)}?confirmar=${encodeURIComponent(digitado.trim())}`),
+            { method: 'DELETE', credentials: 'include' },
+          );
+          if (!res.ok) {
+            const d = await res.json().catch(() => ({}));
+            showToast(d.message || 'Não foi possível excluir a instalação.');
+            return;
+          }
+          if (state.selectedId === id) {
+            state.selectedId = '';
+            localStorage.removeItem('drac-central-selected');
+            setView('operacao');
+          }
+          showToast('Instalação excluída da Central.');
+          await load();
+        } catch {
+          showToast('Não foi possível confirmar a exclusão. Atualize a lista antes de tentar novamente.');
+        } finally {
+          removingInstallation = false;
+          document.getElementById('delete-installation-top').disabled = !selectedItem();
+        }
       }
 
       async function deletePendingInstallation(id) {
