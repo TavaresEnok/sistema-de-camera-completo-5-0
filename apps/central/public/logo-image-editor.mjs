@@ -61,6 +61,10 @@ export class BrandImageEditor {
   }
   exportDataUrl() {
     if (!this.image) throw Error('Aguarde a imagem carregar.');
+    const pixels = this.canvas.getContext('2d').getImageData(0, 0, this.canvas.width, this.canvas.height).data;
+    let visible = false;
+    for (let i = 3; i < pixels.length; i += 4) if (pixels[i] > 0) { visible = true; break; }
+    if (!visible) throw Error('Centralize a imagem dentro do quadro antes de aplicar.');
     // PNG preserves transparency; reduce resolution rather than change format.
     for (const maximum of [768, 512, 384, 256, 128]) {
       const result = document.createElement('canvas'), scale = Math.min(1, maximum / Math.max(this.canvas.width, this.canvas.height));
