@@ -6357,7 +6357,7 @@
           document.querySelector('#logo-editor-zoom').disabled = false;
         } catch { document.querySelector('#logo-editor-error').textContent = 'Não foi possível abrir a imagem. Escolha outro arquivo.'; }
       }
-      document.querySelector('#logo-editor-dialog').addEventListener('close', () => { if (logoEditor) logoEditor.destroy(); logoEditor = null; document.querySelector('#app-edit-logo-file').value = ''; });
+      document.querySelector('#logo-editor-dialog').addEventListener('close', () => { if (document.querySelector('#logo-editor-dialog').open) return; if (logoEditor) logoEditor.destroy(); logoEditor = null; document.querySelector('#app-edit-logo-file').value = ''; });
       document.querySelector('#logo-editor-cancel').addEventListener('click', () => document.querySelector('#logo-editor-dialog').close());
       document.querySelector('#logo-editor-zoom').addEventListener('input', e => logoEditor?.setZoom(Number(e.target.value)));
       document.querySelector('#logo-editor-shape').addEventListener('change', e => logoEditor?.setShape(e.target.value));
