@@ -4,11 +4,33 @@ import argparse
 import base64
 import gzip
 import hashlib
-import importlib.util
 import json
 from pathlib import Path
 import subprocess
 import time
+
+
+def sha(file: Path) -> str:
+    digest = hashlib.sha256()
+    with file.open('rb') as source:
+        while chunk := source.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def database_schema_hash(prisma: Path) -> str:
+    """Hash do schema que a imagem da API efetivamente carrega.
+
+    Esta atualização de visualização só precisa do hash; importar o gerador do
+    pacote completo trazia PyYAML como dependência desnecessária e quebrava o
+    empacotamento em servidores que não instalam ferramentas de desenvolvimento.
+    """
+    digest = hashlib.sha256()
+    files = [prisma / 'schema.prisma', *(prisma / 'migrations').rglob('*.sql')]
+    for file in sorted(files):
+        digest.update(file.relative_to(prisma).as_posix().encode())
+        digest.update(file.read_bytes())
+    return digest.hexdigest()
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--root', type=Path, required=True)
@@ -39,21 +61,18 @@ with gzip.open(archive, 'wb', compresslevel=3) as destination:
     if source.wait():
         raise SystemExit('Image export failed')
 subprocess.run(['python3', str(root / 'scripts/security/audit-image.py'), str(archive)], check=True)
-spec = importlib.util.spec_from_file_location('package', root / 'scripts/security/build-runtime-package.py')
-package = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(package)
 now = int(time.time())
 body = {'v': 1, 'kind': 'viewing-update-v1', 'commit': commit, 'protection': 'standard',
         'distributionApproval': 'approved-production-maintenance', 'issuedAt': now, 'expiresAt': now + 30 * 86400,
-        'databaseSchemaHash': package.database_schema_hash(root / 'apps/api/prisma'),
-        'images': images, 'sha256': package.sha(archive), 'size': archive.stat().st_size}
+        'databaseSchemaHash': database_schema_hash(root / 'apps/api/prisma'),
+        'images': images, 'sha256': sha(archive), 'size': archive.stat().st_size}
 if args.approve_sgp_schema:
     if args.approve_detector_percentage_schema or args.approve_object_notice_schema or not args.schema_base_commit:
         raise SystemExit('SGP migration requires its explicit schema base commit and no other migration flag')
     migration = '20261010160000_sgp_integration'
     expected_hash = 'ad8156582c068dbfb207c2516d5f144149e0e9229ecb9edebb84de7c8e08b2b5'
     prisma = root / 'apps/api/prisma'
-    if package.sha(prisma / 'migrations' / migration / 'migration.sql') != expected_hash:
+    if sha(prisma / 'migrations' / migration / 'migration.sql') != expected_hash:
         raise SystemExit('Reviewed SGP migration changed')
     base = subprocess.check_output(git + ['rev-parse', '--verify', args.schema_base_commit + '^{commit}'], text=True).strip()
     paths = subprocess.check_output(git + ['ls-tree', '-r', '--name-only', base, '--', 'apps/api/prisma'], text=True).splitlines()
