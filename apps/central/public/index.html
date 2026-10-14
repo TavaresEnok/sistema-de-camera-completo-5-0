@@ -889,7 +889,7 @@
       .brand-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
       .brand-color-row { display: grid; grid-template-columns: 42px 1fr; gap: 7px; }
       .brand-color-row input[type="color"] { width: 42px; padding: 3px; cursor: pointer; }
-      .brand-logo-row { display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 8px; }
+      .brand-logo-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: end; gap: 8px; }
       .brand-delivery { min-height: 18px; margin-top: 8px; color: var(--quiet); font-size: 11.5px; }
       .app-icon-editor { display: grid; grid-template-columns: 224px minmax(0, 1fr); gap: 18px; align-items: center; margin: 12px 0; }
       .app-icon-crop-stage { position: relative; width: 224px; aspect-ratio: 1; overflow: hidden; border-radius: 25%;
@@ -909,6 +909,7 @@
       .app-icon-zoom-row { display: grid; grid-template-columns: auto minmax(120px, 1fr) auto; align-items: center; gap: 9px; }
       .app-icon-zoom-row input[type="range"] { width: 100%; accent-color: var(--brand); }
       @media (max-width: 620px) {
+        .brand-logo-row { grid-template-columns: 1fr; }
         .brand-editor-head { display: grid; }
         .brand-preview { grid-template-columns: 1fr; }
         .brand-preview-side { border-right: 0; border-bottom: 1px solid rgba(255,255,255,.09); }
@@ -1707,6 +1708,7 @@
               <input id="app-edit-logo-file" type="file" accept="image/png,image/jpeg,image/webp" />
             </div>
             <button id="app-edit-logo-remove" class="sm" type="button">Remover logo</button>
+            <button id="app-edit-logo-adjust" class="sm" type="button">Ajustar imagem</button>
           </div>
           <label class="app-icon-zoom-row" for="app-edit-logo-scale" style="margin-top:11px">
             <span class="subtext" style="margin:0">Tamanho da logo no login</span>
@@ -1769,7 +1771,7 @@
             </div>
             <button id="app-edit-icon-remove" class="sm" type="button">Usar padrão</button>
           </div>
-          <div class="subtext">O recorte mostrado será usado no próximo APK/AAB. Salvar uma mudança gera uma nova versão do aplicativo.</div>
+          <div class="subtext">Salvar não gera APK. O recorte será usado quando você clicar em Gerar novo APK.</div>
         </section>
         <div class="alert-item" style="margin-top:12px;border-color:var(--amber-line);background:var(--amber-soft)">
           <span class="badge warn">Atenção</span>
@@ -1780,6 +1782,20 @@
         <button id="app-edit-cancel">Cancelar</button>
         <button id="app-edit-save" class="primary">Salvar</button>
       </div>
+    </dialog>
+
+    <dialog id="logo-editor-dialog" aria-labelledby="logo-editor-title">
+      <div class="modal-head" id="logo-editor-title">Ajustar logo</div>
+      <div class="modal-body">
+        <p class="subtext">Arraste a imagem e ajuste o zoom até ficar como você quer.</p>
+        <div style="display:flex;justify-content:center;align-items:center;min-height:130px;padding:12px;border:1px solid var(--line);border-radius:10px">
+          <canvas id="logo-editor-canvas" width="768" height="768" tabindex="0" aria-label="Logo: arraste para reposicionar" style="max-width:100%;max-height:35dvh;cursor:grab;touch-action:none;background:repeating-conic-gradient(#d5d5d5 0% 25%,#fff 0% 50%) 50%/16px 16px"></canvas>
+        </div>
+        <p id="logo-editor-error" role="alert" class="subtext"></p>
+        <label class="app-icon-zoom-row" for="logo-editor-zoom"><span>Zoom</span><input id="logo-editor-zoom" type="range" min="0.1" max="6" step="0.01" value="1" disabled /><span id="logo-editor-zoom-value">100%</span></label>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:12px"><label>Formato <select id="logo-editor-shape"><option value="original">Original</option><option value="square">Quadrado</option></select></label><button id="logo-editor-center" type="button">Centralizar</button></div>
+      </div>
+      <div class="modal-actions"><button id="logo-editor-cancel" type="button">Cancelar</button><button id="logo-editor-apply" class="primary" type="button" disabled>Aplicar imagem</button></div>
     </dialog>
 
     <dialog id="technical-access-dialog" aria-labelledby="technical-access-title">
@@ -4434,7 +4450,7 @@
             <td data-label="Último sinal">${item.lastHeartbeatAt ? escapeHtml(dtf.format(new Date(item.lastHeartbeatAt))) : '—'}</td>
             <td data-label="App" class="right">
               <div style="display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap">
-                <button class="sm" data-genapp="${escapeHtml(item.id)}">${item.app && item.app.lastBuildAt ? 'Atualizar app' : 'Gerar app'}</button>
+                <button class="sm" data-genapp="${escapeHtml(item.id)}">Gerar novo APK</button>
                 <button class="sm ghost" data-editapp="${escapeHtml(item.id)}">Editar</button>
               </div>
               ${item.app && item.app.packageId ? `<div class="subtext mono" style="text-align:right">${escapeHtml(item.app.packageId)}</div>` : ''}
@@ -5900,7 +5916,7 @@
             <div class="app-card-body"><div class="app-readiness ${readiness.cls}"><span class="dot"></span><span>${escapeHtml(readiness.text)}</span></div>
               <div class="app-facts"><div class="app-fact"><label>Pacote Android</label><span class="mono" title="${escapeHtml(packageId)}">${escapeHtml(packageId)}</span></div><div class="app-fact"><label>Notificações</label><span>${ac && ac.pushEnabled ? 'Ativas' : app.pushEnabled ? 'Preparando' : 'Desativadas'}</span></div><div class="app-fact" style="grid-column:1/-1"><label>Servidor do aplicativo</label><span class="mono" title="${escapeHtml(apiUrl)}">${escapeHtml(apiUrl)}</span></div></div>
               ${hasArtifact ? `<div class="license-actions"><a class="btn" href="${centralUrl(`/api/admin/apk/clients/${encodeURIComponent(slug)}/download`)}">Baixar APK</a><a class="btn" href="${centralUrl(`/api/admin/apk/clients/${encodeURIComponent(slug)}/download-aab`)}">AAB Play Store</a></div>` : ''}</div>
-            <div class="app-card-actions"><button data-genapp="${escapeHtml(it.id)}" class="primary" ${building ? 'disabled' : ''}>${building ? 'Gerando aplicativo…' : (ac ? 'Gerar nova versão' : 'Gerar aplicativo')}</button><button data-editapp="${escapeHtml(it.id)}" class="app-more" title="Revisar nome, marca, servidor e notificações">Editar</button><button data-del-slug="${escapeHtml(slug)}" class="danger app-more" title="Apagar artefatos gerados" ${(!ac || building) ? 'disabled' : ''}>×</button></div>
+            <div class="app-card-actions"><button data-genapp="${escapeHtml(it.id)}" class="primary" ${building ? 'disabled' : ''}>${building ? 'Gerando aplicativo…' : 'Gerar novo APK'}</button><button data-editapp="${escapeHtml(it.id)}" class="app-more" title="Revisar nome, marca, servidor e notificações">Editar</button><button data-del-slug="${escapeHtml(slug)}" class="danger app-more" title="Apagar artefatos gerados" ${(!ac || building) ? 'disabled' : ''}>×</button></div>
           </section>`;
         }).join('');
         box.querySelectorAll('[data-genapp]').forEach(b => b.addEventListener('click', () => generateAppForClient(b.dataset.genapp)));
@@ -5991,11 +6007,8 @@
           const data = await res.json();
           if (!res.ok) { showToast(data.message || data.error || 'Falha ao salvar.'); return; }
           document.querySelector('#app-edit-dialog').close();
-          showToast(data.rebuildTriggered
-            ? 'Alterações salvas. A instalação aplicará automaticamente; nova versão do app iniciada.'
-            : 'Alterações salvas. A instalação aplicará automaticamente.');
+          showToast('Alterações salvas. Nenhum APK foi gerado. Use Gerar novo APK quando quiser.');
           await load();
-          if (data.rebuildTriggered) { await loadApps(); startApkBuildPolling(); }
         } catch { showToast('Falha ao salvar.'); }
       }
       function startApkBuildPolling() {
@@ -6320,6 +6333,40 @@
       document.querySelector('#app-edit-background').addEventListener('input', () => syncBrandColor('app-edit-background', 'app-edit-background-hex', 'picker'));
       document.querySelector('#app-edit-background-hex').addEventListener('input', () => syncBrandColor('app-edit-background', 'app-edit-background-hex', 'text'));
       document.querySelector('#app-edit-brand-default').addEventListener('click', resetAppBrandingToDefault);
+      let logoEditor = null;
+      async function openLogoEditor(source) {
+        if (!source) { showToast('Envie uma imagem primeiro.'); return; }
+        const dialog = document.querySelector('#logo-editor-dialog');
+        if (logoEditor) logoEditor.destroy(); logoEditor = null;
+        document.querySelector('#logo-editor-error').textContent = 'Carregando imagem…';
+        document.querySelector('#logo-editor-apply').disabled = true;
+        document.querySelector('#logo-editor-zoom').disabled = true;
+        document.querySelector('#logo-editor-shape').value = 'original';
+        if (!dialog.open) dialog.showModal();
+        try {
+          const { BrandImageEditor } = await import('./logo-image-editor.mjs');
+          if (!dialog.open) return;
+          logoEditor = new BrandImageEditor(document.querySelector('#logo-editor-canvas'), zoom => {
+            document.querySelector('#logo-editor-zoom').value = String(zoom);
+            document.querySelector('#logo-editor-zoom-value').textContent = `${Math.round(zoom * 100)}%`;
+          });
+          const instance = logoEditor;
+          if (!await instance.load(source) || logoEditor !== instance || !dialog.open) return;
+          document.querySelector('#logo-editor-error').textContent = '';
+          document.querySelector('#logo-editor-apply').disabled = false;
+          document.querySelector('#logo-editor-zoom').disabled = false;
+        } catch { document.querySelector('#logo-editor-error').textContent = 'Não foi possível abrir a imagem. Escolha outro arquivo.'; }
+      }
+      document.querySelector('#logo-editor-dialog').addEventListener('close', () => { if (logoEditor) logoEditor.destroy(); logoEditor = null; document.querySelector('#app-edit-logo-file').value = ''; });
+      document.querySelector('#logo-editor-cancel').addEventListener('click', () => document.querySelector('#logo-editor-dialog').close());
+      document.querySelector('#logo-editor-zoom').addEventListener('input', e => logoEditor?.setZoom(Number(e.target.value)));
+      document.querySelector('#logo-editor-shape').addEventListener('change', e => logoEditor?.setShape(e.target.value));
+      document.querySelector('#logo-editor-center').addEventListener('click', () => logoEditor?.reset());
+      document.querySelector('#logo-editor-apply').addEventListener('click', () => {
+        try { appEditLogoDataUrl = logoEditor.exportDataUrl(); updateAppBrandPreview(); document.querySelector('#logo-editor-dialog').close(); }
+        catch { document.querySelector('#logo-editor-error').textContent = 'Não foi possível preparar a imagem. Tente outra imagem.'; }
+      });
+      document.querySelector('#app-edit-logo-adjust').addEventListener('click', () => void openLogoEditor(appEditLogoDataUrl));
       document.querySelector('#app-edit-logo-remove').addEventListener('click', () => {
         appEditLogoDataUrl = '';
         document.querySelector('#app-edit-logo-file').value = '';
@@ -6339,10 +6386,7 @@
           return;
         }
         const reader = new FileReader();
-        reader.addEventListener('load', () => {
-          appEditLogoDataUrl = String(reader.result || '');
-          updateAppBrandPreview();
-        });
+        reader.addEventListener('load', () => void openLogoEditor(String(reader.result || '')));
         reader.addEventListener('error', () => showToast('Não foi possível ler o logo.'));
         reader.readAsDataURL(file);
       });

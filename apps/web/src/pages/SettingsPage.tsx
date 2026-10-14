@@ -15,6 +15,7 @@ import { useBrandingStore } from '../store/brandingStore';
 import { contrastRatio } from '../lib/web-operational';
 import { clientError } from '../lib/client-error';
 import { useUnsavedChanges } from '../hooks/use-unsaved-changes';
+import { BrandLogoEditor } from '../components/BrandLogoEditor';
 
 const API_URL = getApiBaseUrl();
 
@@ -520,6 +521,7 @@ export default function ConfiguracoesPage() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [brandingEditorTheme, setBrandingEditorTheme] = useState<BrandingEditorTheme>('dark');
+  const [logoEditorSource, setLogoEditorSource] = useState<string | null>(null);
 
   const authHeaders = useMemo(() => ({ Authorization: `Bearer ${accessToken}` }), [accessToken]);
 
@@ -571,6 +573,7 @@ export default function ConfiguracoesPage() {
     const reader = new FileReader();
     reader.onload = () => {
       if (typeof reader.result !== 'string') return;
+      if (destino === 'brandLogoDataUrl') { setLogoEditorSource(reader.result); return; }
       // Converte o logo para PNG real via canvas. O build do APK (AAPT) recusa
       // JPEG/WebP com extensão .png; padronizando em PNG, qualquer upload funciona.
       const img = new Image();
@@ -891,6 +894,7 @@ export default function ConfiguracoesPage() {
                                 onChange={(e) => { handleLogoFile(e.target.files?.[0]); e.target.value = ''; }}
                               />
                             </label>
+                            {settings.brandLogoDataUrl ? <button type="button" onClick={() => setLogoEditorSource(settings.brandLogoDataUrl)} className="btn btn-sm">Ajustar imagem</button> : null}
                             {settings.brandLogoDataUrl ? (
                               <button
                                 type="button"
@@ -1052,6 +1056,7 @@ export default function ConfiguracoesPage() {
         </div>
       </div>
       </div>
+      <BrandLogoEditor source={logoEditorSource} onClose={() => setLogoEditorSource(null)} onApply={image => { update('brandLogoDataUrl', image); setLogoEditorSource(null); }} />
     </div>
   );
 }

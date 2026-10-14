@@ -2606,9 +2606,8 @@ async function fetchClientBranding(apiUrl, timeoutMs = 8000) {
 
 // Monta o cliente no build-agent a partir do cadastro do cliente + puxa logo/cor
 // do próprio sistema dele, e dispara o build. SEM digitação manual.
-// Usada tanto pela geração inicial quanto pelo rebuild automático após edição
-// (ver handlePatchApp) — os dois caminhos precisam mandar o MESMO payload pro
-// build-agent, senão uma edição salva na Central nunca chega no APK.
+// Usada somente pela ação explícita Gerar novo APK. Editar ou salvar não
+// consulta o agente e não inicia compilação.
 async function pushAppToBuildAgent(item, actor, req, db, installationId) {
   const approvedRelease = releaseAtual(db);
   if (!approvedRelease?.commit) {
@@ -2682,9 +2681,7 @@ async function handleGenerateApp(req, res, db, actor, installationId) {
   return json(req, res, result.status, result.data);
 }
 
-// Edita nome de exibição, package ID e/ou servidor do app. Se o app já tinha
-// sido gerado e houve mudança que chega ao APK, dispara rebuild automaticamente
-// — um simples "Salvar" sem alteração não desperdiça uma nova compilação.
+// Salvar nunca gera APK. Apenas handleGenerateApp pode iniciar um build.
 async function handlePatchApp(req, res, db, actor, installationId) {
   const item = db.installations[installationId];
   if (!item) return json(req, res, 404, { error: 'installation_not_found' });
@@ -2706,13 +2703,6 @@ async function handlePatchApp(req, res, db, actor, installationId) {
     return json(req, res, 400, { error: 'invalid_apiurl', message: 'Servidor inválido. Use um domínio (ex.: cliente.s2cam.com.br), IP ou URL completa.' });
   }
   item.app = item.app || { slug: deriveAppSlug(item), apiUrl: deriveClientApiUrl(item) };
-  const hadBuild = !!item.app.lastBuildAt;
-  const appBefore = JSON.stringify({
-    appName: item.app.appName || '',
-    packageId: item.app.packageId || '',
-    apiUrlOverride: item.app.apiUrlOverride || '',
-    pushEnabled: item.app.pushEnabled === true,
-  });
   if (appName) item.app.appName = appName;
   if (packageId) item.app.packageId = packageId;
   if (apiUrl) item.app.apiUrlOverride = addrToApiUrl(apiUrl); // override manual do servidor
@@ -2739,17 +2729,10 @@ async function handlePatchApp(req, res, db, actor, installationId) {
   addAuditEvent(db, req, { type: 'apk.app_edited', actor: actor.email, result: 'accepted', installationId });
 
   let brandingChanged = false;
-  let brandingBuildChanged = false;
   if (Object.prototype.hasOwnProperty.call(body, 'branding')) {
-    const previousBranding = managedBrandingFromInstallation(item);
     const checked = validateManagedBranding(body.branding, appName || effectiveAppName(item));
     if (!checked.ok) return json(req, res, 400, { error: 'invalid_branding', message: checked.message });
     brandingChanged = JSON.stringify(item.branding || null) !== JSON.stringify(checked.value);
-    const { brandMobileLogoScale: _previousScale, ...previousBuildBranding } = previousBranding;
-    const { brandMobileLogoScale: _nextScale, ...nextBuildBranding } = checked.value;
-    // O tamanho da logo é lido em runtime pelo app. Alterá-lo não precisa gerar
-    // APK/AAB novo nem criar trabalho desnecessário no agente de build.
-    brandingBuildChanged = JSON.stringify(previousBuildBranding) !== JSON.stringify(nextBuildBranding);
     item.branding = checked.value;
     if (brandingChanged) {
       bumpConfigRevision(item);
@@ -2766,20 +2749,7 @@ async function handlePatchApp(req, res, db, actor, installationId) {
     }
   }
 
-  let rebuild = null;
-  const appSettingsChanged = appBefore !== JSON.stringify({
-    appName: item.app.appName || '',
-    packageId: item.app.packageId || '',
-    apiUrlOverride: item.app.apiUrlOverride || '',
-    pushEnabled: item.app.pushEnabled === true,
-  });
-  if (hadBuild && (appSettingsChanged || brandingBuildChanged || appIconChanged)) {
-    rebuild = await pushAppToBuildAgent(item, actor, req, db, installationId);
-  }
   await saveDb(db);
-  if (rebuild && rebuild.status >= 400) {
-    return json(req, res, rebuild.status, { ...rebuild.data, appName: effectiveAppName(item), packageId: effectiveAppPackageId(item), apiUrl: deriveClientApiUrl(item) });
-  }
   return json(req, res, 200, {
     app: item.app,
     appName: effectiveAppName(item),
@@ -2791,8 +2761,8 @@ async function handlePatchApp(req, res, db, actor, installationId) {
     appIconChanged,
     brandingChanged,
     configRevision: Number(item.configRevision || 0) || 0,
-    rebuildTriggered: !!rebuild,
-    rebuild: rebuild ? rebuild.data : null,
+    rebuildTriggered: false,
+    rebuild: null,
   });
 }
 
