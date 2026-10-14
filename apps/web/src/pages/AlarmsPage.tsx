@@ -99,6 +99,40 @@ type AlarmApiItem = {
   occurrenceCount?: number;
 };
 
+/**
+ * Som padrão escolhido para avisos no navegador: "05 — Atenção".
+ * Quatro bipes curtos em um intervalo total de um segundo. É gerado no
+ * navegador, portanto não depende de arquivo externo, rede ou vídeo.
+ */
+function tocarSomDeAtencao(): void {
+  const AudioContextCtor = window.AudioContext
+    ?? (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!AudioContextCtor) return;
+
+  const context = new AudioContextCtor();
+  void context.resume().then(() => {
+    const inicio = context.currentTime;
+    for (const atraso of [0.13, 0.30, 0.47, 0.64]) {
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      const comecaEm = inicio + atraso;
+      const terminaEm = comecaEm + 0.10;
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(1020, comecaEm);
+      oscillator.frequency.linearRampToValueAtTime(1190, terminaEm);
+      gain.gain.setValueAtTime(0.0001, comecaEm);
+      gain.gain.linearRampToValueAtTime(0.12, comecaEm + 0.012);
+      gain.gain.exponentialRampToValueAtTime(0.0001, terminaEm);
+      oscillator.connect(gain);
+      gain.connect(context.destination);
+      oscillator.start(comecaEm);
+      oscillator.stop(terminaEm);
+    }
+    // Fecha após o segundo completo, inclusive quando o último bipe já acabou.
+    window.setTimeout(() => void context.close(), 1_050);
+  }).catch(() => void context.close());
+}
+
 const API_URL = getApiBaseUrl();
 const TOOLTIP_STYLE = {
   background: 'hsl(var(--popover))',
@@ -458,22 +492,7 @@ export default function AlertasPage() {
     for (const id of currentIds) seenAlarmIdsRef.current.add(id);
     if (muted || !hasNewUrgentAlarm) return;
 
-    const AudioContextCtor = window.AudioContext ?? (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!AudioContextCtor) return;
-    const context = new AudioContextCtor();
-    void context.resume().then(() => {
-      const oscillator = context.createOscillator();
-      const gain = context.createGain();
-      oscillator.frequency.setValueAtTime(880, context.currentTime);
-      gain.gain.setValueAtTime(0.0001, context.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.12, context.currentTime + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.35);
-      oscillator.connect(gain);
-      gain.connect(context.destination);
-      oscillator.start();
-      oscillator.stop(context.currentTime + 0.36);
-      oscillator.addEventListener('ended', () => void context.close(), { once: true });
-    }).catch(() => void context.close());
+    tocarSomDeAtencao();
   }, [alarmItems, muted]);
 
   function toggleAlarmSound() {

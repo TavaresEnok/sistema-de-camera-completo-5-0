@@ -27,6 +27,10 @@ RUN pnpm install --prod=false
 
 # Copy source
 COPY apps/web ./apps/web
+# O editor de logo é compartilhado com a Central e é importado pelo painel.
+# Sem este arquivo o Vite só descobre a ausência no fim da compilação, quando
+# uma atualização legítima do painel inteiro fica impossível de publicar.
+COPY apps/central/public ./apps/central/public
 # Source fixtures are used only by builder-stage cross-layer regression tests.
 # The nginx runner below still receives only compiled public assets.
 COPY apps/api/src ./apps/api/src
