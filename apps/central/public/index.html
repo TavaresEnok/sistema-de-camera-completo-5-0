@@ -6007,7 +6007,7 @@
           const data = await res.json();
           if (!res.ok) { showToast(data.message || data.error || 'Falha ao salvar.'); return; }
           document.querySelector('#app-edit-dialog').close();
-          showToast('Alterações salvas. Nenhum APK foi gerado. Use Gerar novo APK quando quiser.');
+          showToast('Salvo, sem gerar APK. A instalação aplicará automaticamente.');
           await load();
         } catch { showToast('Falha ao salvar.'); }
       }
