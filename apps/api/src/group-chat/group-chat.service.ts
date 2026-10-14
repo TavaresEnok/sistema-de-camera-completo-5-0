@@ -46,7 +46,7 @@ export class GroupChatService {
    */
   private async membrosDoGrupo(groupId: string) {
     const permissoes = await this.prisma.cameraPermission.findMany({
-      where: { groupId },
+      where: { groupId, user: { isActive: true, integrationSuspended: false, OR: [{ integrationGroupId: null }, { integrationGroupId: groupId }] } },
       select: { userId: true },
     });
     const admins = await this.prisma.user.findMany({
@@ -58,12 +58,35 @@ export class GroupChatService {
 
   /** Quem não participa não lê nem escreve. */
   private async exigirParticipacao(groupId: string, user: AuthUser) {
+    if (user.integrationGroupId && user.integrationGroupId !== groupId) throw new ForbiddenException('Você não participa deste grupo.');
+    const grupo = await this.prisma.cameraGroup.findUnique({
+      where: { id: groupId },
+      select: { isActive: true, accessStatus: true, permissions: {
+        where: { user: { isActive: true, integrationSuspended: false, OR: [{ integrationGroupId: null }, { integrationGroupId: groupId }] } }, select: { userId: true },
+      } },
+    });
+    if (!grupo?.isActive || grupo.accessStatus !== 'ACTIVE') throw new ForbiddenException('Este grupo não está disponível.');
+    // Conta pessoas distintas vinculadas, não aparelhos, sessões ou admins implícitos.
+    if (new Set(grupo.permissions.map(p => p.userId)).size < 2) {
+      throw new ForbiddenException('O chat e o pânico precisam de pelo menos dois usuários ativos no grupo.');
+    }
     if (user.role === UserRole.ADMIN || user.role === UserRole.SUPER_ADMIN) return;
     const tem = await this.prisma.cameraPermission.findFirst({
       where: { groupId, userId: user.id },
       select: { id: true },
     });
     if (!tem) throw new ForbiddenException('Você não participa deste grupo.');
+  }
+
+  async listarGrupos(user: AuthUser) {
+    const admin = user.role === UserRole.ADMIN || user.role === UserRole.SUPER_ADMIN;
+    const grupos = await this.prisma.cameraGroup.findMany({
+      where: { isActive: true, accessStatus: 'ACTIVE', ...(user.integrationGroupId ? { id: user.integrationGroupId } : {}), ...(admin ? {} : { permissions: { some: { userId: user.id } } }) },
+      select: { id: true, name: true, permissions: { where: { user: { isActive: true, integrationSuspended: false } }, select: { userId: true, user: { select: { integrationGroupId: true } } } } },
+      orderBy: { name: 'asc' },
+    });
+    return grupos.map(grupo => ({ id: grupo.id, name: grupo.name, memberCount: new Set(grupo.permissions.filter(p => !p.user.integrationGroupId || p.user.integrationGroupId === grupo.id).map(p => p.userId)).size }))
+      .filter(grupo => grupo.memberCount >= 2);
   }
 
   async listar(groupId: string, user: AuthUser, limite = 100) {
@@ -87,6 +110,7 @@ export class GroupChatService {
     if (!body) throw new BadRequestException('Mensagem vazia.');
     const agora = new Date();
     return this.prisma.groupMessage.create({
+      include: { user: { select: { id: true, name: true } }, camera: { select: { id: true, name: true } } },
       data: {
         groupId,
         userId: user.id,
@@ -116,7 +140,7 @@ export class GroupChatService {
     let camera: { id: string; name: string } | null = null;
     if (entrada.cameraId) {
       camera = await this.prisma.camera.findFirst({
-        where: { id: entrada.cameraId, groups: { some: { id: groupId } } },
+        where: { id: entrada.cameraId, isPrivate: false, groups: { some: { id: groupId } } },
         select: { id: true, name: true },
       });
       // Câmera de OUTRO grupo não entra: seria vazar o nome dela para quem não
@@ -124,27 +148,29 @@ export class GroupChatService {
       if (!camera) throw new BadRequestException('Câmera não pertence a este grupo.');
     }
 
-    const ultimo = await this.prisma.groupMessage.findFirst({
-      where: { groupId, kind: 'ALERT' },
-      orderBy: { createdAt: 'desc' },
-      select: { createdAt: true },
-    });
-    const freio = podeDispararAlerta(ultimo ? ultimo.createdAt.getTime() : null, Date.now());
-
     const agora = new Date();
     const quem = await this.prisma.user.findUnique({ where: { id: user.id }, select: { name: true } });
     const nome = quem?.name || 'Alguém';
     const corpo = limparTexto(entrada.texto) || `${nome} pediu atenção${camera ? ` — ${camera.name}` : ''}.`;
 
-    const mensagem = await this.prisma.groupMessage.create({
+    const expiresAt = quandoExpira(agora, await this.diasDaConversa());
+    // Duas solicitações simultâneas no mesmo grupo não duplicam o push.
+    const { mensagem, freio } = await this.prisma.$transaction(async tx => {
+      await tx.$queryRaw`SELECT "id" FROM "CameraGroup" WHERE "id" = ${groupId} FOR UPDATE`;
+      const ultimo = await tx.groupMessage.findFirst({ where: { groupId, kind: 'ALERT' }, orderBy: { createdAt: 'desc' }, select: { createdAt: true } });
+      const freio = podeDispararAlerta(ultimo ? ultimo.createdAt.getTime() : null, Date.now());
+      const mensagem = await tx.groupMessage.create({
+      include: { user: { select: { id: true, name: true } }, camera: { select: { id: true, name: true } } },
       data: {
         groupId,
         userId: user.id,
         kind: 'ALERT',
         body: corpo,
         cameraId: camera?.id ?? null,
-        expiresAt: quandoExpira(agora, await this.diasDaConversa()),
+        expiresAt,
       },
+      });
+      return { mensagem, freio };
     });
 
     if (!freio.pode) {
@@ -152,7 +178,7 @@ export class GroupChatService {
       // Registra IGUAL: repetição do botão é justamente o que interessa
       // investigar depois.
       await this.registrarNaAuditoria(grupo, camera, user, nome, corpo, false, 0);
-      return { mensagem, enviadoPara: 0, freio };
+      return { mensagem, enviadoPara: 0, pushStatus: 'cooldown' as const, freio };
     }
 
     const membros = await this.membrosDoGrupo(groupId);
@@ -160,19 +186,19 @@ export class GroupChatService {
     // assusta sem informar, e num botão de pânico o susto extra é o que menos
     // falta.
     const outros = membros.filter((id) => id !== user.id);
-    const tokens = await this.pushDevices.tokensDeUsuarios(outros).catch(() => [] as string[]);
+    const aparelhos = await this.pushDevices.aparelhosDeUsuarios(outros);
     const comAparelho = [
       { userId: user.id, ehAutor: true, tokens: [] as string[] },
-      ...outros.map((userId) => ({ userId, ehAutor: false, tokens: [] as string[] })),
+      ...outros.map((userId) => ({ userId, ehAutor: false, tokens: aparelhos.filter(d => d.userId === userId).map(d => d.token) })),
     ];
-    // `destinatariosDoAlerta` continua sendo a regra: aqui só juntamos os
-    // aparelhos que o serviço de push devolveu para o conjunto dos outros.
-    if (comAparelho.length > 1) comAparelho[1].tokens = tokens;
     const destino = destinatariosDoAlerta(comAparelho);
     const texto = textoDoAlerta({ nomeDoGrupo: grupo.name, nomeDeQuemChamou: nome, nomeDaCamera: camera?.name });
 
+    let enviadoPara = 0;
+    let pushStatus: 'accepted' | 'failed' | 'no_devices' = 'no_devices';
     if (destino.tokens.length) {
-      await this.push.sendToTokens(destino.tokens, {
+      try {
+      const result = await this.push.sendToTokens(destino.tokens, {
         ...texto,
         // Canal PRÓPRIO: o alerta de pânico vibra três vezes e não pode ser
         // confundido com alarme de movimento, que é rotina.
@@ -190,15 +216,21 @@ export class GroupChatService {
           autorId: user.id,
           autorNome: nome,
         },
-      }).catch((e) => this.logger.error(`Falha ao enviar alerta: ${e?.message ?? e}`));
+      });
+      const invalidos = new Set(result.invalidTokens);
+      const aceitos = new Set([...Object.values(result.receiptIds), ...destino.tokens.filter(t => t.startsWith('fcm:') && !invalidos.has(t))]);
+      enviadoPara = comAparelho.filter(m => !m.ehAutor && m.tokens.some(t => aceitos.has(t))).length;
+      pushStatus = enviadoPara > 0 ? 'accepted' : 'failed';
+      await this.pushDevices.pruneInvalid(result.invalidTokens).catch(() => undefined);
+      } catch { pushStatus = 'failed'; this.logger.error('Não foi possível encaminhar as notificações do grupo.'); }
     }
 
     this.logger.warn(
       `ALERTA em ${grupo.name} por ${nome}${camera ? ` (${camera.name})` : ''}: `
-      + `${destino.alcancados} avisados, ${destino.semAparelho} sem aparelho.`,
+      + `${enviadoPara} notificações encaminhadas, ${destino.semAparelho} sem aparelho.`,
     );
-    await this.registrarNaAuditoria(grupo, camera, user, nome, corpo, freio.pode, destino.alcancados);
-    return { mensagem, enviadoPara: destino.alcancados, semAparelho: destino.semAparelho, freio };
+    await this.registrarNaAuditoria(grupo, camera, user, nome, corpo, enviadoPara > 0, enviadoPara);
+    return { mensagem, enviadoPara, semAparelho: destino.semAparelho, pushStatus, freio };
   }
 
   /**

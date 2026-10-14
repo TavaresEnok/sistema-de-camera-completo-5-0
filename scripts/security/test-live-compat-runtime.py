@@ -125,6 +125,10 @@ def run(args):
         auth_script = "const fs=require('fs');const p=JSON.parse(fs.readFileSync(0,'utf8'));fetch('http://127.0.0.1:3000/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:'labadmin',password:p.password})}).then(async r=>{const data=await r.json();if(r.status!==201||!data.accessToken)throw Error('bootstrap_login_failed');console.log(JSON.stringify({status:r.status,accessToken:data.accessToken}))}).catch(()=>process.exitCode=1)"
         # The token remains solely in this process's memory and stdin, never logs.
         admin_login = json.loads(node(auth_script, input=json.dumps({'password': password})))
+        if args.community:
+            community_script = (Path(__file__).parent / 'tests/group-community-flow.cjs').read_text()
+            report['groupCommunity'] = json.loads(node(community_script))
+            print('group_community_real_http_and_database_flow_passed', flush=True)
         if args.sgp_only:
             sgp_script = (Path(__file__).parent / 'tests/sgp-integration-flow.cjs').read_text()
             report['sgpIntegration'] = json.loads(node(sgp_script, input=json.dumps({'adminToken': admin_login['accessToken'], 'mediaIp': media_ip})))
@@ -282,5 +286,6 @@ if __name__ == '__main__':
     parser.add_argument('--models', type=Path)
     parser.add_argument('--sgp', action='store_true')
     parser.add_argument('--central', help='Central image for real authenticated SGP token delivery tests')
+    parser.add_argument('--community', action='store_true', help='Validate group chat and panic with real isolated HTTP and Postgres')
     parser.add_argument('--sgp-only', action='store_true', help='Focused SGP diagnostics; insufficient for full release approval')
     run(parser.parse_args())

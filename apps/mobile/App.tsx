@@ -58,6 +58,7 @@ import { loadCameraList } from './src/services/camera-list';
 import { ThemeProvider, useTheme } from './src/theme/ThemeProvider';
 import { CameraWorkflowContext } from './src/components/CameraWorkflowContext';
 import { CameraManagementSheet } from './src/components/CameraManagementSheet';
+import { GroupCommunityPanel } from './src/components/GroupCommunityPanel';
 import { clearCameraSetupDraft } from './src/services/camera-setup-draft';
 import { LibraryProvider, useLibrary } from './src/state/LibraryProvider';
 import { localDateKey, localDayIsoRange, shiftDateKey } from './src/utils/format';
@@ -118,6 +119,8 @@ function AppInner() {
   const [selectedCameraId, setSelectedCameraId] = useState<string | null>(null);
   const [liveCamera, setLiveCamera] = useState<Camera | null>(null);
   const [managedCamera, setManagedCamera] = useState<Camera | null>(null);
+  const [pendingGroupId, setPendingGroupId] = useState<string | null>(null);
+  useEffect(() => { setPendingGroupId(null); }, [session?.user.id]);
   const [highlightedAlarmId, setHighlightedAlarmId] = useState<string | null>(null);
   // Câmera pedida por um push tocado antes da lista de câmeras carregar (cold start).
   const [pendingPushCameraId, setPendingPushCameraId] = useState<string | null>(null);
@@ -475,6 +478,12 @@ function AppInner() {
       });
     }
     const unsubscribe = subscribeToNotificationTaps((data) => {
+      if (data.tipo === 'alerta-de-grupo' && typeof data.groupId === 'string' && data.groupId) {
+        setLiveCamera(null);
+        setTab('central');
+        setPendingGroupId(data.groupId);
+        return;
+      }
       setHighlightedAlarmId(data.alarmId ?? null);
       setTab('alarmes');
       void reloadAlarms();
@@ -2057,6 +2066,8 @@ function AppInner() {
         </ErrorBoundary>
       </View>
 
+      <GroupCommunityPanel apiUrl={session.apiUrl} token={session.token} userId={session.user.id}
+        visible={tab === 'central'} pendingGroupId={pendingGroupId} onPendingHandled={() => setPendingGroupId(null)} />
       {isRedesign ? (
         <BottomTabsRedesign
           active={tab}

@@ -159,6 +159,15 @@ export class PushDevicesService {
     return this.tokensForUsers(userIds);
   }
 
+  /** Identidade fica no servidor: permite contar pessoas, não só dispositivos. */
+  async aparelhosDeUsuarios(userIds: string[]): Promise<{ userId: string; token: string }[]> {
+    if (!userIds.length) return [];
+    return this.prisma.pushDevice.findMany({
+      where: { userId: { in: [...new Set(userIds)] }, user: { isActive: true }, lastSeenAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } },
+      select: { userId: true, token: true },
+    });
+  }
+
   private async tokensForUsers(userIds: string[]): Promise<string[]> {
     if (!userIds.length) return [];
     const devices = await this.prisma.pushDevice.findMany({

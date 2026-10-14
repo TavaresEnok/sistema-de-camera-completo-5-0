@@ -139,7 +139,7 @@ export async function unregisterFromPush(apiUrl: string, authToken: string, devi
  * (alarmId/cameraId) para o app navegar até os alarmes. Retorna um unsubscribe.
  */
 export function subscribeToNotificationTaps(
-  onOpenAlarm: (data: { alarmId?: string; cameraId?: string }) => void,
+  onOpenAlarm: (data: { alarmId?: string; cameraId?: string; tipo?: string; groupId?: string }) => void,
 ) {
   let active = true;
   const handled = new Set<string>();
@@ -151,6 +151,8 @@ export function subscribeToNotificationTaps(
     const data = (response.notification.request.content.data ?? {}) as {
       alarmId?: string;
       cameraId?: string;
+      tipo?: string;
+      groupId?: string;
     };
     onOpenAlarm(data);
     void Notifications.clearLastNotificationResponseAsync().catch(() => undefined);

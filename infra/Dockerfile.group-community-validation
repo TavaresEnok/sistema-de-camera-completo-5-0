@@ -1,0 +1,15 @@
+FROM drac-private-api-builder:20261008
+USER root
+COPY apps/api/src /app/apps/api/src
+COPY apps/api/prisma /app/apps/api/prisma
+COPY apps/api/tests /app/apps/api/tests
+COPY apps/mobile/src /app/apps/mobile/src
+COPY apps/mobile/App.tsx apps/mobile/tsconfig.json /app/apps/mobile/
+COPY apps/mobile/tests /app/apps/mobile/tests
+COPY apps/web/src /app/apps/web/src
+COPY apps/central/src /app/apps/central/src
+COPY apps/central/public /app/apps/central/public
+COPY scripts /app/scripts
+COPY infra /app/infra
+RUN cd /app/apps/api && pnpm exec prisma generate && pnpm exec tsc --noEmit \
+    && node --import tsx --test tests/group-community.test.ts tests/alerta-de-panico.test.ts

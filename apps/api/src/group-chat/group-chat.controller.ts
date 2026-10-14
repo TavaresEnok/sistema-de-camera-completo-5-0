@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { type AuthUser } from '../common/types/auth-user.type';
@@ -18,7 +18,7 @@ export class GroupChatController {
 
   @Get('messages')
   async listar(
-    @Param('groupId') groupId: string,
+    @Param('groupId', new ParseUUIDPipe()) groupId: string,
     @CurrentUser() user: AuthUser,
     @Query('limite') limite?: string,
   ) {
@@ -28,7 +28,7 @@ export class GroupChatController {
 
   @Post('messages')
   async enviar(
-    @Param('groupId') groupId: string,
+    @Param('groupId', new ParseUUIDPipe()) groupId: string,
     @CurrentUser() user: AuthUser,
     @Body() body: { texto?: string },
   ) {
@@ -43,7 +43,7 @@ export class GroupChatController {
    */
   @Post('alert')
   async alertar(
-    @Param('groupId') groupId: string,
+    @Param('groupId', new ParseUUIDPipe()) groupId: string,
     @CurrentUser() user: AuthUser,
     @Body() body: { cameraId?: string; texto?: string },
   ) {
