@@ -99,3 +99,13 @@
   .perimeter-handle { stroke: transparent; stroke-width: 32px; vector-effect: non-scaling-stroke; pointer-events: all; }
   .rdp-root { --cell-size: 2.25rem; }
 }
+[data-detection-preview]:fullscreen {
+  width: 100vw;
+  height: 100dvh;
+  max-width: none;
+  max-height: none;
+  top: 0;
+  left: 0;
+  transform: none;
+  border-radius: 0;
+}

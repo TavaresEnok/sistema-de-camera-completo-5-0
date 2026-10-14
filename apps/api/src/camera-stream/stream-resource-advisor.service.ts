@@ -100,7 +100,7 @@ export class StreamResourceAdvisorService {
         liveFailuresLast24h: cameraReports.reduce((total, camera) => total + camera.operations.live.failuresLast24h, 0),
         recordingSegmentsLast24h: cameraReports.reduce((total, camera) => total + camera.operations.recording.segmentsLast24h, 0),
         recordingGapSecondsLast24h: cameraReports.reduce((total, camera) => total + camera.operations.recording.gapSecondsLast24h, 0),
-        camerasWithRecordingAttention: cameraReports.filter((camera) => camera.operations.recording.state !== 'ok').length,
+        camerasWithRecordingAttention: cameraReports.filter((camera) => camera.operations.recording.state === 'attention').length,
         warningCount,
         criticalCount,
       },

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { PlaySquare, Crosshair, Maximize2, Info, AlertTriangle, Circle, Lock, MoreHorizontal, RefreshCw, X } from 'lucide-react';
@@ -8,6 +8,9 @@ import { mostrarAvisoDeOffline } from '../lib/aviso-de-offline-no-tile';
 
 import { useGridStore } from '../store/gridStore';
 import { useAuthStore } from '../store/authStore';
+import { useDetectionActivityStore } from '../store/detectionActivityStore';
+import { liveDetectionsPoller } from '../lib/live-detections-poller';
+import { hasFreshDetection } from '../lib/detection-activity';
 
 interface CameraTileProps {
   camera: Camera;
@@ -72,6 +75,13 @@ export function CameraTile({
   // cliente). O player NÃO é montado — mostramos um aviso de privacidade limpo
   // no lugar. O backend já bloqueia o conteúdo; aqui é só a UX respeitosa.
   const contentLocked = camera.canViewContent === false;
+  const detectionActive = useDetectionActivityStore(state => Boolean(state.active[camera.id]));
+  useEffect(() => {
+    if (!camera.aiEnabled || contentLocked || !routeActive || !playbackEnabled || liveViewMode !== 'grid') return;
+    return liveDetectionsPoller.subscribe(camera.id, (incoming, recent = []) => {
+      if (hasFreshDetection([...incoming, ...recent])) useDetectionActivityStore.getState().mark(camera.id);
+    });
+  }, [camera.id, camera.aiEnabled, contentLocked, routeActive, playbackEnabled, liveViewMode]);
 
   // Overlay "Offline" do tile só quando o player também não tem imagem viva —
   // e tocar por contingência (`fallback`) CONTA como imagem viva. Ver
@@ -151,6 +161,9 @@ export function CameraTile({
       </button>
 
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/10 via-transparent to-black/10" />
+      {detectionActive && !contentLocked && routeActive && liveViewMode === 'grid' && (
+        <div data-detection-highlight="true" aria-label="Detecção recente" className="pointer-events-none absolute inset-0 z-50 rounded-sm border-2 border-red-500" />
+      )}
 
       {/* Offline overlay — só quando o player também não tem imagem viva (status
           "offline" com stream tocando = sondagem desatualizada; mostra o vídeo). */}
