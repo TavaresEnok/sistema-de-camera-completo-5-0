@@ -16,6 +16,7 @@ import { useAlarmStore } from '../store/alarmStore';
 import { useAuthStore } from '../store/authStore';
 import { Alarm, Camera } from '../store/vmsDataStore';
 import { getApiBaseUrl } from '../lib/api-base';
+import { tocarSomDeAtencao } from '../lib/alert-sound';
 
 const PRIORITY_STYLES: Record<string, { badge: string; iconBg: string }> = {
   P1: {
@@ -98,40 +99,6 @@ type AlarmApiItem = {
   snoozedUntil?: string | null;
   occurrenceCount?: number;
 };
-
-/**
- * Som padrão escolhido para avisos no navegador: "05 — Atenção".
- * Quatro bipes curtos em um intervalo total de um segundo. É gerado no
- * navegador, portanto não depende de arquivo externo, rede ou vídeo.
- */
-function tocarSomDeAtencao(): void {
-  const AudioContextCtor = window.AudioContext
-    ?? (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-  if (!AudioContextCtor) return;
-
-  const context = new AudioContextCtor();
-  void context.resume().then(() => {
-    const inicio = context.currentTime;
-    for (const atraso of [0.13, 0.30, 0.47, 0.64]) {
-      const oscillator = context.createOscillator();
-      const gain = context.createGain();
-      const comecaEm = inicio + atraso;
-      const terminaEm = comecaEm + 0.10;
-      oscillator.type = 'sine';
-      oscillator.frequency.setValueAtTime(1020, comecaEm);
-      oscillator.frequency.linearRampToValueAtTime(1190, terminaEm);
-      gain.gain.setValueAtTime(0.0001, comecaEm);
-      gain.gain.linearRampToValueAtTime(0.12, comecaEm + 0.012);
-      gain.gain.exponentialRampToValueAtTime(0.0001, terminaEm);
-      oscillator.connect(gain);
-      gain.connect(context.destination);
-      oscillator.start(comecaEm);
-      oscillator.stop(terminaEm);
-    }
-    // Fecha após o segundo completo, inclusive quando o último bipe já acabou.
-    window.setTimeout(() => void context.close(), 1_050);
-  }).catch(() => void context.close());
-}
 
 const API_URL = getApiBaseUrl();
 const TOOLTIP_STYLE = {

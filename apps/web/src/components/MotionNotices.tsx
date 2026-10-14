@@ -6,6 +6,7 @@ import { useAuthStore } from '../store/authStore';
 import { useVmsDataStore } from '../store/vmsDataStore';
 import { getApiBaseUrl } from '../lib/api-base';
 import { detectionNoticeMessage, selectMotionNotices, type MotionNotice } from '../lib/motion-notices';
+import { tocarSomDeAtencao } from '../lib/alert-sound';
 import { useDetectionActivityStore } from '../store/detectionActivityStore';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
 import { LiveStreamPlayer } from './LiveStreamPlayer';
@@ -74,7 +75,11 @@ export function MotionNotices() {
           if (Number.isFinite(occurred) && occurred <= now + 1000 && now - occurred <= 5000) useDetectionActivityStore.getState().mark(item.cameraId);
         }
         const incoming = selectMotionNotices(data.items, seen, lastByCamera, Date.parse(data.cursor));
-        if (incoming.length) setNotices(previous => [...incoming, ...previous].slice(0, 3));
+        if (incoming.length) {
+          // Um som por lote: três câmeras detectadas no mesmo ciclo não viram ruído.
+          tocarSomDeAtencao();
+          setNotices(previous => [...incoming, ...previous].slice(0, 3));
+        }
       } catch { /* Network failure must not create alarming or technical messages. */ }
       finally { if (!cancelled) timer = setTimeout(() => void poll(), 3000); }
     };
