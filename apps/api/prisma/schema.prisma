@@ -803,6 +803,9 @@ model SgpService {
   customer SgpCustomer @relation(fields: [customerId], references: [id], onDelete: Restrict)
   externalServiceId String
   externalContractId String
+  externalPlanId String @default("")
+  /// Cota do serviço para o autoatendimento de câmera privada.
+  privateCameraLimit Int @default(0)
   state String
   sourceAt DateTime
   sourceOrder String

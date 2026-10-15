@@ -14,7 +14,7 @@
   </style>
 </head>
 <body>
-<header><div><a class="brand" href="https://s2cam.com.br/">S2<span>Cam</span></a><span class="version">Documentação oficial · API v1.0.0</span></div></header>
+<header><div><a class="brand" href="https://s2cam.com.br/">S2<span>Cam</span></a><span class="version">Documentação oficial · API v1.1.0</span></div></header>
 <main>
   <p class="eyebrow">Para a equipe de desenvolvimento do SGP</p>
   <h1>Uma integração.<br>Todos os provedores.</h1>
@@ -66,9 +66,11 @@
   "servico": {
     "id": "789",
     "status": "ATIVO",
-    "plano": { "id": "10" }
+    "plano": { "id": "10" },
+    "limites": { "cameras_privadas": 2 }
   }
 }</code></pre>
+    <div class="note"><p><strong>Câmeras privadas por cliente:</strong> envie <code>servico.limites.cameras_privadas</code> como inteiro entre 0 e 1000. Se o campo não vier, o limite é 0. As cotas dos serviços não arquivados do mesmo cliente são somadas no grupo; reduzir a cota não apaga câmeras existentes, apenas impede novos cadastros até voltar ao limite.</p></div>
     <p><code>ATIVO</code> é um exemplo: configure as situações reais do SGP no S2Cam. Situações desconhecidas são recusadas. Use a data original da mudança, não a data de cada tentativa. A API aceita ISO 8601 com fuso ou o formato nativo <code>13/10/2026 10:00:00.123456</code>, no fuso configurado.</p>
     <pre><code>curl --request POST "$S2CAM_BASE/webhook" \
   --header "Authorization: Bearer $S2CAM_KEY" \
@@ -107,7 +109,7 @@
 }</code></pre>
     <p><strong>HTTP 200 confirma que o evento foi gravado, não que todos os serviços já foram ajustados.</strong> Guarde os identificadores. Consulte <code>GET {BASE}/operations/ID</code> até receber <code>COMPLETE</code>. <code>PENDING</code> significa que a aplicação continua em andamento; <code>IGNORED</code> indica evento antigo ou substituído por outro mais recente.</p>
     <p>Mantenha uma fila durável no SGP. Em falhas de rede, 429 ou 503, reenvie o mesmo evento com espera progressiva — 5, 15, 30 e 60 segundos — respeitando <code>Retry-After</code>, quando presente. Preserve a data e, se utilizado, o <code>Idempotency-Key</code>. Um identificador reutilizado com dados diferentes retorna 409.</p>
-    <div class="table-wrap"><table><thead><tr><th>Resposta</th><th>Ação esperada do conector</th></tr></thead><tbody><tr><td>400</td><td>Revisar campos, CPF, plano, data ou situação não mapeada.</td></tr><tr><td>401 / 403</td><td>Revisar chave, ativação e autorização. Não entrar em repetição contínua.</td></tr><tr><td>404</td><td>Revisar vínculo e instalação; um cliente ainda não cadastrado precisa de <code>cadastrar</code>.</td></tr><tr><td>409</td><td>Revisar conflito de cadastro, evento ou vínculo arquivado. Não trocar a data apenas para esconder o conflito.</td></tr><tr><td>429 / 503 / falha de rede</td><td>Manter na fila e tentar novamente com espera progressiva.</td></tr></tbody></table></div>
+    <div class="table-wrap"><table><thead><tr><th>Resposta</th><th>Ação esperada do conector</th></tr></thead><tbody><tr><td>400</td><td>Revisar campos, CPF, plano, limite, data ou situação não mapeada.</td></tr><tr><td>401 / 403</td><td>Revisar chave, ativação e autorização. Não entrar em repetição contínua.</td></tr><tr><td>404</td><td>Revisar vínculo e instalação; um cliente ainda não cadastrado precisa de <code>cadastrar</code>.</td></tr><tr><td>409</td><td>Revisar conflito de cadastro, evento ou vínculo arquivado. Não trocar a data apenas para esconder o conflito.</td></tr><tr><td>429 / 503 / falha de rede</td><td>Manter na fila e tentar novamente com espera progressiva.</td></tr></tbody></table></div>
     <p>Reenvie periodicamente o estado atual dos serviços participantes, preservando a data da mudança. Essa reconciliação recupera divergências após falta de comunicação. A API não busca automaticamente o banco do SGP.</p>
   </section>
 

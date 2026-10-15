@@ -91,7 +91,12 @@ export class SgpService {
     const customer = await tx.sgpCustomer.findUniqueOrThrow({ where: { id }, include: { services: true } });
     const state = customerState(customer.services.map(service => service.state), Boolean(customer.archivedAt));
     const updated = await tx.sgpCustomer.update({ where: { id }, data: { state, revision: { increment: 1 } } });
-    await tx.cameraGroup.update({ where: { id: customer.groupId }, data: { isActive: state !== 'ARCHIVED', accessStatus: state === 'ACTIVE' ? 'ACTIVE' : 'SUSPENDED', accessMessage: state === 'ACTIVE' ? null : 'Acesso suspenso. Entre em contato com seu provedor.' } });
+    // Mais de um serviço pode compor o plano do mesmo cliente. Somamos as
+    // cotas ainda contratadas; serviço arquivado não mantém direito ativo.
+    const maxPrivateCameras = Math.min(1000, customer.services
+      .filter(service => service.state !== 'ARCHIVED')
+      .reduce((total, service) => total + service.privateCameraLimit, 0));
+    await tx.cameraGroup.update({ where: { id: customer.groupId }, data: { isActive: state !== 'ARCHIVED', accessStatus: state === 'ACTIVE' ? 'ACTIVE' : 'SUSPENDED', accessMessage: state === 'ACTIVE' ? null : 'Acesso suspenso. Entre em contato com seu provedor.', maxPrivateCameras } });
     await tx.camera.updateMany({ where: { OR: [{ groupId: customer.groupId }, { groups: { some: { id: customer.groupId } } }] }, data: { integrationRuntimePending: true } });
     const user = await tx.user.findUniqueOrThrow({ where: { id: customer.userId } });
     const suspended = state !== 'ACTIVE';
@@ -137,7 +142,7 @@ export class SgpService {
       if (!stale) {
         const account = await tx.user.findUniqueOrThrow({ where: { id: customer.userId } });
         if (account.username !== event.username) throw new ConflictException({ error: 'CPF diferente do vínculo existente. Revise o cadastro com o administrador.' });
-        const data = { customerId: customer.id, externalContractId: event.contractId, state: event.state, sourceAt: event.sourceAt, sourceOrder: event.sourceOrder, payloadHash: event.payloadHash };
+        const data = { customerId: customer.id, externalContractId: event.contractId, externalPlanId: event.planId, privateCameraLimit: event.privateCameraLimit, state: event.state, sourceAt: event.sourceAt, sourceOrder: event.sourceOrder, payloadHash: event.payloadHash };
         await tx.sgpService.upsert({ where: { integrationId_externalServiceId: { integrationId: config.id, externalServiceId: event.serviceId } }, create: { ...data, integrationId: config.id, externalServiceId: event.serviceId }, update: data });
         await tx.user.update({ where: { id: customer.userId }, data: { name: event.name } });
         await tx.cameraGroup.update({ where: { id: customer.groupId }, data: { name: event.name } });
@@ -150,7 +155,7 @@ export class SgpService {
     return { gateway_id: result.customer.id, gateway_params_extra: result.customer.groupId, operation_id: result.operation.id, status: result.operation.state, customer_status: result.customer.state, repeated: result.repeated };
   }
   async customers(integrationId: string, externalId?: string, cursor?: string) {
-    const rows = await this.prisma.sgpCustomer.findMany({ where: { integrationId, ...(externalId ? { externalCustomerId: externalId } : {}) }, include: { group: { select: { name: true, _count: { select: { cameras: true } } } }, user: { select: { username: true, mustChangePassword: true } }, services: { select: { externalServiceId: true, externalContractId: true, state: true, sourceAt: true } } }, orderBy: { id: 'asc' }, take: 201, ...(cursor ? { cursor: { id: text(cursor, 'cursor') }, skip: 1 } : {}) });
+    const rows = await this.prisma.sgpCustomer.findMany({ where: { integrationId, ...(externalId ? { externalCustomerId: externalId } : {}) }, include: { group: { select: { name: true, maxPrivateCameras: true, _count: { select: { cameras: true } } } }, user: { select: { username: true, mustChangePassword: true } }, services: { select: { externalServiceId: true, externalContractId: true, externalPlanId: true, privateCameraLimit: true, state: true, sourceAt: true } } }, orderBy: { id: 'asc' }, take: 201, ...(cursor ? { cursor: { id: text(cursor, 'cursor') }, skip: 1 } : {}) });
     if (externalId && !rows.length) throw new NotFoundException({ error: 'Cliente não encontrado nesta integração.' });
     return externalId ? rows[0] : { items: rows.slice(0, 200), nextCursor: rows.length > 200 ? rows[199].id : null };
   }

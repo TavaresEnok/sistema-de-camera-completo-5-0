@@ -26,7 +26,7 @@ export class SgpErrorFilter implements ExceptionFilter {
 export class SgpGatewayController {
   constructor(private readonly service: SgpService) {}
   @Get('openapi.json') specification() { return sgpOpenApi(); }
-  @Get('capabilities') capabilities() { return { version: '1.0.0', actions: ['cadastrar', 'atualizar', 'alterar_plano', 'alterar_status'], initialPasswordChangeRequired: true }; }
+  @Get('capabilities') capabilities() { return { version: '1.1.0', actions: ['cadastrar', 'atualizar', 'alterar_plano', 'alterar_status'], limits: ['servico.limites.cameras_privadas'], initialPasswordChangeRequired: true }; }
   @Post('webhook') @HttpCode(200)
   async webhook(@Headers('authorization') authorization: string, @Headers('idempotency-key') key: string, @Body() body: unknown) {
     return this.service.webhook(await this.service.authenticate(authorization), body, key);

@@ -55,6 +55,11 @@ export function statusMap(value: unknown): Record<string, SgpState> {
   }
   return output;
 }
+export function nonNegativeInteger(value: unknown, name: string, fallback = 0, maximum = 1000): number {
+  if (value == null) return fallback;
+  if (!Number.isSafeInteger(value) || value < 0 || value > maximum) throw new BadRequestException({ error: `Campo ${name} inválido.` });
+  return value;
+}
 export function customerState(states: string[], archived: boolean): SgpState {
   if (archived) return 'ARCHIVED';
   if (states.includes('ACTIVE')) return 'ACTIVE';
@@ -66,13 +71,17 @@ export function parseEvent(body: unknown, config: { statusMap: unknown; utcOffse
   const action = text(input.acao, 'acao', 30);
   if (!['cadastrar', 'atualizar', 'alterar_plano', 'alterar_status'].includes(action)) throw new BadRequestException({ error: 'Ação do SGP não reconhecida.' });
   const planId = text(object(service.plano).id, 'servico.plano.id');
+  const limits = service.limites == null ? {} : object(service.limites);
+  // O limite pertence ao serviço, não ao navegador. Serviços ativos/suspensos
+  // somam seus direitos no grupo; um serviço arquivado deixa de contar.
+  const privateCameraLimit = nonNegativeInteger(limits.cameras_privadas, 'servico.limites.cameras_privadas');
   if (config.planIds.length && !config.planIds.includes(planId)) throw new BadRequestException({ error: 'Este plano não está autorizado nesta integração.' });
   const state = statusMap(config.statusMap)[text(service.status, 'servico.status', 80).toUpperCase()];
   if (!state) throw new BadRequestException({ error: 'Situação do SGP não mapeada. Configure-a na página Integrações.' });
   const event = {
     action, customerId: text(client.id, 'cliente.id'), serviceId: text(service.id, 'servico.id'),
     contractId: text(contract.id, 'contrato.id'), name: text(client.nome, 'cliente.nome'),
-    username: cpf(client.cpfcnpj), state, planId, sourceAt: sourceTime(input.data, config.utcOffsetMinutes),
+    username: cpf(client.cpfcnpj), state, planId, privateCameraLimit, sourceAt: sourceTime(input.data, config.utcOffsetMinutes),
   };
   // PostgreSQL timestamps use milliseconds here; retain the SGP microseconds for ordering.
   const fraction = /\.(\d{1,6})/.exec(String(input.data))?.[1] ?? '';

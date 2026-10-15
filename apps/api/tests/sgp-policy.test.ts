@@ -4,7 +4,7 @@ import { cpf, customerState, parseEvent, sourceTime, statusMap } from '../src/sg
 
 const config = { statusMap: { ATIVO: 'ACTIVE', SUSPENSO: 'SUSPENDED' }, utcOffsetMinutes: -180, planIds: ['10'] };
 function event() {
-  return { acao: 'cadastrar', data: '09/10/2026 10:00:00.123456', cliente: { id: 1, cpfcnpj: '529.982.247-25', nome: 'Cliente de teste' }, contrato: { id: 2 }, servico: { id: 3, status: 'ATIVO', plano: { id: 10 }, login_password: 'not-persisted' } };
+  return { acao: 'cadastrar', data: '09/10/2026 10:00:00.123456', cliente: { id: 1, cpfcnpj: '529.982.247-25', nome: 'Cliente de teste' }, contrato: { id: 2 }, servico: { id: 3, status: 'ATIVO', plano: { id: 10 }, limites: { cameras_privadas: 2 }, login_password: 'not-persisted' } };
 }
 test('normalizes CPF and rejects invalid digits', () => {
   assert.equal(cpf('529.982.247-25'), '52998224725');
@@ -42,4 +42,12 @@ test('identical requests hash identically without retaining SGP password', () =>
   assert.equal(first.payloadHash, second.payloadHash);
   assert.equal(JSON.stringify(first).includes('not-persisted'), false);
   assert.notEqual(first.payloadHash, parseEvent({ ...event(), cliente: { ...event().cliente, id: 99 } }, config).payloadHash);
+});
+
+test('accepts an explicit private-camera limit and fails closed for invalid quota', () => {
+  assert.equal(parseEvent(event(), config).privateCameraLimit, 2);
+  assert.equal(parseEvent({ ...event(), servico: { ...event().servico, limites: {} } }, config).privateCameraLimit, 0);
+  for (const cameras_privadas of [-1, 1.5, 1001, '2']) {
+    assert.throws(() => parseEvent({ ...event(), servico: { ...event().servico, limites: { cameras_privadas } } }, config));
+  }
 });

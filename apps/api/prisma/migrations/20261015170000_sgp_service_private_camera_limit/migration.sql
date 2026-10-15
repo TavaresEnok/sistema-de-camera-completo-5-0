@@ -1,0 +1,2 @@
+ALTER TABLE "SgpService" ADD COLUMN "externalPlanId" TEXT NOT NULL DEFAULT '';
+ALTER TABLE "SgpService" ADD COLUMN "privateCameraLimit" INTEGER NOT NULL DEFAULT 0;
