@@ -70,6 +70,7 @@ def build(args):
         compose=json.loads(subprocess.run(['docker','compose','-f',str(root/'infra/docker-compose.yml'),'config','--format','json','--no-interpolate','--no-env-resolution','--no-path-resolution'],check=True,capture_output=True,text=True).stdout)
         services=compose["services"];images=set();image_ids={};
         for name in list(services):
+            service=services[name]
             if service.get('profiles'):
                 del services[name];continue
             reference=overrides.get(name,service.get('image'))
