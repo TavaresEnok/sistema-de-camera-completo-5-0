@@ -16,7 +16,6 @@ import subprocess
 import tarfile
 import tempfile
 import time
-import yaml
 
 GLUE=['install-drac.sh','install-ai-models.sh','runtime-watchdog.sh','drac-ops-agent.sh','production-readiness.sh',
       'atualizar-instalacao.sh','security/provision-license.sh','security/runtime-bundle.py','security/update-runtime.py']
@@ -32,23 +31,22 @@ def sha(file):
     return value.hexdigest()
 
 
-def database_schema_hash(prisma, previous_motion_schema=False, previous_notice_schema=False):
+def database_schema_hash(prisma, previous_motion_schema=False, previous_notice_schema=False, previous_notice_sound_schema=False):
     # Match exactly what the API image ships: schema + applied migrations.
-    # Optional SQL tools (e.g. rls/) are not runtime schema or migrations.
     digest=hashlib.sha256()
     files=[prisma/'schema.prisma',*(prisma/'migrations').rglob('*.sql')]
     for file in sorted(files):
-        if previous_motion_schema and file.relative_to(prisma).as_posix() == 'migrations/20261006190000_camera_motion_sensitivity/migration.sql':continue
-        if previous_notice_schema and file.relative_to(prisma).as_posix() == 'migrations/20261006220000_camera_motion_notice/migration.sql':continue
-        digest.update(file.relative_to(prisma).as_posix().encode())
+        relative=file.relative_to(prisma).as_posix()
+        if previous_motion_schema and relative == 'migrations/20261006190000_camera_motion_sensitivity/migration.sql':continue
+        if previous_notice_schema and relative == 'migrations/20261006220000_camera_motion_notice/migration.sql':continue
+        if previous_notice_sound_schema and relative == 'migrations/20261015160000_camera_notice_sound/migration.sql':continue
+        digest.update(relative.encode())
         content=file.read_bytes()
-        if previous_motion_schema and file.name=='schema.prisma':
-            content=content.replace(b'  motionSensitivity      String       @default("media")\n',b'')
-        if previous_notice_schema and file.name=='schema.prisma':
-            content=content.replace(b'  motionNoticeEnabled    Boolean      @default(false)\n',b'')
+        if previous_motion_schema and file.name=='schema.prisma':content=content.replace(b'  motionSensitivity      String       @default("media")\n',b'')
+        if previous_notice_schema and file.name=='schema.prisma':content=content.replace(b'  motionNoticeEnabled    Boolean      @default(false)\n',b'')
+        if previous_notice_sound_schema and file.name=='schema.prisma':content=content.replace(b'  noticeSoundEnabled     Boolean      @default(false)\n',b'')
         digest.update(content)
     return digest.hexdigest()
-
 
 def build(args):
     root=args.root.resolve()
@@ -69,10 +67,9 @@ def build(args):
         for name in GLUE:copy('scripts/'+name)
         for name in CONFIG:copy('infra/'+name)
         shutil.copyfile(args.license_keys,runtime/'infra/trusted-license-keys.json')
-        compose=yaml.safe_load((root/'infra/docker-compose.yml').read_text())
-        services=compose['services'];images=set();image_ids={}
+        compose=json.loads(subprocess.run(['docker','compose','-f',str(root/'infra/docker-compose.yml'),'config','--format','json','--no-interpolate','--no-env-resolution','--no-path-resolution'],check=True,capture_output=True,text=True).stdout)
+        services=compose["services"];images=set();image_ids={};
         for name in list(services):
-            service=services[name]
             if service.get('profiles'):
                 del services[name];continue
             reference=overrides.get(name,service.get('image'))
@@ -84,8 +81,7 @@ def build(args):
                 if isinstance(volume,str) and volume.startswith('./'):
                     relative=volume.split(':',1)[0][2:]
                     if (root/'infra'/relative).is_file():copy('infra/'+relative)
-        (runtime/'infra/docker-compose.yml').write_text(yaml.safe_dump(compose,sort_keys=False))
-        subprocess.run(['docker','image','save','-o',str(stage/'images.tar'),*sorted(images)],check=True)
+        (runtime/'infra/docker-compose.yml').write_text(json.dumps(compose,indent=2))
         subprocess.run(['python3',str(root/'scripts/security/audit-image.py'),str(stage/'images.tar')],check=True)
         files={}
         for file in sorted(stage.rglob('*')):
@@ -100,13 +96,21 @@ def build(args):
                 raise ValueError('Reviewed additive migration changed')
             manifest['reviewedSchemaTransition']={'from':database_schema_hash(root/'apps/api/prisma',True),
                 'migration':'20261006190000_camera_motion_sensitivity','kind':'additive'}
+        transitions=[args.reviewed_motion_schema, getattr(args,'reviewed_motion_notice_schema',False), getattr(args,'reviewed_notice_sound_schema',False)]
+        if sum(bool(value) for value in transitions)>1:raise ValueError('Only one reviewed transition may be approved')
+        if args.reviewed_motion_schema:
+            migration=root/'apps/api/prisma/migrations/20261006190000_camera_motion_sensitivity/migration.sql'
+            statement='\n'.join(line for line in migration.read_text().splitlines() if not line.strip().startswith('--')).strip()
+            if statement != 'ALTER TABLE "Camera" ADD COLUMN "motionSensitivity" TEXT NOT NULL DEFAULT \'media\';':raise ValueError('Reviewed additive migration changed')
+            manifest['reviewedSchemaTransition']={'from':database_schema_hash(root/'apps/api/prisma',True),'migration':'20261006190000_camera_motion_sensitivity','kind':'additive'}
         if getattr(args,'reviewed_motion_notice_schema',False):
-            if args.reviewed_motion_schema:raise ValueError('Only one reviewed transition may be approved')
             migration=root/'apps/api/prisma/migrations/20261006220000_camera_motion_notice/migration.sql'
-            if migration.read_text().strip() != 'ALTER TABLE "Camera" ADD COLUMN "motionNoticeEnabled" BOOLEAN NOT NULL DEFAULT false;':
-                raise ValueError('Reviewed motion notice migration changed')
-            manifest['reviewedSchemaTransition']={'from':database_schema_hash(root/'apps/api/prisma',previous_notice_schema=True),
-                'migration':'20261006220000_camera_motion_notice','kind':'additive'}
+            if migration.read_text().strip() != 'ALTER TABLE "Camera" ADD COLUMN "motionNoticeEnabled" BOOLEAN NOT NULL DEFAULT false;':raise ValueError('Reviewed motion notice migration changed')
+            manifest['reviewedSchemaTransition']={'from':database_schema_hash(root/'apps/api/prisma',previous_notice_schema=True),'migration':'20261006220000_camera_motion_notice','kind':'additive'}
+        if getattr(args,'reviewed_notice_sound_schema',False):
+            migration=root/'apps/api/prisma/migrations/20261015160000_camera_notice_sound/migration.sql'
+            if migration.read_text().strip() != 'ALTER TABLE "Camera" ADD COLUMN "noticeSoundEnabled" BOOLEAN NOT NULL DEFAULT false;':raise ValueError('Reviewed notice sound migration changed')
+            manifest['reviewedSchemaTransition']={'from':database_schema_hash(root/'apps/api/prisma',previous_notice_sound_schema=True),'migration':'20261015160000_camera_notice_sound','kind':'additive'}
         raw=json.dumps(manifest,sort_keys=True,separators=(',',':')).encode()
         (stage/'manifest.json').write_bytes(raw)
         message=stage/'message';message.write_bytes(b'drac-runtime-manifest-v1\n'+raw)
@@ -137,4 +141,5 @@ if __name__=='__main__':
     parser.add_argument('--distribution-approval',required=True)
     parser.add_argument('--reviewed-motion-schema',action='store_true')
     parser.add_argument('--reviewed-motion-notice-schema',action='store_true')
+    parser.add_argument('--reviewed-notice-sound-schema',action='store_true')
     build(parser.parse_args())
