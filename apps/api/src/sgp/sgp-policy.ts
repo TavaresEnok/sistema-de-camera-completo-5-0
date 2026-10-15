@@ -60,6 +60,33 @@ export function nonNegativeInteger(value: unknown, name: string, fallback = 0, m
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0 || value > maximum) throw new BadRequestException({ error: `Campo ${name} inválido.` });
   return value;
 }
+function retentionDays(value: unknown): number {
+  const result = nonNegativeInteger(value, 'servico.limites.retencao_dias', 3, 3650);
+  if (result < 1) throw new BadRequestException({ error: 'Campo servico.limites.retencao_dias inválido.' });
+  return result;
+}
+
+function recordingPolicy(value: unknown) {
+  const input = value == null ? {} : object(value);
+  const received = input.modo == null ? 'manual' : text(input.modo, 'servico.gravacao.modo', 20).toLowerCase();
+  const modes: Record<string, string> = {
+    continua: 'continuous', continuous: 'continuous',
+    manual: 'manual',
+    movimento: 'motion', motion: 'motion',
+    objeto: 'object', object: 'object',
+  };
+  const recordingMode = modes[received];
+  if (!recordingMode) throw new BadRequestException({ error: 'Campo servico.gravacao.modo inválido.' });
+  if (recordingMode !== 'object') {
+    if (input.classes_objeto != null) throw new BadRequestException({ error: 'servico.gravacao.classes_objeto só é aceito no modo objeto.' });
+    return { recordingMode, recordingObjectClasses: [] as string[] };
+  }
+  const classes = input.classes_objeto == null ? ['person'] : input.classes_objeto;
+  if (!Array.isArray(classes) || classes.length !== 1 || String(classes[0] ?? '').trim().toLowerCase() !== 'person') {
+    throw new BadRequestException({ error: 'No modo objeto, servico.gravacao.classes_objeto deve conter somente person.' });
+  }
+  return { recordingMode, recordingObjectClasses: ['person'] };
+}
 export function customerState(states: string[], archived: boolean): SgpState {
   if (archived) return 'ARCHIVED';
   if (states.includes('ACTIVE')) return 'ACTIVE';
@@ -75,13 +102,16 @@ export function parseEvent(body: unknown, config: { statusMap: unknown; utcOffse
   // O limite pertence ao serviço, não ao navegador. Serviços ativos/suspensos
   // somam seus direitos no grupo; um serviço arquivado deixa de contar.
   const privateCameraLimit = nonNegativeInteger(limits.cameras_privadas, 'servico.limites.cameras_privadas');
+  const retention = retentionDays(limits.retencao_dias);
+  const recording = recordingPolicy(service.gravacao);
   if (config.planIds.length && !config.planIds.includes(planId)) throw new BadRequestException({ error: 'Este plano não está autorizado nesta integração.' });
   const state = statusMap(config.statusMap)[text(service.status, 'servico.status', 80).toUpperCase()];
   if (!state) throw new BadRequestException({ error: 'Situação do SGP não mapeada. Configure-a na página Integrações.' });
   const event = {
     action, customerId: text(client.id, 'cliente.id'), serviceId: text(service.id, 'servico.id'),
     contractId: text(contract.id, 'contrato.id'), name: text(client.nome, 'cliente.nome'),
-    username: cpf(client.cpfcnpj), state, planId, privateCameraLimit, sourceAt: sourceTime(input.data, config.utcOffsetMinutes),
+    username: cpf(client.cpfcnpj), state, planId, privateCameraLimit, retentionDays: retention,
+    recordingMode: recording.recordingMode, recordingObjectClasses: recording.recordingObjectClasses, sourceAt: sourceTime(input.data, config.utcOffsetMinutes),
   };
   // PostgreSQL timestamps use milliseconds here; retain the SGP microseconds for ordering.
   const fraction = /\.(\d{1,6})/.exec(String(input.data))?.[1] ?? '';

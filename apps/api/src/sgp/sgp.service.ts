@@ -91,13 +91,31 @@ export class SgpService {
     const customer = await tx.sgpCustomer.findUniqueOrThrow({ where: { id }, include: { services: true } });
     const state = customerState(customer.services.map(service => service.state), Boolean(customer.archivedAt));
     const updated = await tx.sgpCustomer.update({ where: { id }, data: { state, revision: { increment: 1 } } });
-    // Mais de um serviço pode compor o plano do mesmo cliente. Somamos as
-    // cotas ainda contratadas; serviço arquivado não mantém direito ativo.
-    const maxPrivateCameras = Math.min(1000, customer.services
-      .filter(service => service.state !== 'ARCHIVED')
+    // Mais de um serviço pode compor o plano do mesmo cliente. Somamos as cotas
+    // ainda contratadas; serviço arquivado não mantém direito ativo. Já a
+    // política de gravação é única por grupo: perfis divergentes seriam
+    // ambíguos e são recusados até o SGP corrigir os serviços envolvidos.
+    const applicable = customer.services.filter(service => service.state !== 'ARCHIVED');
+    const maxPrivateCameras = Math.min(1000, applicable
       .reduce((total, service) => total + service.privateCameraLimit, 0));
-    await tx.cameraGroup.update({ where: { id: customer.groupId }, data: { isActive: state !== 'ARCHIVED', accessStatus: state === 'ACTIVE' ? 'ACTIVE' : 'SUSPENDED', accessMessage: state === 'ACTIVE' ? null : 'Acesso suspenso. Entre em contato com seu provedor.', maxPrivateCameras } });
-    await tx.camera.updateMany({ where: { OR: [{ groupId: customer.groupId }, { groups: { some: { id: customer.groupId } } }] }, data: { integrationRuntimePending: true } });
+    const profiles = [...new Map(applicable.map(service => {
+      const profile = { retentionDays: service.retentionDays, recordingMode: service.recordingMode, recordingObjectClasses: service.recordingObjectClasses };
+      return [JSON.stringify(profile), profile];
+    })).values()];
+    if (profiles.length > 1) throw new ConflictException({ error: 'Os serviços ativos deste cliente têm políticas de gravação diferentes. Envie a mesma política ou arquive o serviço substituído.' });
+    const profile = profiles[0] ?? { retentionDays: 3, recordingMode: 'manual', recordingObjectClasses: [] as string[] };
+    await tx.cameraGroup.update({ where: { id: customer.groupId }, data: {
+      isActive: state !== 'ARCHIVED', accessStatus: state === 'ACTIVE' ? 'ACTIVE' : 'SUSPENDED',
+      accessMessage: state === 'ACTIVE' ? null : 'Acesso suspenso. Entre em contato com seu provedor.',
+      maxPrivateCameras, retentionDays: profile.retentionDays,
+    } });
+    await tx.camera.updateMany({ where: { OR: [{ groupId: customer.groupId }, { groups: { some: { id: customer.groupId } } }] }, data: {
+      retentionDays: profile.retentionDays, retentionFollowsGroup: true,
+      recordingMode: profile.recordingMode, recordingEnabled: profile.recordingMode !== 'manual',
+      recordingObjectClasses: profile.recordingObjectClasses,
+      ...(profile.recordingMode === 'object' ? { aiEnabled: true } : {}),
+      integrationRuntimePending: true,
+    } });
     const user = await tx.user.findUniqueOrThrow({ where: { id: customer.userId } });
     const suspended = state !== 'ACTIVE';
     await tx.user.update({ where: { id: user.id }, data: { integrationSuspended: suspended, integrationGroupId: customer.groupId, ...(user.integrationSuspended !== suspended ? { authVersion: { increment: 1 } } : {}) } });
@@ -112,6 +130,7 @@ export class SgpService {
     const knownCustomer = await this.prisma.sgpCustomer.findUnique({ where: { integrationId_externalCustomerId: { integrationId: config.id, externalCustomerId: event.customerId } }, select: { id: true } });
     const initialHash = event.action === 'cadastrar' && !knownCustomer ? await bcrypt.hash(event.username, 12) : null;
     const policy = await this.commercial.getPolicy();
+    await this.commercial.assertRetentionQuota(event.retentionDays);
     const result = await this.locked(async tx => {
       const currentConfig = await tx.sgpIntegration.findUniqueOrThrow({ where: { id: config.id } });
       if (!currentConfig.enabled || currentConfig.keyHash !== config.keyHash) throw new UnauthorizedException({ error: 'Integração desativada ou chave substituída.' });
@@ -129,7 +148,7 @@ export class SgpService {
         if (event.action !== 'cadastrar' || !initialHash) throw new NotFoundException({ error: 'Cliente ainda não vinculado. Envie o cadastro primeiro.' });
         if (await tx.user.findUnique({ where: { username: event.username } })) throw new ConflictException({ error: 'Este login já existe. Confirme o vínculo na página Integrações.' });
         if (policy.maxUsers !== null && await tx.user.count({ where: { isActive: true } }) >= policy.maxUsers) throw new ConflictException({ error: 'Limite de usuários da instalação atingido.' });
-        const group = await tx.cameraGroup.create({ data: { name: event.name, accessStatus: 'SUSPENDED', retentionDays: Math.min(3, policy.maxRetentionDays ?? 3) } });
+        const group = await tx.cameraGroup.create({ data: { name: event.name, accessStatus: 'SUSPENDED', retentionDays: event.retentionDays } });
         const user = await tx.user.create({ data: { name: event.name, username: event.username, passwordHash: initialHash, role: 'VIEWER', mustChangePassword: true, integrationGroupId: group.id, integrationSuspended: true } });
         await tx.cameraPermission.create({ data: { userId: user.id, groupId: group.id, level: 'VIEW' } });
         customer = await tx.sgpCustomer.create({ data: { integrationId: config.id, externalCustomerId: event.customerId, groupId: group.id, userId: user.id } });
@@ -142,7 +161,7 @@ export class SgpService {
       if (!stale) {
         const account = await tx.user.findUniqueOrThrow({ where: { id: customer.userId } });
         if (account.username !== event.username) throw new ConflictException({ error: 'CPF diferente do vínculo existente. Revise o cadastro com o administrador.' });
-        const data = { customerId: customer.id, externalContractId: event.contractId, externalPlanId: event.planId, privateCameraLimit: event.privateCameraLimit, state: event.state, sourceAt: event.sourceAt, sourceOrder: event.sourceOrder, payloadHash: event.payloadHash };
+        const data = { customerId: customer.id, externalContractId: event.contractId, externalPlanId: event.planId, privateCameraLimit: event.privateCameraLimit, retentionDays: event.retentionDays, recordingMode: event.recordingMode, recordingObjectClasses: event.recordingObjectClasses, state: event.state, sourceAt: event.sourceAt, sourceOrder: event.sourceOrder, payloadHash: event.payloadHash };
         await tx.sgpService.upsert({ where: { integrationId_externalServiceId: { integrationId: config.id, externalServiceId: event.serviceId } }, create: { ...data, integrationId: config.id, externalServiceId: event.serviceId }, update: data });
         await tx.user.update({ where: { id: customer.userId }, data: { name: event.name } });
         await tx.cameraGroup.update({ where: { id: customer.groupId }, data: { name: event.name } });
@@ -155,7 +174,7 @@ export class SgpService {
     return { gateway_id: result.customer.id, gateway_params_extra: result.customer.groupId, operation_id: result.operation.id, status: result.operation.state, customer_status: result.customer.state, repeated: result.repeated };
   }
   async customers(integrationId: string, externalId?: string, cursor?: string) {
-    const rows = await this.prisma.sgpCustomer.findMany({ where: { integrationId, ...(externalId ? { externalCustomerId: externalId } : {}) }, include: { group: { select: { name: true, maxPrivateCameras: true, _count: { select: { cameras: true } } } }, user: { select: { username: true, mustChangePassword: true } }, services: { select: { externalServiceId: true, externalContractId: true, externalPlanId: true, privateCameraLimit: true, state: true, sourceAt: true } } }, orderBy: { id: 'asc' }, take: 201, ...(cursor ? { cursor: { id: text(cursor, 'cursor') }, skip: 1 } : {}) });
+    const rows = await this.prisma.sgpCustomer.findMany({ where: { integrationId, ...(externalId ? { externalCustomerId: externalId } : {}) }, include: { group: { select: { name: true, maxPrivateCameras: true, retentionDays: true, _count: { select: { cameras: true } } } }, user: { select: { username: true, mustChangePassword: true } }, services: { select: { externalServiceId: true, externalContractId: true, externalPlanId: true, privateCameraLimit: true, retentionDays: true, recordingMode: true, recordingObjectClasses: true, state: true, sourceAt: true } } }, orderBy: { id: 'asc' }, take: 201, ...(cursor ? { cursor: { id: text(cursor, 'cursor') }, skip: 1 } : {}) });
     if (externalId && !rows.length) throw new NotFoundException({ error: 'Cliente não encontrado nesta integração.' });
     return externalId ? rows[0] : { items: rows.slice(0, 200), nextCursor: rows.length > 200 ? rows[199].id : null };
   }

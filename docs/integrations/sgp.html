@@ -14,7 +14,7 @@
   </style>
 </head>
 <body>
-<header><div><a class="brand" href="https://s2cam.com.br/">S2<span>Cam</span></a><span class="version">Documentação oficial · API v1.1.0</span></div></header>
+<header><div><a class="brand" href="https://s2cam.com.br/">S2<span>Cam</span></a><span class="version">Documentação oficial · API v1.2.0</span></div></header>
 <main>
   <p class="eyebrow">Para a equipe de desenvolvimento do SGP</p>
   <h1>Uma integração.<br>Todos os provedores.</h1>
@@ -67,10 +67,12 @@
     "id": "789",
     "status": "ATIVO",
     "plano": { "id": "10" },
-    "limites": { "cameras_privadas": 2 }
+    "limites": { "cameras_privadas": 2, "retencao_dias": 3 },
+    "gravacao": { "modo": "objeto", "classes_objeto": ["person"] }
   }
 }</code></pre>
     <div class="note"><p><strong>Câmeras privadas por cliente:</strong> envie <code>servico.limites.cameras_privadas</code> como inteiro entre 0 e 1000. Se o campo não vier, o limite é 0. As cotas dos serviços não arquivados do mesmo cliente são somadas no grupo; reduzir a cota não apaga câmeras existentes, apenas impede novos cadastros até voltar ao limite.</p></div>
+    <div class="note"><p><strong>Retenção e gravação:</strong> <code>servico.limites.retencao_dias</code> é opcional e usa <strong>3 dias</strong> quando ausente. Em <code>servico.gravacao.modo</code>, use <code>continua</code>, <code>manual</code>, <code>movimento</code> ou <code>objeto</code>. Sem esse bloco, o modo é manual. No modo objeto, a única classe aceita e gravada é <code>person</code>; envie <code>classes_objeto: ["person"]</code> ou omita a lista.</p></div>
     <p><code>ATIVO</code> é um exemplo: configure as situações reais do SGP no S2Cam. Situações desconhecidas são recusadas. Use a data original da mudança, não a data de cada tentativa. A API aceita ISO 8601 com fuso ou o formato nativo <code>13/10/2026 10:00:00.123456</code>, no fuso configurado.</p>
     <pre><code>curl --request POST "$S2CAM_BASE/webhook" \
   --header "Authorization: Bearer $S2CAM_KEY" \
@@ -118,7 +120,7 @@
     <ol><li>Configurar um provedor e uma chave próprios de homologação.</li><li>Cadastrar cliente de teste; conferir grupo, usuário e troca obrigatória da senha inicial.</li><li>Reenviar o cadastro e confirmar que não duplica o cliente nem redefine sua senha.</li><li>Suspender com vídeo aberto; aguardar <code>COMPLETE</code> e conferir encerramento do acesso e pausa dos serviços exclusivos.</li><li>Conferir que outro cliente continua assistindo à câmera compartilhada.</li><li>Reativar e conferir configurações restauradas, sem ativar câmeras originalmente desativadas.</li><li>Testar eventos fora de ordem, vários serviços, arquivamento/restauração, chave substituída e queda de comunicação.</li><li>Ativar o mesmo conector em outro provedor, mudando apenas configuração e chave.</li></ol>
     <p class="muted">O backend S2Cam foi validado em ambiente isolado com HTTP, PostgreSQL, vídeo e gravação reais de fontes sintéticas. A homologação de ponta a ponta com o SGP deve ser realizada em conjunto, antes de enviar clientes reais.</p>
   </section>
-  <footer>Contrato S2Cam–SGP v1.0.0 · <a href="/developers/sgp/openapi.json">OpenAPI</a> · <a href="https://s2cam.com.br/">Conhecer o S2Cam</a><p>Documentação única para todos os provedores. Nenhuma chave ou credencial real é publicada nesta página.</p></footer>
+  <footer>Contrato S2Cam–SGP v1.2.0 · <a href="/developers/sgp/openapi.json">OpenAPI</a> · <a href="https://s2cam.com.br/">Conhecer o S2Cam</a><p>Documentação única para todos os provedores. Nenhuma chave ou credencial real é publicada nesta página.</p></footer>
 </main>
 </body>
 </html>

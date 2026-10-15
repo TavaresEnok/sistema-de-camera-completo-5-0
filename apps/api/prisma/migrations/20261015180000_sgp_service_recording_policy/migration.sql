@@ -1,0 +1,3 @@
+ALTER TABLE "SgpService" ADD COLUMN "retentionDays" INTEGER NOT NULL DEFAULT 3;
+ALTER TABLE "SgpService" ADD COLUMN "recordingMode" TEXT NOT NULL DEFAULT 'manual';
+ALTER TABLE "SgpService" ADD COLUMN "recordingObjectClasses" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];

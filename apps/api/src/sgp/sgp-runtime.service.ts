@@ -69,6 +69,7 @@ export class SgpRuntimeService implements OnModuleInit, OnModuleDestroy {
       await this.get(MediamtxProxyService).teardownPathsForCamera(id, true);
       if (isPushSourced(camera)) await this.get(RtmpIngestSourceService).pausePublishers(camera);
     } else if (camera.integrationRuntimePending) {
+      await this.get(RecordingProcessManagerService).pauseForIntegration(id);
       await this.get(RecordingProcessManagerService).resumeForIntegration(id);
       await this.get(AiManagerService).startCamera(id);
     }

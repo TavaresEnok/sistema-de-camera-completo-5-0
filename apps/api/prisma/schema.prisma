@@ -807,6 +807,12 @@ model SgpService {
   /// Cota do serviço para o autoatendimento de câmera privada.
   privateCameraLimit Int @default(0)
   state String
+  /// Política comercial aplicada ao grupo do cliente por este serviço.
+  /// A ausência no webhook mantém o padrão seguro de três dias e gravação manual.
+  retentionDays Int @default(3)
+  recordingMode String @default("manual")
+  /// Atualmente o plano SGP por objeto admite somente pessoa.
+  recordingObjectClasses String[] @default([])
   sourceAt DateTime
   sourceOrder String
   payloadHash String
