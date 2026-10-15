@@ -358,7 +358,8 @@ function WizardModal({
     name: '',
     siteId: '',
     areaId: '',
-    recordingMode: 'continuous',
+    // Cadastro começa manual: o operador escolhe se e como quer gravar.
+    recordingMode: 'manual',
     recordingObjectClasses: [] as string[],
     retentionDays: '3',
     retentionFollowsGroup: true,
