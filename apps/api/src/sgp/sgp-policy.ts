@@ -57,7 +57,7 @@ export function statusMap(value: unknown): Record<string, SgpState> {
 }
 export function nonNegativeInteger(value: unknown, name: string, fallback = 0, maximum = 1000): number {
   if (value == null) return fallback;
-  if (!Number.isSafeInteger(value) || value < 0 || value > maximum) throw new BadRequestException({ error: `Campo ${name} inválido.` });
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0 || value > maximum) throw new BadRequestException({ error: `Campo ${name} inválido.` });
   return value;
 }
 export function customerState(states: string[], archived: boolean): SgpState {
