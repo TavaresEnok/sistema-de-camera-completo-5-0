@@ -78,8 +78,9 @@ def build(args):
             if not re.fullmatch('sha256:[a-f0-9]{64}',identity):raise ValueError('Image not immutable')
             service.pop('build',None);service['image']=identity;images.add(identity);image_ids[name]=identity
             for volume in service.get('volumes',[]):
-                if isinstance(volume,str) and volume.startswith('./'):
-                    relative=volume.split(':',1)[0][2:]
+                source=volume.split(':',1)[0] if isinstance(volume,str) else volume.get('source') if isinstance(volume,dict) and volume.get('type')=='bind' else None
+                if isinstance(source,str) and source.startswith('./'):
+                    relative=source[2:]
                     if (root/'infra'/relative).is_file():copy('infra/'+relative)
         (runtime/'infra/docker-compose.yml').write_text(json.dumps(compose,indent=2))
         subprocess.run(['python3',str(root/'scripts/security/audit-image.py'),str(stage/'images.tar')],check=True)
