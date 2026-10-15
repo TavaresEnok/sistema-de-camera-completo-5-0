@@ -201,6 +201,11 @@ export class UpdateCameraDto extends CameraPrivacyDto {
   objectNoticeEnabled?: boolean;
 
   @IsOptional()
+  @IsBoolean()
+  @Transform(({ obj, key }) => obj[key])
+  noticeSoundEnabled?: boolean;
+
+  @IsOptional()
   @IsArray()
   @ArrayMaxSize(6)
   @IsIn(['person', 'car', 'motorcycle', 'bicycle', 'bus', 'truck'], { each: true })

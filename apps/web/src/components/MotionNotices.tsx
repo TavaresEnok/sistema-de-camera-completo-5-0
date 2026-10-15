@@ -76,8 +76,11 @@ export function MotionNotices() {
         }
         const incoming = selectMotionNotices(data.items, seen, lastByCamera, Date.parse(data.cursor));
         if (incoming.length) {
-          // Um som por lote: três câmeras detectadas no mesmo ciclo não viram ruído.
-          tocarSomDeAtencao();
+          // Um som por lote: três câmeras detectadas no mesmo ciclo não viram
+          // ruído. Cada câmera controla se o próprio aviso deve tocar.
+          const tocarSom = incoming.some(item => useVmsDataStore.getState().cameras
+            .some(camera => camera.id === item.cameraId && camera.noticeSoundEnabled));
+          if (tocarSom) tocarSomDeAtencao();
           setNotices(previous => [...incoming, ...previous].slice(0, 3));
         }
       } catch { /* Network failure must not create alarming or technical messages. */ }

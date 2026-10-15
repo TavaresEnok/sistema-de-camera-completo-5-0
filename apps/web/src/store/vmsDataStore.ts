@@ -55,6 +55,7 @@ export interface Camera {
   motionNoticeEnabled?: boolean;
   objectNoticeEnabled?: boolean;
   objectNoticeClasses?: string[];
+  noticeSoundEnabled?: boolean;
   showDetectorPercentage?: boolean;
   retentionDays: number;
   effectiveRetentionDays: number;
@@ -366,6 +367,7 @@ function mapCameraItems(
       motionNoticeEnabled: camera.motionNoticeEnabled === true,
       objectNoticeEnabled: camera.objectNoticeEnabled === true,
       objectNoticeClasses: Array.isArray(camera.objectNoticeClasses) ? camera.objectNoticeClasses : [],
+      noticeSoundEnabled: camera.noticeSoundEnabled === true,
       showDetectorPercentage: camera.showDetectorPercentage === true,
       // PTZ vem SONDADO da API (Camera.ptzCapable), não deduzido aqui.
       //

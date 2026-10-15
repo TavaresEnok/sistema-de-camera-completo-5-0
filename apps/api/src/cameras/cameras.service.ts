@@ -404,6 +404,7 @@ export class CamerasService implements OnApplicationBootstrap {
         motionNoticeEnabled: dto.motionNoticeEnabled ?? false,
         objectNoticeEnabled: dto.objectNoticeEnabled ?? false,
         objectNoticeClasses: dto.objectNoticeClasses ?? [],
+        noticeSoundEnabled: dto.noticeSoundEnabled ?? false,
         showDetectorPercentage: dto.showDetectorPercentage ?? false,
         aiObjectClasses: dto.aiObjectClasses ?? [],
         aiSensitivity: dto.aiSensitivity ?? 'balanced',
@@ -845,6 +846,7 @@ export class CamerasService implements OnApplicationBootstrap {
         motionNoticeEnabled: dto.motionNoticeEnabled,
         objectNoticeEnabled: dto.objectNoticeEnabled,
         objectNoticeClasses: dto.objectNoticeClasses,
+        noticeSoundEnabled: dto.noticeSoundEnabled,
         showDetectorPercentage: dto.showDetectorPercentage,
         motionTrigger: migrarGatilhoParaZonas ? 'SYSTEM' : (dto.motionTrigger ?? existing.motionTrigger),
         // A migração de gatilho (comentário acima) também ARMA a análise: sem
@@ -2199,6 +2201,7 @@ export class CamerasService implements OnApplicationBootstrap {
         motionNoticeEnabled: dto.motionNoticeEnabled ?? false,
         objectNoticeEnabled: dto.objectNoticeEnabled ?? false,
         objectNoticeClasses: dto.objectNoticeClasses ?? [],
+        noticeSoundEnabled: dto.noticeSoundEnabled ?? false,
         showDetectorPercentage: dto.showDetectorPercentage ?? false,
         alarmsEnabled: dto.alarmsEnabled ?? true,
         hasEdgeAi: dto.hasEdgeAi ?? false,
