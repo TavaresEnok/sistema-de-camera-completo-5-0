@@ -84,6 +84,7 @@ def build(args):
                     relative=source[2:]
                     if (root/'infra'/relative).is_file():copy('infra/'+relative)
         (runtime/'infra/docker-compose.yml').write_text(json.dumps(compose,indent=2))
+        subprocess.run(["docker","image","save","-o",str(stage/"images.tar"),*sorted(images)],check=True)
         subprocess.run(['python3',str(root/'scripts/security/audit-image.py'),str(stage/'images.tar')],check=True)
         files={}
         for file in sorted(stage.rglob('*')):
