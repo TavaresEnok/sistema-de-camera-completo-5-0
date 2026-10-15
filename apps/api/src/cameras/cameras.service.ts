@@ -496,6 +496,15 @@ export class CamerasService implements OnApplicationBootstrap {
 
     const created = await this.create(cameraDto, { isPrivate: true, ownerUserId: owner.id });
 
+    // Keep the primary group and the operational group relation in sync.
+    // Private camera content remains protected by owner/direct grants.
+    if (groupId) {
+      await this.prisma.camera.update({
+        where: { id: created.id },
+        data: { groups: { connect: { id: groupId } } },
+      });
+    }
+
     // Permissão direta de ADMIN para o dono: o gate de conteúdo (canViewCamera)
     // reconhece o dono por ownerUserId, mas a permissão direta também o habilita
     // a controlar/gravar e sobrevive a uma eventual troca de dono.
