@@ -41,7 +41,8 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/apps/api/node_modules ./apps/api/node_modules
 COPY --from=builder /app/apps/api/dist ./apps/api/dist
 COPY --from=builder /app/apps/api/package.json ./apps/api/package.json
-COPY --from=builder /app/apps/api/prisma ./apps/api/prisma
+COPY --from=builder /app/apps/api/prisma/schema.prisma ./apps/api/prisma/schema.prisma
+COPY --from=builder /app/apps/api/prisma/migrations ./apps/api/prisma/migrations
 COPY --chmod=755 apps/api/docker-entrypoint.sh ./apps/api/docker-entrypoint.sh
 
 USER node
