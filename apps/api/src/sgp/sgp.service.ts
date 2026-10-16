@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, HttpException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { Prisma, SgpIntegration } from '@prisma/client';
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import * as bcrypt from 'bcrypt';
@@ -59,15 +59,21 @@ export class SgpService {
   }
   async save(actorId: string, id: string | null, body: unknown) {
     const data = this.config(body);
-    const result = id ? await this.prisma.sgpIntegration.update({ where: { id }, data, select: safeConfig }) : await this.prisma.sgpIntegration.create({ data, select: safeConfig });
+    const result = await this.locked(async tx => {
+      const managed = await tx.systemSetting.findUnique({ where: { key: 'cloud.sgpManagedId' } });
+      if (managed?.value && id !== managed.value) throw new ConflictException({ error: 'A integração SGP desta instalação é gerenciada pela Central. Edite a integração já vinculada.' });
+      return id ? tx.sgpIntegration.update({ where: { id }, data, select: safeConfig }) : tx.sgpIntegration.create({ data, select: safeConfig });
+    });
     await this.audit.log(actorId, 'sgp.configuration.save', 'SgpIntegration', result.id);
     return result;
   }
   async rotateKey(actorId: string, id: string, revoke = false) {
-    const managed = await this.prisma.systemSetting.findUnique({ where: { key: 'cloud.sgpManagedId' } });
-    if (managed?.value === id) throw new ConflictException({ error: 'Este token é gerenciado pela Central. Gere, substitua ou revogue o token no cadastro desta instalação na Central.' });
     const key = `s2sgp_${id}.${randomBytes(32).toString('base64url')}`;
-    await this.prisma.sgpIntegration.update({ where: { id }, data: { keyHash: revoke ? null : hash(key), keyPrefix: revoke ? null : key.slice(-6) } });
+    await this.locked(async tx => {
+      const managed = await tx.systemSetting.findUnique({ where: { key: 'cloud.sgpManagedId' } });
+      if (managed?.value && (!revoke || managed.value === id)) throw new ConflictException({ error: 'Os tokens SGP desta instalação são gerenciados pela Central. Gere, substitua ou revogue no cadastro desta instalação.' });
+      await tx.sgpIntegration.update({ where: { id }, data: { keyHash: revoke ? null : hash(key), keyPrefix: revoke ? null : key.slice(-6) } });
+    });
     await this.audit.log(actorId, revoke ? 'sgp.key.revoke' : 'sgp.key.rotate', 'SgpIntegration', id);
     return revoke ? { revoked: true } : { key, message: 'Copie esta chave agora. Ela não será exibida novamente.' };
   }
@@ -77,6 +83,8 @@ export class SgpService {
     const config = await this.prisma.sgpIntegration.findUnique({ where: { id: match[2] } });
     const expected = Buffer.from(config?.keyHash ?? '0'.repeat(64), 'hex');
     if (!config?.enabled || expected.length !== 32 || !timingSafeEqual(expected, Buffer.from(hash(match[1]), 'hex'))) throw new UnauthorizedException({ error: 'Chave inválida ou integração desativada.' });
+    const managed = await this.prisma.systemSetting.findUnique({ where: { key: 'cloud.sgpManagedId' } });
+    if (managed?.value && config.id !== managed.value) throw new UnauthorizedException({ error: 'Use o token SGP gerenciado pela Central para esta instalação.' });
     return config;
   }
 
@@ -103,18 +111,46 @@ export class SgpService {
       return [JSON.stringify(profile), profile];
     })).values()];
     if (profiles.length > 1) throw new ConflictException({ error: 'Os serviços ativos deste cliente têm políticas de gravação diferentes. Envie a mesma política ou arquive o serviço substituído.' });
-    const profile = profiles[0] ?? { retentionDays: 3, recordingMode: 'manual', recordingObjectClasses: [] as string[] };
+    const lastService = [...customer.services].sort((a, b) => b.sourceOrder.localeCompare(a.sourceOrder))[0];
+    const profile = profiles[0] ?? (lastService ? { retentionDays: lastService.retentionDays, recordingMode: lastService.recordingMode, recordingObjectClasses: lastService.recordingObjectClasses }
+      : { retentionDays: 3, recordingMode: 'manual', recordingObjectClasses: [] as string[] });
+    const group = await tx.cameraGroup.findUniqueOrThrow({ where: { id: customer.groupId } });
+    const cameras = await tx.camera.findMany({ where: { OR: [{ groupId: customer.groupId }, { groups: { some: { id: customer.groupId } } }] }, include: { groups: { select: { id: true } } } });
+    for (const camera of cameras) {
+      // Lock then reload: a simultaneous camera update must not lose its policy.
+      await tx.$queryRaw`SELECT "id" FROM "Camera" WHERE "id" = ${camera.id} FOR UPDATE`;
+      const current = await tx.camera.findUniqueOrThrow({ where: { id: camera.id }, include: { groups: { select: { id: true } } } });
+      const memberships = new Set([...current.groups.map(item => item.id), ...(current.groupId ? [current.groupId] : [])]);
+      if (!memberships.has(customer.groupId)) continue;
+      if (memberships.size > 1) {
+        // Freeze the effective value BEFORE changing the primary group's retention.
+        // Shared cameras keep their existing recording policy; no client's webhook
+        // is allowed to overwrite another group's capture/storage settings.
+        if (current.groupId === customer.groupId && current.retentionFollowsGroup && group.retentionDays !== profile.retentionDays) {
+          await tx.camera.update({ where: { id: current.id }, data: { retentionDays: group.retentionDays ?? current.retentionDays ?? 3, retentionFollowsGroup: false } });
+        }
+        continue;
+      }
+      const requiresAi = profile.recordingMode === 'motion' || profile.recordingMode === 'object';
+      const recordingEnabled = profile.recordingMode === 'manual' ? (current.recordingMode === 'manual' && current.recordingEnabled) : true;
+      const runtimeChanged = current.recordingMode !== profile.recordingMode
+        || current.recordingEnabled !== recordingEnabled
+        || JSON.stringify(current.recordingObjectClasses) !== JSON.stringify(profile.recordingObjectClasses)
+        || (profile.recordingMode === 'object' && JSON.stringify(current.aiObjectClasses) !== JSON.stringify(['person']))
+        || (requiresAi && (!current.aiEnabled || current.motionTrigger !== 'SYSTEM'));
+      const retentionChanged = current.retentionDays !== profile.retentionDays || !current.retentionFollowsGroup;
+      if (runtimeChanged || retentionChanged) await tx.camera.update({ where: { id: current.id }, data: {
+        retentionDays: profile.retentionDays, retentionFollowsGroup: true,
+        ...(runtimeChanged ? { recordingMode: profile.recordingMode, recordingEnabled,
+          recordingObjectClasses: profile.recordingObjectClasses,
+          ...(profile.recordingMode === 'object' ? { aiObjectClasses: ['person'] } : {}),
+          ...(requiresAi ? { aiEnabled: true, motionTrigger: 'SYSTEM' } : {}), integrationRuntimePending: true } : {}),
+      } });
+    }
     await tx.cameraGroup.update({ where: { id: customer.groupId }, data: {
       isActive: state !== 'ARCHIVED', accessStatus: state === 'ACTIVE' ? 'ACTIVE' : 'SUSPENDED',
       accessMessage: state === 'ACTIVE' ? null : 'Acesso suspenso. Entre em contato com seu provedor.',
       maxPrivateCameras, retentionDays: profile.retentionDays,
-    } });
-    await tx.camera.updateMany({ where: { OR: [{ groupId: customer.groupId }, { groups: { some: { id: customer.groupId } } }] }, data: {
-      retentionDays: profile.retentionDays, retentionFollowsGroup: true,
-      recordingMode: profile.recordingMode, recordingEnabled: profile.recordingMode !== 'manual',
-      recordingObjectClasses: profile.recordingObjectClasses,
-      ...(profile.recordingMode === 'object' ? { aiEnabled: true } : {}),
-      integrationRuntimePending: true,
     } });
     const user = await tx.user.findUniqueOrThrow({ where: { id: customer.userId } });
     const suspended = state !== 'ACTIVE';
@@ -130,10 +166,10 @@ export class SgpService {
     const knownCustomer = await this.prisma.sgpCustomer.findUnique({ where: { integrationId_externalCustomerId: { integrationId: config.id, externalCustomerId: event.customerId } }, select: { id: true } });
     const initialHash = event.action === 'cadastrar' && !knownCustomer ? await bcrypt.hash(event.username, 12) : null;
     const policy = await this.commercial.getPolicy();
-    await this.commercial.assertRetentionQuota(event.retentionDays);
     const result = await this.locked(async tx => {
       const currentConfig = await tx.sgpIntegration.findUniqueOrThrow({ where: { id: config.id } });
-      if (!currentConfig.enabled || currentConfig.keyHash !== config.keyHash) throw new UnauthorizedException({ error: 'Integração desativada ou chave substituída.' });
+      const managed = await tx.systemSetting.findUnique({ where: { key: 'cloud.sgpManagedId' } });
+      if (!currentConfig.enabled || currentConfig.keyHash !== config.keyHash || (managed?.value && managed.value !== config.id)) throw new UnauthorizedException({ error: 'Integração desativada ou chave substituída.' });
       if (currentConfig.utcOffsetMinutes !== config.utcOffsetMinutes || JSON.stringify(currentConfig.planIds) !== JSON.stringify(config.planIds) || JSON.stringify(currentConfig.statusMap) !== JSON.stringify(config.statusMap)) throw new ConflictException({ error: 'A configuração da integração mudou. Reenvie a solicitação.' });
       const duplicate = await tx.sgpOperation.findUnique({ where: { integrationId_dedupeKey: { integrationId: config.id, dedupeKey } } });
       if (duplicate) {
@@ -159,6 +195,13 @@ export class SgpService {
       const stale = current && current.sourceOrder > event.sourceOrder;
       if (current && current.sourceOrder === event.sourceOrder && current.payloadHash !== event.payloadHash) throw new ConflictException({ error: 'Eventos diferentes têm a mesma data. Reenvie o estado atual com data atualizada.' });
       if (!stale) {
+        // Validate only a new active policy: suspension, stale events and safe
+        // retries must still work after a commercial entitlement is reduced.
+        if (event.state === 'ACTIVE') {
+          if (policy.maxRetentionDays != null && event.retentionDays > policy.maxRetentionDays) throw new HttpException({ error: 'A retenção solicitada excede o limite da instalação.', code: 'commercial_retention_quota_exceeded' }, 423);
+          if ((event.recordingMode === 'motion' || event.recordingMode === 'object') && policy.restrictions.aiMotion === false) throw new HttpException({ error: 'Detecção de movimento não liberada nesta instalação.', code: 'commercial_aiMotion_restricted' }, 423);
+          if (event.recordingMode === 'object' && (policy.restrictions.aiObject === false || !policy.aiObjectClasses.includes('person'))) throw new HttpException({ error: 'Detecção de pessoas não liberada nesta instalação.', code: 'commercial_aiObject_restricted' }, 423);
+        }
         const account = await tx.user.findUniqueOrThrow({ where: { id: customer.userId } });
         if (account.username !== event.username) throw new ConflictException({ error: 'CPF diferente do vínculo existente. Revise o cadastro com o administrador.' });
         const data = { customerId: customer.id, externalContractId: event.contractId, externalPlanId: event.planId, privateCameraLimit: event.privateCameraLimit, retentionDays: event.retentionDays, recordingMode: event.recordingMode, recordingObjectClasses: event.recordingObjectClasses, state: event.state, sourceAt: event.sourceAt, sourceOrder: event.sourceOrder, payloadHash: event.payloadHash };
@@ -184,8 +227,14 @@ export class SgpService {
     if (!row) throw new NotFoundException({ error: 'Operação não encontrada nesta integração.' });
     return row;
   }
-  async archive(integrationId: string, externalId: string, restore = false) {
+  async archive(integrationId: string, externalId: string, restore = false, credential?: SgpIntegration) {
+    externalId = text(externalId, 'cliente SGP');
     return this.locked(async tx => {
+      if (credential) {
+        const current = await tx.sgpIntegration.findUnique({ where: { id: integrationId } });
+        const managed = await tx.systemSetting.findUnique({ where: { key: 'cloud.sgpManagedId' } });
+        if (!current?.enabled || current.keyHash !== credential.keyHash || (managed?.value && managed.value !== integrationId)) throw new UnauthorizedException({ error: 'Integração desativada ou chave substituída.' });
+      }
       const found = await tx.sgpCustomer.findUnique({ where: { integrationId_externalCustomerId: { integrationId, externalCustomerId: externalId } } });
       if (!found) throw new NotFoundException({ error: 'Cliente não encontrado nesta integração.' });
       if (Boolean(found.archivedAt) === !restore) {

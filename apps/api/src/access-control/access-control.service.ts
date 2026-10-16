@@ -18,6 +18,13 @@ export class AccessControlService {
     return user.role === UserRole.SUPER_ADMIN || user.role === UserRole.ADMIN;
   }
 
+  private integratedCameraScope(user: AuthUser) {
+    return { AND: [
+      { OR: [{ groupId: user.integrationGroupId! }, { groups: { some: { id: user.integrationGroupId! } } }] },
+      { OR: [{ isPrivate: false }, { isPrivate: true, ownerUserId: user.id }] },
+    ] };
+  }
+
   /**
    * IDs de câmeras cujo CONTEÚDO o usuário pode acessar (ao vivo, gravação, etc.).
    *
@@ -31,7 +38,7 @@ export class AccessControlService {
     if (user.integrationGroupId) {
       const groups = await this.filterAllowedGroupIds([user.integrationGroupId]);
       if (!groups.length) return [];
-      return (await this.prisma.camera.findMany({ where: { isPrivate: false, groups: { some: { id: user.integrationGroupId } } }, select: { id: true } })).map(camera => camera.id);
+      return (await this.prisma.camera.findMany({ where: this.integratedCameraScope(user), select: { id: true } })).map(camera => camera.id);
     }
     // Câmeras privadas onde o usuário é o dono OU tem permissão DIRETA (o dono
     // compartilhou explicitamente). Valem para todos, inclusive admin.
@@ -168,7 +175,7 @@ export class AccessControlService {
     if (user.integrationGroupId) {
       if (minLevel !== CameraPermissionLevel.VIEW) return false;
       const allowed = await this.filterAllowedGroupIds([user.integrationGroupId]);
-      return Boolean(allowed.length && await this.prisma.camera.findFirst({ where: { id: cameraId, isPrivate: false, groups: { some: { id: user.integrationGroupId } } }, select: { id: true } }));
+      return Boolean(allowed.length && await this.prisma.camera.findFirst({ where: { id: cameraId, ...this.integratedCameraScope(user) }, select: { id: true } }));
     }
     if (this.isPrivileged(user)) {
       return true;

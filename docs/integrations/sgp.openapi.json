@@ -1,1 +1,1302 @@
-{"openapi":"3.0.3","info":{"title":"S2Cam — Integração SGP","version":"1.2.0","description":"API da instalação. O SGP envia eventos do Gateway Genérico. Cada chave acessa somente sua própria integração. Cadastro cria grupo e usuário VIEWER; CPF sem pontuação é login e senha inicial, com troca obrigatória antes de acessar câmeras. Reenvios não redefinem a senha. Uma situação ACTIVE mantém o cliente ativo enquanto houver serviço ativo. Arquivamento preserva câmeras, configurações e gravações, sujeitas à retenção normal. Cada serviço pode informar limites.cameras_privadas; as cotas dos serviços não arquivados são somadas no grupo."},"servers":[{"url":"/api","description":"Domínio da instalação S2Cam"}],"security":[{"SgpKey":[]}],"paths":{"/integrations/v1/sgp/webhook":{"post":{"operationId":"receiveSgpEvent","summary":"Receber evento do Gateway Genérico","description":"O mapeamento de situações e a lista de planos são configurados em Integrações. Eventos mais antigos são ignorados. Eventos diferentes com data idêntica são rejeitados. Preserve data e Idempotency-Key ao reenviar. Para arquivar use DELETE customers/{externalId}.","parameters":[{"name":"Idempotency-Key","in":"header","required":false,"schema":{"type":"string","maxLength":150},"description":"Identificador único do evento. Reutilizar com conteúdo diferente retorna 409. Sem ele, a API deduplica os campos processados do evento."}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/Event"},"example":{"acao":"cadastrar","data":"09/10/2026 10:00:00.123456","cliente":{"id":123,"cpfcnpj":"52998224725","nome":"Cliente de exemplo"},"contrato":{"id":456},"servico":{"id":789,"status":"ATIVO","plano":{"id":10},"limites":{"cameras_privadas":2,"retencao_dias":3},"gravacao":{"modo":"objeto","classes_objeto":["person"]}}}}}},"responses":{"200":{"description":"Solicitação persistida. Consulte operation_id até COMPLETE; PENDING ainda aguarda confirmação dos serviços. IGNORED indica evento antigo.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Accepted"}}}},"400":{"description":"Dados inválidos, plano não autorizado ou situação sem mapeamento.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}},"401":{"description":"Chave inválida ou integração desativada.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}},"403":{"description":"Acesso negado.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}},"404":{"description":"Cliente/operação não encontrado nesta integração.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}},"409":{"description":"Conflito de vínculo, data ou identificador de evento.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}},"429":{"description":"Limite de solicitações. Aguarde antes de reenviar.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}},"503":{"description":"Serviço temporariamente indisponível. Reenvie a mesma solicitação.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}}}}},"/integrations/v1/sgp/customers/{externalId}":{"get":{"operationId":"getSgpCustomer","summary":"Consultar vínculo e serviços do cliente","parameters":[{"name":"externalId","in":"path","required":true,"description":"cliente.id do SGP, não é o CPF.","schema":{"type":"string","maxLength":150}}],"responses":{"200":{"description":"Vínculo exclusivo desta integração, grupo, usuário e situações dos serviços.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Customer"}}}},"400":{"description":"Dados inválidos, plano não autorizado ou situação sem mapeamento.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}},"401":{"description":"Chave inválida ou integração desativada.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}},"403":{"description":"Acesso negado.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}},"404":{"description":"Cliente/operação não encontrado nesta integração.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}},"409":{"description":"Conflito de vínculo, data ou identificador de evento.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}},"429":{"description":"Limite de solicitações. Aguarde antes de reenviar.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}},"503":{"description":"Serviço temporariamente indisponível. Reenvie a mesma solicitação.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}}}},"delete":{"operationId":"archiveSgpCustomer","summary":"Arquivar grupo e suspender o cliente","description":"Não apaga câmeras nem gravações. Bloqueia o usuário e pausa serviços de câmeras exclusivas. Câmeras compartilhadas continuam atendendo outros grupos. Novos webhooks são recusados até restauração explícita. Repetir a exclusão é seguro.","parameters":[{"name":"externalId","in":"path","required":true,"description":"cliente.id do SGP, não é o CPF.","schema":{"type":"string","maxLength":150}}],"responses":{"200":{"description":"Solicitação persistida. Consulte operation_id até COMPLETE; PENDING ainda aguarda confirmação dos serviços. IGNORED indica evento antigo.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Accepted"}}}},"400":{"description":"Dados inválidos, plano não autorizado ou situação sem mapeamento.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}},"401":{"description":"Chave inválida ou integração desativada.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}},"403":{"description":"Acesso negado.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}},"404":{"description":"Cliente/operação não encontrado nesta integração.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}},"409":{"description":"Conflito de vínculo, data ou identificador de evento.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}},"429":{"description":"Limite de solicitações. Aguarde antes de reenviar.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}},"503":{"description":"Serviço temporariamente indisponível. Reenvie a mesma solicitação.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}}}}},"/integrations/v1/sgp/customers/{externalId}/restore":{"post":{"operationId":"restoreSgpCustomer","summary":"Restaurar vínculo arquivado","description":"Retoma o estado calculado pelos últimos eventos recebidos. Se o último estado era suspenso, continua suspenso até novo evento ativo.","parameters":[{"name":"externalId","in":"path","required":true,"description":"cliente.id do SGP, não é o CPF.","schema":{"type":"string","maxLength":150}}],"responses":{"200":{"description":"Solicitação persistida. Consulte operation_id até COMPLETE; PENDING ainda aguarda confirmação dos serviços. IGNORED indica evento antigo.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Accepted"}}}},"400":{"description":"Dados inválidos, plano não autorizado ou situação sem mapeamento.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}},"401":{"description":"Chave inválida ou integração desativada.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}},"403":{"description":"Acesso negado.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}},"404":{"description":"Cliente/operação não encontrado nesta integração.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}},"409":{"description":"Conflito de vínculo, data ou identificador de evento.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}},"429":{"description":"Limite de solicitações. Aguarde antes de reenviar.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}},"503":{"description":"Serviço temporariamente indisponível. Reenvie a mesma solicitação.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}}}}},"/integrations/v1/sgp/operations/{id}":{"get":{"operationId":"getSgpOperation","summary":"Consultar confirmação da operação","parameters":[{"name":"id","in":"path","required":true,"schema":{"type":"string","format":"uuid"}}],"responses":{"200":{"description":"Situação atual. Em PENDING, os serviços ainda não confirmaram a aplicação.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Operation"}}}},"400":{"description":"Dados inválidos, plano não autorizado ou situação sem mapeamento.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}},"401":{"description":"Chave inválida ou integração desativada.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}},"403":{"description":"Acesso negado.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}},"404":{"description":"Cliente/operação não encontrado nesta integração.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}},"409":{"description":"Conflito de vínculo, data ou identificador de evento.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}},"429":{"description":"Limite de solicitações. Aguarde antes de reenviar.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}},"503":{"description":"Serviço temporariamente indisponível. Reenvie a mesma solicitação.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}}}}},"/integrations/v1/sgp/capabilities":{"get":{"security":[],"summary":"Consultar versão e ações suportadas","responses":{"200":{"description":"Capacidades públicas da instalação."}}}}},"components":{"securitySchemes":{"SgpKey":{"type":"http","scheme":"bearer","description":"Chave gerada pelo administrador em Integrações → SGP. Envie Authorization: Bearer SUA_CHAVE."}},"schemas":{"Error":{"type":"object","required":["error"],"properties":{"error":{"type":"string"}}},"Event":{"type":"object","required":["acao","data","cliente","contrato","servico"],"properties":{"acao":{"type":"string","enum":["cadastrar","atualizar","alterar_plano","alterar_status"]},"data":{"type":"string","description":"Data do evento dd/MM/yyyy HH:mm:ss.ffffff no fuso configurado, ou ISO 8601 com fuso. Até 6 casas decimais. Não use a data de entrega ao reenviar um evento antigo."},"event_id":{"type":"string","maxLength":150,"description":"Identificador opcional; Idempotency-Key tem precedência."},"cliente":{"type":"object","required":["id","cpfcnpj","nome"],"properties":{"id":{"oneOf":[{"type":"string"},{"type":"integer"}]},"cpfcnpj":{"type":"string","description":"CPF válido. Para CNPJ, é necessário definir o CPF do responsável antes da homologação."},"nome":{"type":"string","maxLength":150}}},"contrato":{"type":"object","required":["id"],"properties":{"id":{"oneOf":[{"type":"string"},{"type":"integer"}]}}},"servico":{"type":"object","required":["id","status","plano"],"properties":{"id":{"oneOf":[{"type":"string"},{"type":"integer"}]},"status":{"type":"string","description":"Situação configurada pelo administrador. Situação desconhecida retorna 400."},"plano":{"type":"object","required":["id"],"properties":{"id":{"oneOf":[{"type":"string"},{"type":"integer"}]}}},"limites":{"type":"object","description":"Opcional. Limites comerciais deste serviço.","properties":{"cameras_privadas":{"type":"integer","minimum":0,"maximum":1000,"default":0,"description":"Quantidade de câmeras privadas que este serviço autoriza no grupo do cliente."},"retencao_dias":{"type":"integer","minimum":1,"maximum":3650,"default":3,"description":"Dias de retenção deste serviço. Se omitido, usa 3."}}},"gravacao":{"type":"object","description":"Opcional. Se omitida, usa modo manual. No modo objeto somente person é aceito.","properties":{"modo":{"type":"string","enum":["continua","manual","movimento","objeto"],"default":"manual"},"classes_objeto":{"type":"array","items":{"type":"string","enum":["person"]},"minItems":1,"maxItems":1}}}}}}},"Accepted":{"type":"object","properties":{"gateway_id":{"type":"string","format":"uuid","description":"Identificador do vínculo no S2Cam."},"gateway_params_extra":{"type":"string","format":"uuid","description":"Identificador do grupo no S2Cam."},"operation_id":{"type":"string","format":"uuid","nullable":true},"status":{"type":"string","enum":["PENDING","COMPLETE","IGNORED"]},"customer_status":{"type":"string","enum":["ACTIVE","SUSPENDED","ARCHIVED"]},"repeated":{"type":"boolean"}}},"Operation":{"type":"object","properties":{"operation_id":{"type":"string","format":"uuid"},"status":{"type":"string","enum":["PENDING","COMPLETE","IGNORED"]},"attempts":{"type":"integer"},"message":{"type":"string","nullable":true},"createdAt":{"type":"string","format":"date-time"},"updatedAt":{"type":"string","format":"date-time"}}},"Customer":{"type":"object","properties":{"id":{"type":"string","format":"uuid"},"externalCustomerId":{"type":"string"},"groupId":{"type":"string","format":"uuid"},"userId":{"type":"string","format":"uuid"},"state":{"type":"string","enum":["ACTIVE","SUSPENDED","ARCHIVED"]},"group":{"type":"object","properties":{"name":{"type":"string"},"maxPrivateCameras":{"type":"integer","minimum":0}}},"user":{"type":"object","properties":{"username":{"type":"string"},"mustChangePassword":{"type":"boolean"}}},"services":{"type":"array","items":{"type":"object","properties":{"externalServiceId":{"type":"string"},"externalContractId":{"type":"string"},"externalPlanId":{"type":"string"},"privateCameraLimit":{"type":"integer","minimum":0},"state":{"type":"string"},"sourceAt":{"type":"string","format":"date-time"}}}}}}}}}
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "S2Cam — Integração SGP",
+    "version": "1.3.0",
+    "description": "Contrato único para todos os provedores. Envie eventos à instalação com seu token exclusivo gerenciado pela Central. CPF é login e senha inicial; troca obrigatória no primeiro acesso. CNPJ numérico exige cliente.responsavel.cpf. Reenvios preservam senha. Retenção ausente: 3 dias; gravação ausente: manual. Políticas do serviço alteram somente câmeras exclusivas. Compartilhadas preservam suas configurações. Arquivamento preserva dados sujeitos à retenção normal."
+  },
+  "externalDocs": {
+    "description": "Documentação oficial do conector S2Cam",
+    "url": "https://s2cam.com.br/developers/sgp"
+  },
+  "servers": [
+    {
+      "url": "https://{installationDomain}/api",
+      "description": "A instalação recebe os eventos; s2cam.com.br hospeda a documentação.",
+      "variables": {
+        "installationDomain": {
+          "default": "vibe.s2cam.com.br",
+          "description": "Hostname da instalação, sem protocolo ou barras. Exemplo: ibtelecom.s2cam.com.br."
+        }
+      }
+    }
+  ],
+  "security": [
+    {
+      "SgpKey": []
+    }
+  ],
+  "paths": {
+    "/integrations/v1/sgp/webhook": {
+      "post": {
+        "operationId": "receiveSgpEvent",
+        "summary": "Cadastrar ou atualizar cliente e serviço",
+        "description": "Envie estado completo em todas as ações. Eventos antigos são ignorados; dados diferentes com data idêntica retornam 409. Preserve corpo, data e Idempotency-Key ao reenviar. Mapeie situações e planos antes da homologação. Cotas de serviços não arquivados são somadas; suas políticas de retenção/gravação precisam ser iguais.",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 150
+            },
+            "description": "Recomendado. ID único por evento e integração; conteúdo diferente com mesma chave retorna 409. Sem chave, deduplicação pelo conteúdo normalizado."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Event"
+              },
+              "example": {
+                "acao": "cadastrar",
+                "data": "2026-10-15T10:00:00.123456-03:00",
+                "cliente": {
+                  "id": "123",
+                  "cpfcnpj": "52998224725",
+                  "nome": "Cliente de exemplo"
+                },
+                "contrato": {
+                  "id": "456"
+                },
+                "servico": {
+                  "id": "789",
+                  "status": "ATIVO",
+                  "plano": {
+                    "id": "10"
+                  },
+                  "limites": {
+                    "cameras_privadas": 2,
+                    "retencao_dias": 3
+                  },
+                  "gravacao": {
+                    "modo": "objeto",
+                    "classes_objeto": [
+                      "person"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Solicitação persistida. Consulte operation_id até COMPLETE ou IGNORED. PENDING aguarda aplicação. COMPLETE confirma configuração aplicada; não garante sinal de uma câmera offline.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Accepted"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Dados inválidos, plano não autorizado ou situação sem mapeamento.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Token inválido, substituído ou integração desativada.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Acesso negado.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Cliente/operação não encontrado nesta integração.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflito de vínculo, política, data ou identificador de evento.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Corpo da solicitação excede o limite aceito pelo servidor.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "423": {
+            "description": "Retenção ou detecção requerida não liberada na licença. Corrija o plano ou a licença antes de reenviar.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Limite de solicitações. Aguarde; respeite Retry-After quando presente.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Serviço temporariamente indisponível. Reenvie a mesma solicitação.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/integrations/v1/sgp/customers/{externalId}": {
+      "get": {
+        "operationId": "getSgpCustomer",
+        "summary": "Consultar vínculo e políticas do cliente",
+        "parameters": [
+          {
+            "name": "externalId",
+            "in": "path",
+            "required": true,
+            "description": "cliente.id do SGP; não é o CPF.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 150
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cliente exclusivo da integração autenticada; não retorna senha nem hash de senha.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Customer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Dados inválidos, plano não autorizado ou situação sem mapeamento.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Token inválido, substituído ou integração desativada.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Acesso negado.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Cliente/operação não encontrado nesta integração.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflito de vínculo, política, data ou identificador de evento.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Corpo da solicitação excede o limite aceito pelo servidor.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "423": {
+            "description": "Retenção ou detecção requerida não liberada na licença. Corrija o plano ou a licença antes de reenviar.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Limite de solicitações. Aguarde; respeite Retry-After quando presente.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Serviço temporariamente indisponível. Reenvie a mesma solicitação.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "archiveSgpCustomer",
+        "summary": "Arquivar vínculo",
+        "description": "Bloqueia acesso e pausa câmeras exclusivas. Preserva câmeras e gravações sujeitas à retenção. Compartilhadas continuam atendendo grupos ativos. Novos webhooks são recusados até restauração. Repetição é segura.",
+        "parameters": [
+          {
+            "name": "externalId",
+            "in": "path",
+            "required": true,
+            "description": "cliente.id do SGP; não é o CPF.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 150
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Solicitação persistida. Consulte operation_id até COMPLETE ou IGNORED. PENDING aguarda aplicação. COMPLETE confirma configuração aplicada; não garante sinal de uma câmera offline.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Accepted"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Dados inválidos, plano não autorizado ou situação sem mapeamento.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Token inválido, substituído ou integração desativada.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Acesso negado.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Cliente/operação não encontrado nesta integração.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflito de vínculo, política, data ou identificador de evento.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Corpo da solicitação excede o limite aceito pelo servidor.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "423": {
+            "description": "Retenção ou detecção requerida não liberada na licença. Corrija o plano ou a licença antes de reenviar.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Limite de solicitações. Aguarde; respeite Retry-After quando presente.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Serviço temporariamente indisponível. Reenvie a mesma solicitação.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/integrations/v1/sgp/customers/{externalId}/restore": {
+      "post": {
+        "operationId": "restoreSgpCustomer",
+        "summary": "Restaurar vínculo",
+        "description": "Usa últimos estados dos serviços. Serviço suspenso requer novo evento ativo. Não redefine senha.",
+        "parameters": [
+          {
+            "name": "externalId",
+            "in": "path",
+            "required": true,
+            "description": "cliente.id do SGP; não é o CPF.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 150
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Solicitação persistida. Consulte operation_id até COMPLETE ou IGNORED. PENDING aguarda aplicação. COMPLETE confirma configuração aplicada; não garante sinal de uma câmera offline.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Accepted"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Dados inválidos, plano não autorizado ou situação sem mapeamento.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Token inválido, substituído ou integração desativada.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Acesso negado.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Cliente/operação não encontrado nesta integração.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflito de vínculo, política, data ou identificador de evento.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Corpo da solicitação excede o limite aceito pelo servidor.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "423": {
+            "description": "Retenção ou detecção requerida não liberada na licença. Corrija o plano ou a licença antes de reenviar.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Limite de solicitações. Aguarde; respeite Retry-After quando presente.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Serviço temporariamente indisponível. Reenvie a mesma solicitação.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/integrations/v1/sgp/operations/{id}": {
+      "get": {
+        "operationId": "getSgpOperation",
+        "summary": "Consultar aplicação da operação",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Consulte em intervalos de ao menos 2 segundos, aumentando a espera em PENDING. message explica pendência sem credenciais.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Operation"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Dados inválidos, plano não autorizado ou situação sem mapeamento.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Token inválido, substituído ou integração desativada.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Acesso negado.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Cliente/operação não encontrado nesta integração.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflito de vínculo, política, data ou identificador de evento.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Corpo da solicitação excede o limite aceito pelo servidor.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "423": {
+            "description": "Retenção ou detecção requerida não liberada na licença. Corrija o plano ou a licença antes de reenviar.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Limite de solicitações. Aguarde; respeite Retry-After quando presente.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Serviço temporariamente indisponível. Reenvie a mesma solicitação.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/integrations/v1/sgp/capabilities": {
+      "get": {
+        "security": [],
+        "operationId": "getSgpCapabilities",
+        "summary": "Consultar capacidades do contrato",
+        "description": "Recursos suportados pelo contrato; não indica autorização comercial da instalação.",
+        "responses": {
+          "200": {
+            "description": "Versão e recursos públicos.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Capabilities"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Dados inválidos, plano não autorizado ou situação sem mapeamento.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Token inválido, substituído ou integração desativada.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Acesso negado.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Cliente/operação não encontrado nesta integração.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflito de vínculo, política, data ou identificador de evento.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Corpo da solicitação excede o limite aceito pelo servidor.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "423": {
+            "description": "Retenção ou detecção requerida não liberada na licença. Corrija o plano ou a licença antes de reenviar.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Limite de solicitações. Aguarde; respeite Retry-After quando presente.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Serviço temporariamente indisponível. Reenvie a mesma solicitação.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/integrations/v1/sgp/openapi.json": {
+      "get": {
+        "security": [],
+        "operationId": "getSgpOpenApi",
+        "summary": "Obter este contrato",
+        "responses": {
+          "200": {
+            "description": "Especificação OpenAPI 3.0.3.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "SgpKey": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Central → Clientes e servidores → instalação → Integrações → gerar token SGP. Aguarde aplicação. Envie Authorization: Bearer SUA_CHAVE. Nunca envie o token na URL."
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string",
+            "description": "Código estável quando disponível."
+          }
+        }
+      },
+      "Event": {
+        "type": "object",
+        "required": [
+          "acao",
+          "data",
+          "cliente",
+          "contrato",
+          "servico"
+        ],
+        "properties": {
+          "acao": {
+            "type": "string",
+            "enum": [
+              "cadastrar",
+              "atualizar",
+              "alterar_plano",
+              "alterar_status"
+            ]
+          },
+          "data": {
+            "type": "string",
+            "maxLength": 50,
+            "description": "dd/MM/yyyy HH:mm:ss.ffffff no fuso configurado (padrão UTC−3), ou ISO 8601 com fuso; até 6 casas decimais. Preserve data original nos reenvios. Mais de 5 minutos no futuro é rejeitado."
+          },
+          "event_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 150,
+            "description": "Opcional. Idempotency-Key tem precedência."
+          },
+          "cliente": {
+            "type": "object",
+            "required": [
+              "id",
+              "cpfcnpj",
+              "nome"
+            ],
+            "properties": {
+              "id": {
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 150
+                  },
+                  {
+                    "type": "integer"
+                  }
+                ]
+              },
+              "nome": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 150
+              },
+              "cpfcnpj": {
+                "type": "string",
+                "maxLength": 18,
+                "description": "CPF válido ou CNPJ numérico válido, com ou sem pontuação. CNPJ exige responsavel.cpf. Login e senha inicial serão o CPF do responsável."
+              },
+              "responsavel": {
+                "type": "object",
+                "required": [
+                  "cpf"
+                ],
+                "properties": {
+                  "cpf": {
+                    "type": "string",
+                    "maxLength": 18,
+                    "description": "CPF válido obrigatório para CNPJ. Alteração do responsável exige revisão administrativa do vínculo."
+                  }
+                }
+              }
+            }
+          },
+          "contrato": {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 150
+                  },
+                  {
+                    "type": "integer"
+                  }
+                ]
+              }
+            }
+          },
+          "servico": {
+            "type": "object",
+            "required": [
+              "id",
+              "status",
+              "plano"
+            ],
+            "properties": {
+              "id": {
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 150
+                  },
+                  {
+                    "type": "integer"
+                  }
+                ]
+              },
+              "status": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80,
+                "description": "Situação mapeada no S2Cam; desconhecida retorna 400."
+              },
+              "plano": {
+                "type": "object",
+                "required": [
+                  "id"
+                ],
+                "properties": {
+                  "id": {
+                    "oneOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 150
+                      },
+                      {
+                        "type": "integer"
+                      }
+                    ]
+                  }
+                }
+              },
+              "limites": {
+                "type": "object",
+                "properties": {
+                  "cameras_privadas": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 1000,
+                    "default": 0
+                  },
+                  "retencao_dias": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 3650,
+                    "default": 3,
+                    "description": "Sujeito ao contrato da instalação. Redução pode remover vídeos antigos pela limpeza normal."
+                  }
+                }
+              },
+              "gravacao": {
+                "type": "object",
+                "description": "Ausente: manual. Não altera política das câmeras compartilhadas.",
+                "properties": {
+                  "modo": {
+                    "type": "string",
+                    "enum": [
+                      "continua",
+                      "manual",
+                      "movimento",
+                      "objeto"
+                    ],
+                    "default": "manual"
+                  },
+                  "classes_objeto": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 1,
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "person"
+                      ]
+                    },
+                    "description": "Aceito somente no modo objeto. Ausente nesse modo usa person."
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "Accepted": {
+        "type": "object",
+        "required": [
+          "operation_id",
+          "status",
+          "customer_status"
+        ],
+        "properties": {
+          "gateway_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "ID do vínculo. Presente no webhook."
+          },
+          "gateway_params_extra": {
+            "type": "string",
+            "format": "uuid",
+            "description": "ID do grupo. Presente no webhook."
+          },
+          "operation_id": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "PENDING",
+              "COMPLETE",
+              "IGNORED"
+            ]
+          },
+          "customer_status": {
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "SUSPENDED",
+              "ARCHIVED"
+            ]
+          },
+          "repeated": {
+            "type": "boolean"
+          }
+        }
+      },
+      "Operation": {
+        "type": "object",
+        "required": [
+          "operation_id",
+          "status",
+          "attempts"
+        ],
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "PENDING",
+              "COMPLETE",
+              "IGNORED"
+            ]
+          },
+          "attempts": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "message": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "Customer": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "externalCustomerId": {
+            "type": "string"
+          },
+          "groupId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "userId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "SUSPENDED",
+              "ARCHIVED"
+            ]
+          },
+          "archivedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "group": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "maxPrivateCameras": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "retentionDays": {
+                "type": "integer",
+                "nullable": true
+              },
+              "_count": {
+                "type": "object",
+                "properties": {
+                  "cameras": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          },
+          "user": {
+            "type": "object",
+            "properties": {
+              "username": {
+                "type": "string",
+                "description": "CPF sem pontuação. Não retorna senha."
+              },
+              "mustChangePassword": {
+                "type": "boolean"
+              }
+            }
+          },
+          "services": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "externalServiceId": {
+                  "type": "string"
+                },
+                "externalContractId": {
+                  "type": "string"
+                },
+                "externalPlanId": {
+                  "type": "string"
+                },
+                "privateCameraLimit": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "retentionDays": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "recordingMode": {
+                  "type": "string",
+                  "enum": [
+                    "continuous",
+                    "manual",
+                    "motion",
+                    "object"
+                  ],
+                  "description": "Consulta retorna nomes internos em inglês; envie os nomes portugueses documentados."
+                },
+                "recordingObjectClasses": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "person"
+                    ]
+                  }
+                },
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "ACTIVE",
+                    "SUSPENDED",
+                    "ARCHIVED"
+                  ]
+                },
+                "sourceAt": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              }
+            }
+          }
+        }
+      },
+      "Capabilities": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "string",
+            "example": "1.3.0"
+          },
+          "actions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "limits": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "recording": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "objectRecordingClasses": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "person"
+              ]
+            }
+          },
+          "initialPasswordChangeRequired": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "customerDocuments": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "CPF",
+                "CNPJ_NUMERIC"
+              ]
+            }
+          },
+          "sharedCameraPolicy": {
+            "type": "string",
+            "enum": [
+              "preserve_camera_settings"
+            ]
+          },
+          "tokenManagement": {
+            "type": "string",
+            "enum": [
+              "central_when_managed"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

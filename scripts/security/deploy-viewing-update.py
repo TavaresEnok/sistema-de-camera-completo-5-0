@@ -68,6 +68,55 @@ def validate_web_only_update(body, api_before, migration_approved):
         raise ValueError('Web-only updates must keep the API image and database schema unchanged')
 
 
+SGP_POLICY_MIGRATIONS = {
+    '20261015160000_camera_notice_sound': ('10c863f7a3aa8a73211642364e1696833497ae4e2ed9077784faa15a7f276ebc', [('Camera', 'noticeSoundEnabled')]),
+    '20261015170000_sgp_service_private_camera_limit': ('056d4d4ccd23bb1459159152203dde1a31535515982006d1521626be2b8adc35', [('SgpService', 'externalPlanId'), ('SgpService', 'privateCameraLimit')]),
+    '20261015180000_sgp_service_recording_policy': ('63a6fec552793427484b651320171ed51928fa72309948fe14b6520670898f1e', [('SgpService', 'retentionDays'), ('SgpService', 'recordingMode'), ('SgpService', 'recordingObjectClasses')]),
+}
+
+
+def image_schema(image):
+    script = '''const fs=require('fs'),path=require('path'),crypto=require('crypto');
+const root='/app/apps/api/prisma'; const files=['schema.prisma'];
+function walk(dir){for(const name of fs.readdirSync(path.join(root,dir))){const rel=dir+'/'+name;
+if(fs.statSync(path.join(root,rel)).isDirectory())walk(rel);else if(rel.endsWith('.sql'))files.push(rel);}}
+walk('migrations');const h=crypto.createHash('sha256'),migrations={};
+for(const rel of files.sort()){const bytes=fs.readFileSync(path.join(root,rel));h.update(rel);h.update(bytes);
+if(rel.endsWith('/migration.sql'))migrations[rel.split('/')[1]]=crypto.createHash('sha256').update(bytes).digest('hex');}
+console.log(JSON.stringify({hash:h.digest('hex'),schema:fs.readFileSync(path.join(root,'schema.prisma'),'utf8'),migrations}));'''
+    return json.loads(command(['docker', 'run', '--rm', '--network', 'none', '--entrypoint', 'node', image, '-e', script]).stdout)
+
+
+def validate_sgp_policy_transition(previous, target, expected_hash):
+    if target['hash'] != expected_hash:
+        raise ValueError('Target image schema differs from signed manifest')
+    for name, digest in previous['migrations'].items():
+        if target['migrations'].get(name) != digest:
+            raise ValueError('Existing migration changed or removed')
+    added = sorted(set(target['migrations']) - set(previous['migrations']))
+    ignored = set()
+    for name in added:
+        if name not in SGP_POLICY_MIGRATIONS or target['migrations'][name] != SGP_POLICY_MIGRATIONS[name][0]:
+            raise ValueError('Only the reviewed additive SGP policy migrations are allowed')
+        ignored.update(SGP_POLICY_MIGRATIONS[name][1])
+    def normalized(schema, ignored_fields):
+        result, model = [], None
+        for raw in schema.splitlines():
+            line = raw.split('//', 1)[0].strip()
+            if not line:
+                continue
+            if line.startswith('model '):
+                model = line.split()[1]
+            if (model, line.split()[0]) not in ignored_fields:
+                result.append(re.sub(r'\s+', ' ', line))
+            if line == '}':
+                model = None
+        return result
+    if normalized(previous['schema'], set()) != normalized(target['schema'], ignored):
+        raise ValueError('Unexpected Prisma datamodel change outside reviewed additive fields')
+    return added
+
+
 def restore_legacy_shutdown(snapshot):
     # Only the OLD API desarms on shutdown. Restore eligible choices BEFORE
     # starting the fixed API. Never override an operator action or expired timer.
@@ -102,6 +151,7 @@ def main():
     parser.add_argument('--approve-object-notice-schema', action='store_true')
     parser.add_argument('--approve-sgp-schema', action='store_true')
     parser.add_argument('--web-only', action='store_true', help='Keep the running API and media services untouched')
+    parser.add_argument('--approve-sgp-policy-schema', action='store_true', help='Approve only the three hash-pinned additive SGP policy migrations; reconcile stale metadata against the actual installed image')
     args = parser.parse_args()
     root = args.root.resolve()
     signed = json.loads(args.manifest.read_text())
@@ -124,10 +174,18 @@ def main():
     installed_viewing = root / 'infra/viewing-release.json'
     if installed_viewing.exists():
         state = verify_signature(json.loads(installed_viewing.read_text()), root / 'infra/release-public.pem')
-    migration_approved = allow_schema_transition(state.get('databaseSchemaHash'), body, args.approve_detector_percentage_schema, args.approve_object_notice_schema, args.approve_sgp_schema)
     media_before, api_before = media_state(), inspect('vms-api')
+    command(['docker', 'load', '-i', str(args.archive)])
+    reviewed_policy = []
+    if args.approve_sgp_policy_schema:
+        if args.approve_detector_percentage_schema or args.approve_object_notice_schema or args.approve_sgp_schema:
+            raise ValueError('Choose only one schema approval mechanism')
+        reviewed_policy = validate_sgp_policy_transition(image_schema(api_before['Image']), image_schema(body['images']['api']['imageId']), body.get('databaseSchemaHash'))
+        migration_approved = False
+    else:
+        migration_approved = allow_schema_transition(state.get('databaseSchemaHash'), body, args.approve_detector_percentage_schema, args.approve_object_notice_schema, args.approve_sgp_schema)
     if args.web_only:
-        validate_web_only_update(body, api_before, migration_approved)
+        validate_web_only_update(body, api_before, migration_approved or bool(reviewed_policy))
     files = []
     for name in ['vms-api', 'vms-web']:
         for value in inspect(name)['Config']['Labels']['com.docker.compose.project.config_files'].split(','):
@@ -154,7 +212,6 @@ def main():
                        stdout=output, check=True)
     with (backup / 'database.dump').open('rb') as source:
         command(['docker', 'exec', '-i', 'vms-postgres', 'pg_restore', '--list'], stdin=source)
-    command(['docker', 'load', '-i', str(args.archive)])
     for service, expected in body['images'].items():
         # Saving by immutable ID intentionally does not carry a mutable tag.
         if inspect(expected['imageId'])['Id'] != expected['imageId']:
@@ -226,6 +283,7 @@ def main():
     result = {'commit': body['commit'], 'signed': True, 'ready': True, 'mediaServicesUnchanged': True,
               'webOnly': args.web_only, 'apiContainerUnchanged': args.web_only,
               'legacyRecordingChoicesRestored': restored, 'cssFilesVerified': len(styles), 'reviewedAdditiveMigration': migration_approved}
+    result['reviewedSgpPolicyMigrations'] = reviewed_policy
     (backup / 'result.json').write_text(json.dumps(result))
     (root / 'infra/viewing-release.json').write_text(json.dumps(signed))
     os.chmod(root / 'infra/viewing-release.json', 0o600)

@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ModuleRef } from '@nestjs/core';
 import { randomUUID } from 'node:crypto';
@@ -69,9 +69,13 @@ export class SgpRuntimeService implements OnModuleInit, OnModuleDestroy {
       await this.get(MediamtxProxyService).teardownPathsForCamera(id, true);
       if (isPushSourced(camera)) await this.get(RtmpIngestSourceService).pausePublishers(camera);
     } else if (camera.integrationRuntimePending) {
+      const ai: any = await this.get(AiManagerService).startCamera(id);
+      const requiresAi = camera.recordingEnabled && (camera.recordingMode === 'object' || (camera.recordingMode === 'motion' && camera.motionTrigger !== 'CAMERA'));
+      if (requiresAi && (!ai || !['started', 'already_running', 'running', 'success'].includes(ai.status))) {
+        throw new ServiceUnavailableException('A detecção necessária para a gravação ainda não iniciou. Verifique a câmera e a liberação da IA.');
+      }
       await this.get(RecordingProcessManagerService).pauseForIntegration(id);
       await this.get(RecordingProcessManagerService).resumeForIntegration(id);
-      await this.get(AiManagerService).startCamera(id);
     }
     if (camera.integrationRuntimePending) {
       // A simultaneous setting/membership change cannot lose its pending reconciliation.

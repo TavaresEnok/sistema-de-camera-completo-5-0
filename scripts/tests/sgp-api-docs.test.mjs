@@ -21,8 +21,20 @@ test('one connector uses a configurable installation hostname and central docume
   assert.ok(contract.servers[0].variables.installationDomain);
   assert.equal(contract.externalDocs.url, 'https://s2cam.com.br/developers/sgp');
   assert.match(html, /uma única vez/);
-  assert.match(html, /não é um gateway central de eventos/);
-  assert.match(html, /https:\/\/ibtelecom.s2cam.com.br\/api\/integrations\/v1\/sgp/);
+  assert.match(html, /chamadas são enviadas ao domínio de cada instalação/);
+  assert.match(html, /ibtelecom.s2cam.com.br/);
+  assert.match(html, /responsavel/);
+  assert.match(html, /423/);
+});
+
+test('contract documents shared cameras, effective response policy and actual public endpoints', () => {
+  assert.equal(contract.info.version, '1.3.0');
+  assert.ok(contract.paths['/integrations/v1/sgp/openapi.json'].get);
+  assert.ok(contract.paths['/integrations/v1/sgp/webhook'].post.responses['423']);
+  const fields = contract.components.schemas.Customer.properties.services.items.properties;
+  for (const field of ['retentionDays', 'recordingMode', 'recordingObjectClasses']) assert.ok(fields[field]);
+  assert.ok(contract.components.schemas.Event.properties.cliente.properties.responsavel);
+  assert.match(html, /v1\.3\.0/);
 });
 test('public documentation has canonical URL, mobile viewport and no real integration key', () => {
   assert.match(html, /rel="canonical" href="https:\/\/s2cam.com.br\/developers\/sgp"/);

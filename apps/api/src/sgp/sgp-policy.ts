@@ -22,6 +22,18 @@ export function cpf(value: unknown): string {
   }
   return result;
 }
+/** Numeric CNPJ is accepted only with an explicit, valid responsible-person CPF. */
+export function customerIdentity(client: Record<string, any>): { username: string; companyDocument?: string } {
+  const document = text(client.cpfcnpj, 'cliente.cpfcnpj', 18).replace(/[.\/\-\s]/g, '');
+  if (document.length !== 14) return { username: cpf(document) };
+  if (!/^\d{14}$/.test(document) || /^(\d)\1{13}$/.test(document)) throw new BadRequestException({ error: 'CNPJ numérico inválido.' });
+  for (let size = 12; size <= 13; size++) {
+    const weights = size === 12 ? [5,4,3,2,9,8,7,6,5,4,3,2] : [6,5,4,3,2,9,8,7,6,5,4,3,2];
+    const remainder = weights.reduce((sum, weight, i) => sum + Number(document[i]) * weight, 0) % 11;
+    if (Number(document[size]) !== (remainder < 2 ? 0 : 11 - remainder)) throw new BadRequestException({ error: 'CNPJ numérico inválido.' });
+  }
+  return { username: cpf(object(client.responsavel).cpf), companyDocument: document };
+}
 export function sourceTime(value: unknown, offset: number): Date {
   const input = text(value, 'data', 50);
   let date: Date;
@@ -75,7 +87,7 @@ function recordingPolicy(value: unknown) {
     movimento: 'motion', motion: 'motion',
     objeto: 'object', object: 'object',
   };
-  const recordingMode = modes[received];
+  const recordingMode = Object.hasOwn(modes, received) ? modes[received] : undefined;
   if (!recordingMode) throw new BadRequestException({ error: 'Campo servico.gravacao.modo inválido.' });
   if (recordingMode !== 'object') {
     if (input.classes_objeto != null) throw new BadRequestException({ error: 'servico.gravacao.classes_objeto só é aceito no modo objeto.' });
@@ -107,14 +119,20 @@ export function parseEvent(body: unknown, config: { statusMap: unknown; utcOffse
   if (config.planIds.length && !config.planIds.includes(planId)) throw new BadRequestException({ error: 'Este plano não está autorizado nesta integração.' });
   const state = statusMap(config.statusMap)[text(service.status, 'servico.status', 80).toUpperCase()];
   if (!state) throw new BadRequestException({ error: 'Situação do SGP não mapeada. Configure-a na página Integrações.' });
+  const identity = customerIdentity(client);
   const event = {
     action, customerId: text(client.id, 'cliente.id'), serviceId: text(service.id, 'servico.id'),
     contractId: text(contract.id, 'contrato.id'), name: text(client.nome, 'cliente.nome'),
-    username: cpf(client.cpfcnpj), state, planId, privateCameraLimit, retentionDays: retention,
+    username: identity.username, state, planId, privateCameraLimit, retentionDays: retention,
     recordingMode: recording.recordingMode, recordingObjectClasses: recording.recordingObjectClasses, sourceAt: sourceTime(input.data, config.utcOffsetMinutes),
   };
   // PostgreSQL timestamps use milliseconds here; retain the SGP microseconds for ordering.
   const fraction = /\.(\d{1,6})/.exec(String(input.data))?.[1] ?? '';
   const sourceOrder = String(event.sourceAt.getTime()).padStart(16, '0') + fraction.padEnd(6, '0').slice(3, 6);
-  return { ...event, sourceOrder, payloadHash: hash(JSON.stringify({ ...event, sourceOrder })), eventId: input.event_id == null ? null : text(input.event_id, 'event_id') };
+  // Unknown fields, including passwords sent by the SGP, are never retained.
+  // Existing CPF events keep their normalized hash for safe retries after upgrade.
+  const payloadHash = hash(JSON.stringify({ ...event, sourceOrder,
+    ...(identity.companyDocument ? { companyDocument: identity.companyDocument } : {}),
+  }));
+  return { ...event, sourceOrder, payloadHash, eventId: input.event_id == null ? null : text(input.event_id, 'event_id') };
 }

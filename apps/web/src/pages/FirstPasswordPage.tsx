@@ -30,7 +30,7 @@ export default function FirstPasswordPage() {
   }
   return <main className="min-h-[100dvh] flex items-center justify-center bg-background p-5 text-foreground">
     <section className="w-full max-w-md rounded-2xl border border-border bg-card p-6 shadow-lg">
-      <h1 className="text-xl font-semibold">Escolha sua nova senha</h1>
+      <h1 className="text-xl font-semibold">Digite uma nova senha segura</h1>
       <p className="mt-3 text-sm text-muted-foreground">Seu primeiro acesso usa o CPF como senha. Crie uma senha só sua para continuar e acessar suas câmeras.</p>
       <form onSubmit={submit} className="mt-5 grid gap-4">
         <label className="grid gap-2 text-sm">Senha atual<input type="password" autoComplete="current-password" required value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} className="min-h-11 rounded-lg border border-border bg-background px-3" /></label>
