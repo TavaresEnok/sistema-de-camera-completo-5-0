@@ -3,7 +3,7 @@ import { createServer } from 'vite';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
-const server = await createServer({ server: { middlewareMode: true } });
+const server = await createServer({ optimizeDeps: { noDiscovery: true }, server: { middlewareMode: true } });
 try {
   const { CameraDetectionNotices } = await server.ssrLoadModule('/src/components/CameraDetectionNotices.tsx');
   const render = value => renderToStaticMarkup(React.createElement(CameraDetectionNotices, {
@@ -20,5 +20,12 @@ try {
   for (const label of ['Pessoa', 'Carro', 'Moto', 'Bicicleta']) assert.ok(vehicles.includes(`>${label}</button>`));
   assert.ok(!vehicles.includes('>Caminhão</button>'));
   assert.ok(vehicles.includes('Funciona mesmo sem gravação'));
+  const preferences = render({object:true,sound:true,allowed:['person'],duration:20,soundType:'siren'});
+  assert.ok(preferences.includes('Tempo do aviso na tela'));
+  assert.ok(preferences.includes('value="20" selected=""'));
+  assert.ok(preferences.includes('value="siren" selected=""'));
+  assert.ok(preferences.includes('Ouvir som'));
+  assert.ok(preferences.includes('Atenção (atual)') && preferences.includes('Alarme de invasão'));
+  assert.ok(person.includes('value="10" selected=""'));
   console.log(JSON.stringify({ realReactRender: true, defaultOff: true, motionOnlyPlan: true, personOnlyPlan: true, vehiclePlan: true, licensedClassesOnly: true }));
 } finally { await server.close(); }

@@ -10,7 +10,7 @@ import * as http from 'http';
 import { stat, statfs } from 'node:fs/promises';
 import { join } from 'node:path';
 import { aiEnabledEfetivo } from './helpers/motion-detector.helper';
-import { noticeClasses, noticeObjectClass } from './helpers/detection-notice.helper';
+import { noticeClasses, noticeObjectClass, noticeWithinPerimeter } from './helpers/detection-notice.helper';
 import { CommercialPolicyService } from '../commercial-policy/commercial-policy.service';
 import { applyCameraPrivacy, cameraPrivacyRevision, hasPrivacyFields, privateCreation, privacyGrants, type PrivateCreation } from './helpers/camera-privacy.helper';
 import { escolherGrupoDoCliente, type VinculoDeGrupo } from './helpers/grupo-do-cliente.helper';
@@ -405,6 +405,8 @@ export class CamerasService implements OnApplicationBootstrap {
         objectNoticeEnabled: dto.objectNoticeEnabled ?? false,
         objectNoticeClasses: dto.objectNoticeClasses ?? [],
         noticeSoundEnabled: dto.noticeSoundEnabled ?? false,
+        noticeSound: dto.noticeSound ?? 'attention',
+        noticeDurationSeconds: dto.noticeDurationSeconds ?? 10,
         showDetectorPercentage: dto.showDetectorPercentage ?? false,
         aiObjectClasses: dto.aiObjectClasses ?? [],
         aiSensitivity: dto.aiSensitivity ?? 'balanced',
@@ -856,6 +858,8 @@ export class CamerasService implements OnApplicationBootstrap {
         objectNoticeEnabled: dto.objectNoticeEnabled,
         objectNoticeClasses: dto.objectNoticeClasses,
         noticeSoundEnabled: dto.noticeSoundEnabled,
+        noticeSound: dto.noticeSound,
+        noticeDurationSeconds: dto.noticeDurationSeconds,
         showDetectorPercentage: dto.showDetectorPercentage,
         motionTrigger: migrarGatilhoParaZonas ? 'SYSTEM' : (dto.motionTrigger ?? existing.motionTrigger),
         // A migração de gatilho (comentário acima) também ARMA a análise: sem
@@ -1078,42 +1082,34 @@ export class CamerasService implements OnApplicationBootstrap {
     const allowed = objectAllowed ? licensed.aiObjectClasses : [];
     const conditions: Prisma.CameraEventWhereInput[] = [];
     if (motionAllowed) conditions.push({ type: 'MOTION_DETECTED', camera: { motionNoticeEnabled: true } });
-    if (allowed.length) conditions.push({ type: 'OBJECT_DETECTED', camera: { objectNoticeEnabled: true } });
+    if (allowed.length) conditions.push({ type: { in: ['OBJECT_DETECTED', 'LINE_CROSSED'] }, camera: { objectNoticeEnabled: true } });
     if (!conditions.length) return { items: [], cursor: now.toISOString() };
     const events = await this.prisma.cameraEvent.findMany({
       where: { cameraId: { in: accessibleCameraIds }, camera: { enabled: true }, OR: conditions,
         createdAt: { gte: new Date(Math.max(parsed - 1000, now.getTime() - 30_000)), lte: now },
         occurredAt: { gte: new Date(now.getTime() - 30_000), lte: now } },
       select: { id: true, cameraId: true, type: true, metadata: true, occurredAt: true,
-        camera: { select: { name: true, objectNoticeClasses: true } } },
+        camera: { select: { name: true, objectNoticeClasses: true, detectionZones: true, noticeSoundEnabled: true, noticeSound: true, noticeDurationSeconds: true } } },
       orderBy: { createdAt: 'desc' }, take: 200,
     });
     const items = events.flatMap(e => {
-      const objectClass = e.type === 'OBJECT_DETECTED' ? noticeObjectClass(e.metadata) : null;
-      if (e.type === 'OBJECT_DETECTED' && (!objectClass || !noticeClasses(allowed, e.camera.objectNoticeClasses).includes(objectClass))) return [];
+      const isObject = e.type === 'OBJECT_DETECTED' || e.type === 'LINE_CROSSED';
+      const objectClass = isObject ? noticeObjectClass(e.metadata) : null;
+      if (isObject && (!objectClass || !noticeClasses(allowed, e.camera.objectNoticeClasses).includes(objectClass))) return [];
+      if (!noticeWithinPerimeter(e.type, e.metadata, e.camera.detectionZones)) return [];
       return [{ id: e.id, cameraId: e.cameraId, cameraName: e.camera.name,
-        occurredAt: e.occurredAt, detectionType: e.type === 'OBJECT_DETECTED' ? 'object' : 'motion', objectClass }];
+        occurredAt: e.occurredAt, detectionType: isObject ? 'object' : 'motion', objectClass,
+        perimeterCrossing: e.type === 'LINE_CROSSED', noticeSoundEnabled: e.camera.noticeSoundEnabled,
+        noticeSound: e.camera.noticeSound, noticeDurationSeconds: e.camera.noticeDurationSeconds }];
     });
     return { items, cursor: now.toISOString() };
   }
 
   async listMotionNotices(accessibleCameraIds: string[], since?: string) {
-    const now = new Date();
-    const parsed = since ? new Date(since).getTime() : NaN;
-    // First request establishes a server-time baseline, never replays history.
-    if (!Number.isFinite(parsed) || parsed > now.getTime()) return { items: [], cursor: now.toISOString() };
-    const from = new Date(Math.max(parsed - 1000, now.getTime() - 30_000));
-    const events = accessibleCameraIds.length ? await this.prisma.cameraEvent.findMany({
-      where: {
-        cameraId: { in: accessibleCameraIds }, type: 'MOTION_DETECTED',
-        createdAt: { gte: from, lte: now },
-        occurredAt: { gte: new Date(now.getTime() - 30_000) },
-        camera: { enabled: true, motionNoticeEnabled: true },
-      },
-      select: { id: true, cameraId: true, occurredAt: true, camera: { select: { name: true } } },
-      orderBy: { occurredAt: 'desc' }, take: 50,
-    }) : [];
-    return { items: events.map(e => ({ id: e.id, cameraId: e.cameraId, cameraName: e.camera.name, occurredAt: e.occurredAt })), cursor: now.toISOString() };
+    // Keep legacy clients on the same permission, licensing and perimeter checks.
+    return this.listDetectionNotices(accessibleCameraIds, since).then(result => ({
+      ...result, items: result.items.filter(item => item.detectionType === 'motion'),
+    }));
   }
 
   async listLatestDetections(cameraId: string, seconds = 8, limit = 12) {
@@ -2211,6 +2207,8 @@ export class CamerasService implements OnApplicationBootstrap {
         objectNoticeEnabled: dto.objectNoticeEnabled ?? false,
         objectNoticeClasses: dto.objectNoticeClasses ?? [],
         noticeSoundEnabled: dto.noticeSoundEnabled ?? false,
+        noticeSound: dto.noticeSound ?? 'attention',
+        noticeDurationSeconds: dto.noticeDurationSeconds ?? 10,
         showDetectorPercentage: dto.showDetectorPercentage ?? false,
         alarmsEnabled: dto.alarmsEnabled ?? true,
         hasEdgeAi: dto.hasEdgeAi ?? false,

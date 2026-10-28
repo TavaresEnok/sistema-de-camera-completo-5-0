@@ -1,3 +1,5 @@
+export { noticeWithinPerimeter } from './notice-perimeter.helper';
+
 const LABEL_CLASSES: Record<string, string> = {
   person: 'person', pessoa: 'person', pessoas: 'person',
   car: 'car', carro: 'car', motorcycle: 'motorcycle', moto: 'motorcycle', motocicleta: 'motorcycle',

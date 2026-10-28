@@ -58,7 +58,7 @@ export function AddPushCameraDialog({
   const accessToken = useAuthStore((s) => s.accessToken);
   const [nome, setNome] = useState('');
   const [privacy, setPrivacy] = useState(emptyCameraPrivacy);
-  const [notices, setNotices] = useState({ motionNoticeEnabled: false, objectNoticeEnabled: false, noticeSoundEnabled: false, objectNoticeClasses: [] as string[] });
+  const [notices, setNotices] = useState({ motionNoticeEnabled: false, objectNoticeEnabled: false, noticeSoundEnabled: false, noticeSound: 'attention', noticeDurationSeconds: 10, objectNoticeClasses: [] as string[] });
   const { classes: allowed, motionAllowed, carregando: loadingCapabilities } = useClassesLiberadas();
   const [salvando, setSalvando] = useState(false);
   const [copiado, setCopiado] = useState<string | null>(null);
@@ -92,7 +92,7 @@ export function AddPushCameraDialog({
   const fechar = () => {
     if (salvando || vinculando) return;
     setPrivacy(emptyCameraPrivacy());
-    setNotices({ motionNoticeEnabled: false, objectNoticeEnabled: false, noticeSoundEnabled: false, objectNoticeClasses: [] });
+    setNotices({ motionNoticeEnabled: false, objectNoticeEnabled: false, noticeSoundEnabled: false, noticeSound: 'attention', noticeDurationSeconds: 10, objectNoticeClasses: [] });
     setNome(''); setAlvo(null); setCopiado(null); setCameraId(null); setPendentes([]); setCaminhoManual('');
     onClose();
   };
@@ -206,7 +206,7 @@ export function AddPushCameraDialog({
             </div>
 
             <fieldset disabled={salvando}><CameraPrivacyFields value={privacy} onChange={setPrivacy} /></fieldset>
-            <CameraDetectionNotices motion={notices.motionNoticeEnabled} object={notices.objectNoticeEnabled} sound={notices.noticeSoundEnabled} classes={notices.objectNoticeClasses}
+            <CameraDetectionNotices motion={notices.motionNoticeEnabled} object={notices.objectNoticeEnabled} sound={notices.noticeSoundEnabled} soundType={notices.noticeSound} duration={notices.noticeDurationSeconds} classes={notices.objectNoticeClasses}
               allowed={allowed} motionAllowed={motionAllowed} loading={loadingCapabilities} onChange={setNotices} />
           </div>
         ) : (

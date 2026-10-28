@@ -220,6 +220,8 @@ function WizardModal({
     motionNoticeEnabled?: boolean;
     objectNoticeEnabled?: boolean;
     noticeSoundEnabled?: boolean;
+    noticeSound?: string;
+    noticeDurationSeconds?: number;
     objectNoticeClasses?: string[];
     retentionDays: number;
     retentionFollowsGroup?: boolean;
@@ -380,6 +382,8 @@ function WizardModal({
     motionNoticeEnabled: false,
     objectNoticeEnabled: false,
     noticeSoundEnabled: false,
+    noticeSound: 'attention',
+    noticeDurationSeconds: 10,
     objectNoticeClasses: [] as string[],
   });
   const [isSaving, setIsSaving] = useState(false);
@@ -518,6 +522,8 @@ function WizardModal({
         motionNoticeEnabled: form.motionNoticeEnabled,
         objectNoticeEnabled: form.objectNoticeEnabled,
         noticeSoundEnabled: form.noticeSoundEnabled,
+        noticeSound: form.noticeSound,
+        noticeDurationSeconds: form.noticeDurationSeconds,
         objectNoticeClasses: form.objectNoticeClasses,
       });
       onClose();
@@ -828,7 +834,7 @@ function WizardModal({
           )}
           {step === 2 && (
             <div className="space-y-3">
-              <CameraDetectionNotices motion={form.motionNoticeEnabled} object={form.objectNoticeEnabled} sound={form.noticeSoundEnabled} classes={form.objectNoticeClasses}
+              <CameraDetectionNotices motion={form.motionNoticeEnabled} object={form.objectNoticeEnabled} sound={form.noticeSoundEnabled} soundType={form.noticeSound} duration={form.noticeDurationSeconds} classes={form.objectNoticeClasses}
                 allowed={classesLiberadas} motionAllowed={motionAllowed} loading={noticeCapabilitiesLoading}
                 onChange={values => setForm(current => ({ ...current, ...values }))} />
               <div className="rounded-lg border border-border bg-background p-3 space-y-3">
@@ -1248,6 +1254,8 @@ export default function CamerasPage() {
     motionNoticeEnabled?: boolean;
     objectNoticeEnabled?: boolean;
     noticeSoundEnabled?: boolean;
+    noticeSound?: string;
+    noticeDurationSeconds?: number;
     objectNoticeClasses?: string[];
     retentionDays: number;
     preferredRtspTransport: 'tcp' | 'udp';

@@ -63,6 +63,8 @@ type Form = EquipmentForm & CameraPrivacyForm & {
   objectNoticeEnabled: boolean;
   objectNoticeClasses: string[];
   noticeSoundEnabled: boolean;
+  noticeSound: string;
+  noticeDurationSeconds: number;
   showDetectorPercentage: boolean;
   aiConfidence: number;
   aiSensitivity: 'sensitive' | 'balanced' | 'precise';
@@ -242,6 +244,8 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
           objectNoticeEnabled: data.objectNoticeEnabled === true,
           objectNoticeClasses: Array.isArray(data.objectNoticeClasses) ? data.objectNoticeClasses : [],
           noticeSoundEnabled: data.noticeSoundEnabled === true,
+          noticeSound: data.noticeSound ?? 'attention',
+          noticeDurationSeconds: data.noticeDurationSeconds ?? 10,
           showDetectorPercentage: data.showDetectorPercentage === true,
           aiConfidence: data.aiConfidence ?? 70,
           aiSensitivity: data.aiSensitivity ?? 'balanced',
@@ -468,6 +472,8 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
           objectNoticeEnabled: form.objectNoticeEnabled,
           objectNoticeClasses: form.objectNoticeClasses,
           noticeSoundEnabled: form.noticeSoundEnabled,
+          noticeSound: form.noticeSound,
+          noticeDurationSeconds: form.noticeDurationSeconds,
           showDetectorPercentage: form.showDetectorPercentage,
           aiConfidence: form.aiConfidence,
           aiSensitivity: form.aiSensitivity,
@@ -605,7 +611,7 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
                     <Input value={form.name} onChange={(e) => upd('name', e.target.value)} className="text-sm" />
                   </FormField>
                   <CameraPrivacyFields value={form} onChange={privacy => { setDirty(true); setForm(current => current ? { ...current, ...privacy } : current); }} />
-                  <CameraDetectionNotices motion={form.motionNoticeEnabled} object={form.objectNoticeEnabled} sound={form.noticeSoundEnabled} classes={form.objectNoticeClasses}
+                  <CameraDetectionNotices motion={form.motionNoticeEnabled} object={form.objectNoticeEnabled} sound={form.noticeSoundEnabled} soundType={form.noticeSound} duration={form.noticeDurationSeconds} classes={form.objectNoticeClasses}
                     allowed={classesLiberadas} motionAllowed={motionAllowed} loading={noticeCapabilitiesLoading}
                     onChange={values => { setDirty(true); setForm(current => current ? { ...current, ...values } : current); }} />
                   <ToggleRow label="Mostrar porcentagem do detector" desc="No grid, mostra o nome e a porcentagem acima do quadrado." value={form.showDetectorPercentage} onChange={v => upd('showDetectorPercentage', v)} />
@@ -961,7 +967,7 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
                 <TabsContent value="gravacao" className="px-5 py-4 space-y-4 mt-0">
                   <ToggleRow label="Permitir gravação" desc="Autoriza o armazenamento de vídeo conforme o modo escolhido abaixo." value={form.recordingEnabled} onChange={v => upd('recordingEnabled', v)} />
                   <ToggleRow label="Alertas desta câmera" desc="Permite os alertas configurados para esta câmera." value={form.alarmsEnabled} onChange={v => upd('alarmsEnabled', v)} />
-                  <CameraDetectionNotices motion={form.motionNoticeEnabled} object={form.objectNoticeEnabled} sound={form.noticeSoundEnabled} classes={form.objectNoticeClasses}
+                  <CameraDetectionNotices motion={form.motionNoticeEnabled} object={form.objectNoticeEnabled} sound={form.noticeSoundEnabled} soundType={form.noticeSound} duration={form.noticeDurationSeconds} classes={form.objectNoticeClasses}
                     allowed={classesLiberadas} motionAllowed={motionAllowed} loading={noticeCapabilitiesLoading}
                     onChange={values => { setDirty(true); setForm(current => current ? { ...current, ...values } : current); }} />
                   {!form.recordingEnabled && <p role="status" className="text-xs text-muted-foreground">A gravação está desativada. Escolher um modo não a ativa; ligue “Permitir gravação” para gravar.</p>}

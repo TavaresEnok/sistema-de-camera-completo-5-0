@@ -170,6 +170,8 @@ model Camera {
   /// continua sendo por câmera; o navegador só toca se estiver aberto e puder
   /// receber o aviso, sem mexer em gravação, IA ou áudio do vídeo.
   noticeSoundEnabled     Boolean      @default(false)
+  noticeSound            String       @default("attention")
+  noticeDurationSeconds  Int          @default(10)
   /// Só altera o texto sobre as caixas no grid, nunca a análise da IA.
   showDetectorPercentage Boolean      @default(false)
   /// Dias que ESTA câmera guarda, quando NÃO segue o grupo.

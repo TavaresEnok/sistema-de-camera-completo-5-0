@@ -26,17 +26,13 @@ test('first request or invalid cursor does not replay past movements', async () 
   }
 });
 
-test('feed filters motion, enabled notices, permission IDs and bounded recent dates', async () => {
+test('legacy motion feed delegates permission, licensing, freshness and perimeter checks', async () => {
   const svc: any = Object.create(CamerasService.prototype);
-  let query: any;
-  svc.prisma = { cameraEvent: { findMany: async (q: any) => { query = q; return [{ id: 'e', cameraId: 'allowed', occurredAt: new Date(), camera: { name: 'Portaria' } }]; } } };
-  const x = await svc.listMotionNotices(['allowed'], '2000-01-01T00:00:00Z');
-  assert.deepEqual(query.where.cameraId.in, ['allowed']);
-  assert.equal(query.where.type, 'MOTION_DETECTED');
-  assert.deepEqual(query.where.camera, { enabled: true, motionNoticeEnabled: true });
-  assert.ok(Date.now() - query.where.createdAt.gte.getTime() <= 31000);
-  assert.equal(query.take, 50);
-  assert.equal(x.items[0].cameraName, 'Portaria');
+  svc.listDetectionNotices = async (ids: string[], since: string) => {
+    assert.deepEqual(ids,['allowed']); assert.equal(since,'2000-01-01T00:00:00Z');
+    return {items:[{id:'motion',detectionType:'motion'},{id:'person',detectionType:'object'}],cursor:'now'};
+  };
+  assert.deepEqual((await svc.listMotionNotices(['allowed'],'2000-01-01T00:00:00Z')).items.map((item:any)=>item.id),['motion']);
 });
 
 test('controller uses content access even for admin (private cameras stay private)', async () => {

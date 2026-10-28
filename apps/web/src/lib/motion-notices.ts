@@ -1,9 +1,22 @@
-export interface MotionNotice { id: string; cameraId: string; cameraName: string; occurredAt: string; detectionType?: 'motion' | 'object'; objectClass?: string | null }
+export interface MotionNotice { id: string; cameraId: string; cameraName: string; occurredAt: string; detectionType?: 'motion' | 'object'; objectClass?: string | null;
+  perimeterCrossing?: boolean; noticeSoundEnabled?: boolean; noticeSound?: string; noticeDurationSeconds?: number }
+
+export function noticeDuration(value: unknown): number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 120 ? value : 10;
+}
+
+export type TimedMotionNotice = MotionNotice & { queuedAt: number; expiresAt: number | null };
+/** Visible cards keep their own deadline. Waiting cards get their full time on display. */
+export function advanceNoticeQueue(items: TimedMotionNotice[], now: number): TimedMotionNotice[] {
+  return items.filter(item => item.expiresAt === null ? now - item.queuedAt <= 30_000 : item.expiresAt > now)
+    .slice(0, 12).map((item, index) => index < 3 && item.expiresAt === null
+      ? { ...item, expiresAt: now + noticeDuration(item.noticeDurationSeconds) * 1000 } : item);
+}
 
 export function detectionNoticeMessage(notice: MotionNotice): string {
   const labels: Record<string, string> = { person: 'uma pessoa', car: 'um carro', motorcycle: 'uma moto', bicycle: 'uma bicicleta', bus: 'um ônibus', truck: 'um caminhão' };
   const detection = notice.detectionType === 'object' ? (labels[notice.objectClass ?? ''] ?? 'um objeto') : 'movimento';
-  return `${notice.cameraName} detectou ${detection}.`;
+  return notice.perimeterCrossing ? `${notice.cameraName}: ${detection} cruzou o perímetro.` : `${notice.cameraName} detectou ${detection}.`;
 }
 
 /** Keep overlapping polls safe, bounded, and quiet for a busy camera. */

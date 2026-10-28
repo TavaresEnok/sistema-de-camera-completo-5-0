@@ -5,8 +5,8 @@ import { Maximize2, Minimize2, Radar, X } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
 import { useVmsDataStore } from '../store/vmsDataStore';
 import { getApiBaseUrl } from '../lib/api-base';
-import { detectionNoticeMessage, selectMotionNotices, type MotionNotice } from '../lib/motion-notices';
-import { tocarSomDeAtencao } from '../lib/alert-sound';
+import { advanceNoticeQueue, detectionNoticeMessage, noticeDuration, selectMotionNotices, type MotionNotice, type TimedMotionNotice } from '../lib/motion-notices';
+import { NOTICE_SOUNDS, normalizeNoticeSound, tocarSomDeAlerta } from '../lib/alert-sound';
 import { useDetectionActivityStore } from '../store/detectionActivityStore';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
 import { LiveStreamPlayer } from './LiveStreamPlayer';
@@ -22,7 +22,7 @@ export function MotionNotices() {
   const previewRef = useRef<HTMLDivElement>(null);
   const [previewFullscreen, setPreviewFullscreen] = useState(false);
   const enabled = useVmsDataStore(s => s.cameras.some(c => c.enabled !== false && (c.motionNoticeEnabled || c.objectNoticeEnabled)));
-  const [notices, setNotices] = useState<MotionNotice[]>([]);
+  const [notices, setNotices] = useState<TimedMotionNotice[]>([]);
   const [portal, setPortal] = useState<HTMLElement>(() => document.fullscreenElement as HTMLElement ?? document.body);
 
   useEffect(() => {
@@ -78,10 +78,19 @@ export function MotionNotices() {
         if (incoming.length) {
           // Um som por lote: três câmeras detectadas no mesmo ciclo não viram
           // ruído. Cada câmera controla se o próprio aviso deve tocar.
-          const tocarSom = incoming.some(item => useVmsDataStore.getState().cameras
-            .some(camera => camera.id === item.cameraId && camera.noticeSoundEnabled));
-          if (tocarSom) tocarSomDeAtencao();
-          setNotices(previous => [...incoming, ...previous].slice(0, 3));
+          const cameras = useVmsDataStore.getState().cameras;
+          const audible = incoming.flatMap(item => {
+            const camera = cameras.find(camera => camera.id === item.cameraId);
+            return (item.noticeSoundEnabled ?? camera?.noticeSoundEnabled) ? [normalizeNoticeSound(item.noticeSound ?? camera?.noticeSound)] : [];
+          });
+          const sound = [...audible].sort((a, b) => NOTICE_SOUNDS.find(s=>s.value===b)!.priority - NOTICE_SOUNDS.find(s=>s.value===a)!.priority)[0];
+          if (sound) void tocarSomDeAlerta(sound);
+          const receivedAt = Date.now();
+          const timed = incoming.map(item => ({ ...item, queuedAt: receivedAt, expiresAt: null,
+            noticeDurationSeconds: noticeDuration(item.noticeDurationSeconds
+              ?? cameras.find(camera=>camera.id===item.cameraId)?.noticeDurationSeconds) }));
+          // A fourth camera must not remove an unexpired toast. Queue briefly and bound memory.
+          setNotices(previous => advanceNoticeQueue([...previous, ...timed], receivedAt));
         }
       } catch { /* Network failure must not create alarming or technical messages. */ }
       finally { if (!cancelled) timer = setTimeout(() => void poll(), 3000); }
@@ -92,20 +101,21 @@ export function MotionNotices() {
 
   useEffect(() => {
     if (!notices.length) return;
-    const timer = setTimeout(() => setNotices([]), 6000);
+    const timer = setTimeout(() => setNotices(previous => advanceNoticeQueue(previous, Date.now())),
+      Math.max(1, Math.min(...notices.flatMap(item => item.expiresAt === null ? [] : [item.expiresAt])) - Date.now()));
     return () => clearTimeout(timer);
   }, [notices]);
 
   return <>{createPortal(
     <div className="pointer-events-none fixed bottom-5 right-5 z-[100] flex w-80 max-w-[calc(100vw-2.5rem)] flex-col gap-2" role="status" aria-live="polite" aria-atomic="false">
-      {notices.map(notice => (
+      {notices.slice(0, 3).map(notice => (
         <div key={notice.id} className="pointer-events-auto flex items-start gap-3 rounded-lg border border-border bg-card p-3 text-card-foreground shadow-lg">
           <Radar className="mt-0.5 h-5 w-5 shrink-0 text-primary" aria-hidden="true" />
           <button type="button" aria-label={`Abrir câmera ${notice.cameraName}`} onClick={() => setPreview(notice)} className="min-w-0 flex-1 rounded text-left text-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             <span className="block break-words">{detectionNoticeMessage(notice)}</span>
             <span className="mt-1 block text-xs text-muted-foreground">Ver câmera</span>
           </button>
-          <button type="button" aria-label="Fechar aviso" onClick={() => setNotices(previous => previous.filter(n => n.id !== notice.id))} className="rounded p-1 text-muted-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><X className="h-4 w-4" /></button>
+          <button type="button" aria-label="Fechar aviso" onClick={() => setNotices(previous => advanceNoticeQueue(previous.filter(n => n.id !== notice.id), Date.now()))} className="rounded p-1 text-muted-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><X className="h-4 w-4" /></button>
         </div>
       ))}
     </div>, portal,

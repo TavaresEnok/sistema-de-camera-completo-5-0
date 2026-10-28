@@ -74,6 +74,10 @@ SGP_POLICY_MIGRATIONS = {
     '20261015180000_sgp_service_recording_policy': ('63a6fec552793427484b651320171ed51928fa72309948fe14b6520670898f1e', [('SgpService', 'retentionDays'), ('SgpService', 'recordingMode'), ('SgpService', 'recordingObjectClasses')]),
 }
 
+NOTICE_PREFERENCE_MIGRATIONS = {
+    '20261028120000_camera_notice_preferences': ('645a9d0c37486a67273cd827af33c999d79e52ad42635be8ef8a467d770ad920', [('Camera', 'noticeSound'), ('Camera', 'noticeDurationSeconds')]),
+}
+
 
 def image_schema(image):
     script = '''const fs=require('fs'),path=require('path'),crypto=require('crypto');
@@ -87,7 +91,8 @@ console.log(JSON.stringify({hash:h.digest('hex'),schema:fs.readFileSync(path.joi
     return json.loads(command(['docker', 'run', '--rm', '--network', 'none', '--entrypoint', 'node', image, '-e', script]).stdout)
 
 
-def validate_sgp_policy_transition(previous, target, expected_hash):
+def validate_sgp_policy_transition(previous, target, expected_hash, approved_migrations=None):
+    allowed_migrations = SGP_POLICY_MIGRATIONS if approved_migrations is None else approved_migrations
     if target['hash'] != expected_hash:
         raise ValueError('Target image schema differs from signed manifest')
     for name, digest in previous['migrations'].items():
@@ -96,9 +101,9 @@ def validate_sgp_policy_transition(previous, target, expected_hash):
     added = sorted(set(target['migrations']) - set(previous['migrations']))
     ignored = set()
     for name in added:
-        if name not in SGP_POLICY_MIGRATIONS or target['migrations'][name] != SGP_POLICY_MIGRATIONS[name][0]:
+        if name not in allowed_migrations or target['migrations'][name] != allowed_migrations[name][0]:
             raise ValueError('Only the reviewed additive SGP policy migrations are allowed')
-        ignored.update(SGP_POLICY_MIGRATIONS[name][1])
+        ignored.update(allowed_migrations[name][1])
     def normalized(schema, ignored_fields):
         result, model = [], None
         for raw in schema.splitlines():
@@ -152,6 +157,7 @@ def main():
     parser.add_argument('--approve-sgp-schema', action='store_true')
     parser.add_argument('--web-only', action='store_true', help='Keep the running API and media services untouched')
     parser.add_argument('--approve-sgp-policy-schema', action='store_true', help='Approve only the three hash-pinned additive SGP policy migrations; reconcile stale metadata against the actual installed image')
+    parser.add_argument('--approve-notice-preferences-schema', action='store_true', help='Approve only the hash-pinned additive sound and duration preferences')
     args = parser.parse_args()
     root = args.root.resolve()
     signed = json.loads(args.manifest.read_text())
@@ -177,10 +183,13 @@ def main():
     media_before, api_before = media_state(), inspect('vms-api')
     command(['docker', 'load', '-i', str(args.archive)])
     reviewed_policy = []
-    if args.approve_sgp_policy_schema:
+    if args.approve_sgp_policy_schema or args.approve_notice_preferences_schema:
         if args.approve_detector_percentage_schema or args.approve_object_notice_schema or args.approve_sgp_schema:
             raise ValueError('Choose only one schema approval mechanism')
-        reviewed_policy = validate_sgp_policy_transition(image_schema(api_before['Image']), image_schema(body['images']['api']['imageId']), body.get('databaseSchemaHash'))
+        if args.approve_sgp_policy_schema and args.approve_notice_preferences_schema:
+            raise ValueError('Choose only one schema approval mechanism')
+        reviewed_policy = validate_sgp_policy_transition(image_schema(api_before['Image']), image_schema(body['images']['api']['imageId']), body.get('databaseSchemaHash'),
+            NOTICE_PREFERENCE_MIGRATIONS if args.approve_notice_preferences_schema else None)
         migration_approved = False
     else:
         migration_approved = allow_schema_transition(state.get('databaseSchemaHash'), body, args.approve_detector_percentage_schema, args.approve_object_notice_schema, args.approve_sgp_schema)

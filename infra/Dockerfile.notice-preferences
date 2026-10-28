@@ -1,0 +1,40 @@
+FROM drac-private-api-builder:20261008 AS api-build
+COPY apps/api/src /app/apps/api/src
+COPY apps/api/prisma /app/apps/api/prisma
+COPY apps/api/tests /app/apps/api/tests
+COPY apps/web/src/lib /app/apps/web/src/lib
+RUN cd /app/apps/api && pnpm exec prisma generate && pnpm exec tsc -p tsconfig.json
+RUN cd /app/apps/api && node --import tsx --test tests/notice-preferences-perimeter.test.ts tests/detection-notices.test.ts tests/motion-notices.test.ts
+
+FROM node:22-alpine AS api
+ARG RELEASE_REVISION
+LABEL org.opencontainers.image.revision=$RELEASE_REVISION
+WORKDIR /app
+RUN apk add --no-cache ffmpeg openssl
+COPY --from=api-build /app/node_modules /app/node_modules
+COPY --from=api-build /app/apps/api/node_modules /app/apps/api/node_modules
+COPY --from=api-build /app/apps/api/dist /app/apps/api/dist
+COPY apps/api/prisma/schema.prisma /app/apps/api/prisma/schema.prisma
+COPY apps/api/prisma/migrations /app/apps/api/prisma/migrations
+COPY --chmod=755 apps/api/docker-entrypoint.sh /app/apps/api/docker-entrypoint.sh
+USER node
+EXPOSE 3000
+CMD ["/app/apps/api/docker-entrypoint.sh"]
+
+FROM drac-private-web-builder:20261008 AS web-build
+COPY apps/web /app/apps/web
+COPY apps/central/public /app/apps/central/public
+COPY apps/api/src /app/apps/api/src
+COPY apps/mobile/src /app/apps/mobile/src
+ARG FRONTEND_BUILD_ID=notice-preferences-20261028
+ENV VITE_FRONTEND_BUILD_ID=$FRONTEND_BUILD_ID
+RUN cd /app/apps/web && pnpm exec tsc --noEmit && pnpm exec vite build
+RUN cd /app/apps/web && node --test tests/detection-notices.test.mts tests/notice-sounds.test.mts && node tests/browser/render-detection-notices.mjs
+
+FROM drac-private-web:20261008 AS web
+ARG RELEASE_REVISION
+LABEL org.opencontainers.image.revision=$RELEASE_REVISION
+USER root
+RUN rm -r /usr/share/nginx/html
+COPY --from=web-build /app/apps/web/dist /usr/share/nginx/html
+USER nginx

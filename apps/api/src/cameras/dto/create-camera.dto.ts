@@ -179,6 +179,17 @@ export class CreateCameraDto extends CameraPrivacyDto {
   noticeSoundEnabled?: boolean;
 
   @IsOptional()
+  @IsString()
+  @IsIn(['attention', 'urgent', 'siren', 'intrusion', 'rapid'])
+  noticeSound?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(120)
+  noticeDurationSeconds?: number;
+
+  @IsOptional()
   @IsArray()
   @ArrayMaxSize(6)
   @IsIn(['person', 'car', 'motorcycle', 'bicycle', 'bus', 'truck'], { each: true })
