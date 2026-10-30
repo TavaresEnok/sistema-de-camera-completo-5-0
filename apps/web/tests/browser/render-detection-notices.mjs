@@ -25,7 +25,7 @@ try {
   assert.ok(preferences.includes('value="20" selected=""'));
   assert.ok(preferences.includes('value="siren" selected=""'));
   assert.ok(preferences.includes('Ouvir som'));
-  assert.ok(preferences.includes('Atenção (atual)') && preferences.includes('Alarme de invasão'));
+  for (const label of ['Atenção (atual)', 'Sirene de emergência', 'Sirene de invasão', 'Alarme de evacuação', 'Alarme pulsante']) assert.ok(preferences.includes(label));
   assert.ok(person.includes('value="10" selected=""'));
   console.log(JSON.stringify({ realReactRender: true, defaultOff: true, motionOnlyPlan: true, personOnlyPlan: true, vehiclePlan: true, licensedClassesOnly: true }));
 } finally { await server.close(); }
