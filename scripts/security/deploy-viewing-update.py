@@ -26,9 +26,9 @@ def sql(statement):
                    input=statement.encode()).stdout.decode().strip()
 
 
-def media_state():
+def media_state(include_ai=True):
     return {name: {'image': inspect(name)['Image'], 'startedAt': inspect(name)['State']['StartedAt']}
-            for name in ['vms-ai-service', 'vms-mediamtx', 'vms-rtmp-ingest']}
+            for name in (['vms-ai-service'] if include_ai else []) + ['vms-mediamtx', 'vms-rtmp-ingest']}
 
 
 def verify_signature(signed, public_key):
@@ -156,9 +156,12 @@ def main():
     parser.add_argument('--approve-object-notice-schema', action='store_true')
     parser.add_argument('--approve-sgp-schema', action='store_true')
     parser.add_argument('--web-only', action='store_true', help='Keep the running API and media services untouched')
+    parser.add_argument('--include-ai', action='store_true', help='Explicitly approve the signed AI image while preserving transport services')
     parser.add_argument('--approve-sgp-policy-schema', action='store_true', help='Approve only the three hash-pinned additive SGP policy migrations; reconcile stale metadata against the actual installed image')
     parser.add_argument('--approve-notice-preferences-schema', action='store_true', help='Approve only the hash-pinned additive sound and duration preferences')
     args = parser.parse_args()
+    if args.include_ai and args.web_only:
+        raise ValueError('AI updates cannot be combined with web-only updates')
     root = args.root.resolve()
     signed = json.loads(args.manifest.read_text())
     body = dict(signed)
@@ -167,7 +170,7 @@ def main():
             or not body.get('distributionApproval') or len(signature) != 64
             or not re.fullmatch('[a-f0-9]{40}', body.get('commit', ''))
             or not body.get('issuedAt', 0) - 120 <= time.time() < body.get('expiresAt', 0)
-            or set(body.get('images', {})) != {'api', 'web'}):
+            or set(body.get('images', {})) != ({'api', 'web', 'ai-service'} if args.include_ai else {'api', 'web'})):
         raise ValueError('Invalid signed viewing manifest')
     verify_signature(signed, root / 'infra/release-public.pem')
     digest = hashlib.sha256()
@@ -180,7 +183,7 @@ def main():
     installed_viewing = root / 'infra/viewing-release.json'
     if installed_viewing.exists():
         state = verify_signature(json.loads(installed_viewing.read_text()), root / 'infra/release-public.pem')
-    media_before, api_before = media_state(), inspect('vms-api')
+    media_before, api_before = media_state(include_ai=not args.include_ai), inspect('vms-api')
     command(['docker', 'load', '-i', str(args.archive)])
     reviewed_policy = []
     if args.approve_sgp_policy_schema or args.approve_notice_preferences_schema:
@@ -249,6 +252,8 @@ def main():
         compose += ['-f', str(persistent)]
     up = ['up', '-d', '--no-build', '--pull', 'never', '--no-deps', '--wait', '--wait-timeout', '180']
     up += ['web'] if args.web_only else ['api', 'web']
+    if args.include_ai:
+        up += ['ai-service']
     snapshot = json.loads(sql('''SELECT json_build_object('at',now(),'cameras',
       COALESCE(json_agg(json_build_object('id',id,'enabled',enabled,'recordingMode',"recordingMode",
       'recordingEnabled',"recordingEnabled")),'[]'::json)) FROM "Camera";'''))
@@ -262,7 +267,7 @@ def main():
         persistent.write_text(json.dumps(configuration))
         os.chmod(persistent, 0o600)
         command(compose + up)
-        if media_state() != media_before:
+        if media_state(include_ai=not args.include_ai) != media_before:
             raise ValueError('A media service changed unexpectedly')
         if args.web_only:
             api_after = inspect('vms-api')
@@ -289,7 +294,8 @@ def main():
             restore_legacy_shutdown(snapshot)
         command(compose + up)
         raise
-    result = {'commit': body['commit'], 'signed': True, 'ready': True, 'mediaServicesUnchanged': True,
+    result = {'commit': body['commit'], 'signed': True, 'ready': True, 'mediaServicesUnchanged': not args.include_ai,
+              'transportServicesUnchanged': True, 'aiUpdated': args.include_ai,
               'webOnly': args.web_only, 'apiContainerUnchanged': args.web_only,
               'legacyRecordingChoicesRestored': restored, 'cssFilesVerified': len(styles), 'reviewedAdditiveMigration': migration_approved}
     result['reviewedSgpPolicyMigrations'] = reviewed_policy

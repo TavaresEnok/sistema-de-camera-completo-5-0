@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import statistics
 from dataclasses import dataclass, field
+from detectors.tripwire import areas_de, ponto_de_referencia, _dentro
 
 
 @dataclass(frozen=True)
@@ -75,6 +76,7 @@ class _Faixa:
     quadros: int = 0
     faltas: int = 0
     confirmada: bool = False
+    notificada: bool = False
     ultima_ordem: int = 0
 
 
@@ -89,8 +91,9 @@ class ConfirmadorDeObjeto:
     tinham sido, e as que ainda não têm evidência, ficam de fora.
     """
 
-    def __init__(self, politica: PoliticaDeConfirmacao | None = None):
+    def __init__(self, politica: PoliticaDeConfirmacao | None = None, zonas=None):
         self.politica = politica or PoliticaDeConfirmacao()
+        self._includes, self._excludes = areas_de(zonas)
         self._faixas: dict[object, _Faixa] = {}
         self._ordem = 0
 
@@ -109,11 +112,13 @@ class ConfirmadorDeObjeto:
                 if chave is not None and chave in self._faixas:
                     vistas.add(chave)
                 continue
+            permitido = self._permitido(deteccao)
             if chave is None:
                 # Sem identidade entre quadros não há como exigir persistência.
                 # Deixa passar para NÃO piorar o que já existia — o caminho de
                 # objeto tem rastreamento; quem não tem é caso à parte.
-                confirmadas.append(deteccao)
+                if permitido:
+                    confirmadas.append(deteccao)
                 continue
 
             vistas.add(chave)
@@ -129,15 +134,19 @@ class ConfirmadorDeObjeto:
             if len(faixa.confiancas) > self.politica.janela_de_confiancas:
                 del faixa.confiancas[0]
 
-            if faixa.confirmada:
-                continue  # uma pessoa parada dez minutos é UM evento, não dois mil
+            if not permitido:
+                # Keep real confirmation evidence, but never spend an entry
+                # event outside the area. A real exit rearms the next entry.
+                faixa.notificada = False
             if faixa.quadros < self.politica.minimo_de_quadros:
                 continue
             if statistics.median(faixa.confiancas) < self.politica.limiar_mediana:
                 continue
 
             faixa.confirmada = True
-            confirmadas.append(deteccao)
+            if permitido and not faixa.notificada:
+                faixa.notificada = True
+                confirmadas.append(deteccao)
 
         self._contar_faltas(vistas)
         self._limitar()
@@ -156,6 +165,18 @@ class ConfirmadorDeObjeto:
         return {key for key, faixa in self._faixas.items() if faixa.confirmada}
 
     # ── Interno ─────────────────────────────────────────────────────────────
+    def _permitido(self, deteccao):
+        if not (self._includes or self._excludes):
+            return True
+        extra = getattr(deteccao, "extra", None) or {}
+        ponto = ponto_de_referencia(
+            getattr(deteccao, "bbox", None),
+            int(extra.get("frameWidth") or 0), int(extra.get("frameHeight") or 0),
+        )
+        return ponto is not None and (
+            not self._includes or any(_dentro(ponto, z["points"]) for z in self._includes)
+        ) and not any(_dentro(ponto, z["points"]) for z in self._excludes)
+
     @staticmethod
     def _chave(deteccao):
         extra = getattr(deteccao, "extra", None) or {}

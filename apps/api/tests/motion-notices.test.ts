@@ -54,7 +54,7 @@ test('UI deduplicates overlapping polls and limits a camera to one notice per 30
 test('UI ignores stale/invalid movements and bounds memory and visible notices', () => {
   const now = Date.now(); const seen = new Set<string>(); const cameras = new Map<string, number>();
   const items = Array.from({ length: 1200 }, (_, n) => ({ id: String(n), cameraId: String(n), cameraName: 'Cam', occurredAt: new Date(now).toISOString() }));
-  assert.equal(selectMotionNotices(items, seen, cameras, now).length, 3);
+  assert.equal(selectMotionNotices(items, seen, cameras, now).length, 1200);
   assert.equal(seen.size, 1000);
-  assert.equal(selectMotionNotices([{ id: 'old', cameraId: 'old', cameraName: 'Cam', occurredAt: new Date(now - 60000).toISOString() }], seen, cameras, now).length, 0);
+  assert.equal(selectMotionNotices([{ id: 'old', cameraId: 'old', cameraName: 'Cam', occurredAt: new Date(now - 121000).toISOString() }], seen, cameras, now).length, 0);
 });

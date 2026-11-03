@@ -26,9 +26,15 @@ export function selectMotionNotices(items: MotionNotice[], seen: Set<string>, la
     if (seen.has(item.id)) continue;
     seen.add(item.id);
     const occurred = Date.parse(item.occurredAt);
-    if (!Number.isFinite(occurred) || now - occurred > 30_000 || occurred > now + 5000) continue;
+    if (!Number.isFinite(occurred) || now - occurred > 120_000 || occurred > now + 5000) continue;
     // A movement notice must not hide a person arriving immediately afterwards.
-    const key = `${item.cameraId}:${item.detectionType ?? 'motion'}:${item.objectClass ?? ''}`;
+    // Confirmed object entries and crossings are already deduplicated by the
+    // detector. Only identical IDs are duplicates; another person/line is not.
+    if (item.detectionType === 'object' || item.perimeterCrossing) {
+      result.push(item);
+      continue;
+    }
+    const key = `${item.cameraId}:motion`;
     const previous = lastByCamera.get(key);
     if (previous !== undefined && now - previous < 30_000) continue;
     lastByCamera.set(key, now);
@@ -36,5 +42,5 @@ export function selectMotionNotices(items: MotionNotice[], seen: Set<string>, la
   }
   while (seen.size > 1000) seen.delete(seen.values().next().value!);
   for (const [id, last] of lastByCamera) if (now - last > 60_000) lastByCamera.delete(id);
-  return result.slice(0, 3);
+  return result;
 }

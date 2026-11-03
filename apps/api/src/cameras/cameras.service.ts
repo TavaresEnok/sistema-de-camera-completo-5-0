@@ -1086,8 +1086,8 @@ export class CamerasService implements OnApplicationBootstrap {
     if (!conditions.length) return { items: [], cursor: now.toISOString() };
     const events = await this.prisma.cameraEvent.findMany({
       where: { cameraId: { in: accessibleCameraIds }, camera: { enabled: true }, OR: conditions,
-        createdAt: { gte: new Date(Math.max(parsed - 1000, now.getTime() - 30_000)), lte: now },
-        occurredAt: { gte: new Date(now.getTime() - 30_000), lte: now } },
+        createdAt: { gte: new Date(Math.max(parsed - 1000, now.getTime() - 120_000)), lte: now },
+        occurredAt: { gte: new Date(now.getTime() - 120_000), lte: now } },
       select: { id: true, cameraId: true, type: true, metadata: true, occurredAt: true,
         camera: { select: { name: true, objectNoticeClasses: true, detectionZones: true, noticeSoundEnabled: true, noticeSound: true, noticeDurationSeconds: true } } },
       orderBy: { createdAt: 'desc' }, take: 200,

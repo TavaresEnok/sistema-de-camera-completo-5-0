@@ -190,7 +190,7 @@ class StreamProcessor:
             minimo_de_quadros=int(self.object_policy["confirm_min_frames"]),
             limiar_mediana=float(self.object_policy["confirm_threshold"]),
             esquecer_apos_faltas=int(self.profile.get("confirm_forget_after_misses", 20)),
-        ))
+        ), zonas=self.detection_zones)
         self.last_error = None
         self._snapshot_lock = threading.Lock()
         self._latest_detections = []
@@ -1410,7 +1410,7 @@ class StreamProcessor:
                     # Cada travessia já passou por rastreamento, segmento,
                     # direção e histerese no tripwire. Agrupar só por tipo
                     # apagava a segunda pessoa/linha do mesmo quadro.
-                    emitir, motivo = (True, "travessia-confirmada") if event_type == "LINE_CROSSED" else self._agrupador.decidir(event_type, current_time)
+                    emitir, motivo = self._decide_event(detection, current_time)
                     if emitir:
                         ready.append(detection)
                         # Mantido porque outras partes leem este mapa; o dono da
@@ -1427,6 +1427,16 @@ class StreamProcessor:
 
             # Pausa para aliviar CPU entre frames
             time.sleep(0.02)
+
+    def _decide_event(self, detection, current_time):
+        event_type = detection.event_type or "AI_DETECTED"
+        if event_type == "LINE_CROSSED":
+            return True, "travessia-confirmada"
+        if event_type == "OBJECT_DETECTED" and (detection.extra or {}).get("trackId") is not None:
+            # The confirmation stage already emits once per tracked entry.
+            # Camera-wide grouping would hide a different person or re-entry.
+            return True, "objeto-confirmado"
+        return self._agrupador.decidir(event_type, current_time)
 
     @staticmethod
     def _motion_boxes_for_advanced(motion_detections, frame_shape, advanced_shape) -> list:

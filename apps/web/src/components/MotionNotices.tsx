@@ -60,9 +60,11 @@ export function MotionNotices() {
     const controller = new AbortController();
     const seen = new Set<string>();
     const lastByCamera = new Map<string, number>();
+    let polling = false;
     const poll = async () => {
+      if (polling || cancelled) return;
+      polling = true;
       try {
-        if (document.visibilityState !== 'visible') { cursor = undefined; return; }
         const { data } = await axios.get<{ items: MotionNotice[]; cursor: string }>(`${getApiBaseUrl()}/cameras/detection-notices`, {
           params: { since: cursor }, headers: { Authorization: `Bearer ${token}` }, signal: controller.signal, timeout: 10_000,
         });
@@ -93,10 +95,16 @@ export function MotionNotices() {
           setNotices(previous => advanceNoticeQueue([...previous, ...timed], receivedAt));
         }
       } catch { /* Network failure must not create alarming or technical messages. */ }
-      finally { if (!cancelled) timer = setTimeout(() => void poll(), 3000); }
+      finally { polling = false; if (!cancelled) timer = setTimeout(() => void poll(), 3000); }
     };
+    const resume = () => {
+      if (document.visibilityState !== 'visible' || polling || cancelled) return;
+      if (timer) clearTimeout(timer);
+      void poll();
+    };
+    document.addEventListener('visibilitychange', resume);
     void poll();
-    return () => { cancelled = true; controller.abort(); if (timer) clearTimeout(timer); };
+    return () => { cancelled = true; document.removeEventListener('visibilitychange', resume); controller.abort(); if (timer) clearTimeout(timer); };
   }, [token, enabled, initialPassword]);
 
   useEffect(() => {

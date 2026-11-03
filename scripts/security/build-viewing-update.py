@@ -37,6 +37,7 @@ parser.add_argument('--root', type=Path, required=True)
 parser.add_argument('--output', type=Path, required=True)
 parser.add_argument('--api', required=True)
 parser.add_argument('--web', required=True)
+parser.add_argument('--ai', help='Explicitly include a validated AI image in the signed application update')
 parser.add_argument('--key', type=Path, required=True)
 parser.add_argument('--approve-detector-percentage-schema', action='store_true')
 parser.add_argument('--approve-object-notice-schema', action='store_true')
@@ -51,7 +52,7 @@ commit = subprocess.check_output(git + ['rev-parse', 'HEAD'], text=True).strip()
 args.output.mkdir(mode=0o700, parents=True, exist_ok=False)
 archive = args.output / 'viewing-images.tar.gz'
 images = {}
-for name, tag in [('api', args.api), ('web', args.web)]:
+for name, tag in [('api', args.api), ('web', args.web)] + ([('ai-service', args.ai)] if args.ai else []):
     identity = subprocess.check_output(['docker', 'image', 'inspect', tag, '--format', '{{.Id}}'], text=True).strip()
     images[name] = {'image': tag, 'imageId': identity}
 with gzip.open(archive, 'wb', compresslevel=3) as destination:
