@@ -46,10 +46,14 @@ def verify_signature(signed, public_key):
     return body
 
 
-def allow_schema_transition(current_hash, body, approved=False, object_notice_approved=False, sgp_approved=False):
+def allow_schema_transition(current_hash, body, approved=False, object_notice_approved=False, sgp_approved=False, confidence_approved=False):
     if current_hash == body.get('databaseSchemaHash'):
         return False
     transition = body.get('reviewedSchemaTransition') or {}
+    if (confidence_approved and transition.get('from') == current_hash and transition.get('kind') == 'confidence-range'
+            and transition.get('migration') == '20261103170000_camera_confidence_40'
+            and transition.get('migrationSha256') == 'c0ca23d7ea2249c1fbda0ead1cb621216918aba3c9a0054b1ac78e281494af2f'):
+        return True
     if (approved and transition.get('from') == current_hash and transition.get('kind') == 'additive'
             and transition.get('migration') == '20261008173000_camera_detector_percentage'):
         return True
@@ -155,6 +159,7 @@ def main():
     parser.add_argument('--approve-detector-percentage-schema', action='store_true')
     parser.add_argument('--approve-object-notice-schema', action='store_true')
     parser.add_argument('--approve-sgp-schema', action='store_true')
+    parser.add_argument('--approve-confidence-40-schema', action='store_true')
     parser.add_argument('--web-only', action='store_true', help='Keep the running API and media services untouched')
     parser.add_argument('--include-ai', action='store_true', help='Explicitly approve the signed AI image while preserving transport services')
     parser.add_argument('--approve-sgp-policy-schema', action='store_true', help='Approve only the three hash-pinned additive SGP policy migrations; reconcile stale metadata against the actual installed image')
@@ -162,6 +167,8 @@ def main():
     args = parser.parse_args()
     if args.include_ai and args.web_only:
         raise ValueError('AI updates cannot be combined with web-only updates')
+    if args.approve_confidence_40_schema and (args.approve_sgp_schema or args.approve_sgp_policy_schema or args.approve_notice_preferences_schema or args.approve_detector_percentage_schema or args.approve_object_notice_schema):
+        raise ValueError('Choose only one schema approval mechanism')
     root = args.root.resolve()
     signed = json.loads(args.manifest.read_text())
     body = dict(signed)
@@ -195,7 +202,7 @@ def main():
             NOTICE_PREFERENCE_MIGRATIONS if args.approve_notice_preferences_schema else None)
         migration_approved = False
     else:
-        migration_approved = allow_schema_transition(state.get('databaseSchemaHash'), body, args.approve_detector_percentage_schema, args.approve_object_notice_schema, args.approve_sgp_schema)
+        migration_approved = allow_schema_transition(state.get('databaseSchemaHash'), body, args.approve_detector_percentage_schema, args.approve_object_notice_schema, args.approve_sgp_schema, args.approve_confidence_40_schema)
     if args.web_only:
         validate_web_only_update(body, api_before, migration_approved or bool(reviewed_policy))
     files = []
@@ -239,6 +246,10 @@ def main():
         if migration == '20261010160000_sgp_integration':
             if hashlib.sha256(statement).hexdigest() != 'ad8156582c068dbfb207c2516d5f144149e0e9229ecb9edebb84de7c8e08b2b5':
                 raise ValueError('Image does not contain the reviewed SGP migration')
+            expected_sql = statement
+        if migration == '20261103170000_camera_confidence_40':
+            if hashlib.sha256(statement).hexdigest() != 'c0ca23d7ea2249c1fbda0ead1cb621216918aba3c9a0054b1ac78e281494af2f':
+                raise ValueError('Image does not contain the reviewed confidence migration')
             expected_sql = statement
         if statement != expected_sql:
             raise ValueError('Image does not contain the narrowly reviewed additive migration')

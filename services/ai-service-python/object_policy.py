@@ -48,7 +48,7 @@ def politica_de_objeto(source_info, *, default_threshold=0.70, default_min_frame
         # A API sempre envia a lista quando objeto está ativo. Vazio significa
         # bloquear todas, e não "detectar tudo" — a licença segue fail-closed.
         "classes": classes,
-        "confirm_threshold": max(0.55, min(0.90, threshold)),
+        "confirm_threshold": max(0.40, min(0.90, threshold)),
         "confirm_min_frames": max(2, min(6, min_frames)),
     }
 

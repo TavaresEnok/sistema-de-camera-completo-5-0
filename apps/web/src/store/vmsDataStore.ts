@@ -393,7 +393,7 @@ function mapCameraItems(
         ? camera.aiSensitivity
         : 'balanced',
       aiConfidence: Number.isFinite(Number(camera.aiConfidence))
-        ? Math.max(55, Math.min(90, Math.round(Number(camera.aiConfidence))))
+        ? Math.max(40, Math.min(90, Math.round(Number(camera.aiConfidence))))
         : camera.aiSensitivity === 'sensitive'
           ? 60
           : camera.aiSensitivity === 'precise'

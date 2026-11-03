@@ -42,6 +42,7 @@ parser.add_argument('--key', type=Path, required=True)
 parser.add_argument('--approve-detector-percentage-schema', action='store_true')
 parser.add_argument('--approve-object-notice-schema', action='store_true')
 parser.add_argument('--approve-sgp-schema', action='store_true')
+parser.add_argument('--approve-confidence-40-schema', action='store_true')
 parser.add_argument('--schema-base-commit')
 args = parser.parse_args()
 root = args.root.resolve()
@@ -67,6 +68,33 @@ body = {'v': 1, 'kind': 'viewing-update-v1', 'commit': commit, 'protection': 'st
         'distributionApproval': 'approved-production-maintenance', 'issuedAt': now, 'expiresAt': now + 30 * 86400,
         'databaseSchemaHash': database_schema_hash(root / 'apps/api/prisma'),
         'images': images, 'sha256': sha(archive), 'size': archive.stat().st_size}
+if args.approve_confidence_40_schema:
+    if args.approve_sgp_schema or args.approve_detector_percentage_schema or args.approve_object_notice_schema or not args.schema_base_commit:
+        raise SystemExit('Confidence migration requires its base commit and no other schema approval')
+    migration = '20261103170000_camera_confidence_40'
+    expected_hash = 'c0ca23d7ea2249c1fbda0ead1cb621216918aba3c9a0054b1ac78e281494af2f'
+    prisma = root / 'apps/api/prisma'
+    if sha(prisma / 'migrations' / migration / 'migration.sql') != expected_hash:
+        raise SystemExit('Reviewed confidence migration changed')
+    base = subprocess.check_output(git + ['rev-parse', '--verify', args.schema_base_commit + '^{commit}'], text=True).strip()
+    paths = subprocess.check_output(git + ['ls-tree', '-r', '--name-only', base, '--', 'apps/api/prisma'], text=True).splitlines()
+    old_migrations = {p for p in paths if p.startswith('apps/api/prisma/migrations/') and p.endswith('.sql')}
+    new_migrations = {'apps/api/prisma/' + p.relative_to(prisma).as_posix() for p in (prisma / 'migrations').rglob('*.sql')}
+    if new_migrations != old_migrations | {f'apps/api/prisma/migrations/{migration}/migration.sql'}:
+        raise SystemExit('Unexpected migration change')
+    previous = hashlib.sha256()
+    for path in sorted([p for p in paths if p == 'apps/api/prisma/schema.prisma' or p in old_migrations]):
+        relative = path.removeprefix('apps/api/prisma/')
+        content = subprocess.check_output(git + ['show', base + ':' + path])
+        current = (prisma / relative).read_bytes()
+        if relative == 'schema.prisma':
+            content_after = content.replace('Faixa operacional segura: 55–90.'.encode(), 'Faixa configurável: 40–90.'.encode())
+            if current != content_after or content_after == content:
+                raise SystemExit('Unexpected Prisma schema change')
+        elif current != content:
+            raise SystemExit('An existing migration was changed')
+        previous.update(relative.encode()); previous.update(content)
+    body['reviewedSchemaTransition'] = {'from': previous.hexdigest(), 'kind': 'confidence-range', 'migration': migration, 'migrationSha256': expected_hash, 'baseCommit': base}
 if args.approve_sgp_schema:
     if args.approve_detector_percentage_schema or args.approve_object_notice_schema or not args.schema_base_commit:
         raise SystemExit('SGP migration requires its explicit schema base commit and no other migration flag')

@@ -162,7 +162,7 @@ export function normalizarSensibilidadeDaIa(valor: unknown): SensibilidadeDaIa {
 
 export function normalizarConfiancaDaIa(valor: unknown, sensibilidadeLegada?: unknown): number {
   const numero = Number(valor);
-  if (Number.isFinite(numero)) return Math.max(55, Math.min(90, Math.round(numero)));
+  if (Number.isFinite(numero)) return Math.max(40, Math.min(90, Math.round(numero)));
   switch (normalizarSensibilidadeDaIa(sensibilidadeLegada)) {
     case 'sensitive': return 60;
     case 'precise': return 78;

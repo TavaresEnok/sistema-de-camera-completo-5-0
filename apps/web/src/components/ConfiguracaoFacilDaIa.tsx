@@ -103,7 +103,7 @@ export function ConfiguracaoFacilDaIa({
       objectMode: camera.objectMode,
       aiEnabled: camera.aiEnabled,
       aiObjectClasses: camera.aiObjectClasses.length ? camera.aiObjectClasses : [...classesPermitidas],
-      aiConfidence: Math.max(55, Math.min(90, Math.round(Number(camera.aiConfidence) || 70))),
+      aiConfidence: Math.max(40, Math.min(90, Math.round(Number(camera.aiConfidence) || 70))),
     });
   }, [camera?.cameraId, camera?.objectMode, camera?.aiEnabled, camera?.aiConfidence, camera?.aiObjectClasses.join('|'), classesPermitidas.join('|')]);
 

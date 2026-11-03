@@ -176,7 +176,7 @@ export class UpdateCameraDto extends CameraPrivacyDto {
   /** Confiança mínima exibida na barra simples da tela de IA. */
   @IsOptional()
   @IsInt()
-  @Min(55)
+  @Min(40)
   @Max(90)
   aiConfidence?: number;
 

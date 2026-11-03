@@ -123,7 +123,7 @@ model Camera {
   aiSensitivity String @default("balanced")
 
   /// Confiança mínima real, em porcentagem, usada para confirmar o objeto.
-  /// Faixa operacional segura: 55–90. Substitui os três rótulos da interface,
+  /// Faixa configurável: 40–90. Substitui os três rótulos da interface,
   /// mas `aiSensitivity` permanece para compatibilidade com instalações antigas.
   aiConfidence Int @default(70)
 

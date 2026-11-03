@@ -291,7 +291,7 @@ export class CreateCameraDto extends CameraPrivacyDto {
 
   @IsOptional()
   @IsInt()
-  @Min(55)
+  @Min(40)
   @Max(90)
   aiConfidence?: number;
 

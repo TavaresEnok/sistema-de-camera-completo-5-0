@@ -5,6 +5,11 @@ from object_policy import eh_objeto_para_confirmar, filtrar_deteccoes_por_classe
 
 
 class ObjectPolicyTest(unittest.TestCase):
+    def test_permite_quarenta_por_cento(self):
+        politica = politica_de_objeto({"objectDetection": {"classes": ["person"], "confirmThreshold": 0.4}})
+        self.assertEqual(politica["confirm_threshold"], 0.4)
+        politica = politica_de_objeto({"objectDetection": {"classes": ["person"], "confirmThreshold": 0.1}})
+        self.assertEqual(politica["confirm_threshold"], 0.4)
     def test_normaliza_limites_e_classes(self):
         politica = politica_de_objeto({"objectDetection": {
             "classes": ["person", "CAR"],

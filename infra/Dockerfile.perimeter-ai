@@ -4,6 +4,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends gcc g++ binutil
     && pip install --no-cache-dir Cython \
     && rm -r /var/lib/apt/lists/*
 COPY services/ai-service-python/stream_processor.py /source/stream_processor.py
+COPY services/ai-service-python/object_policy.py /source/object_policy.py
 COPY services/ai-service-python/detectors/confirmacao_de_objeto.py /source/detectors/confirmacao_de_objeto.py
 COPY services/ai-service-python/detectors/tripwire.py /source/detectors/tripwire.py
 COPY scripts/security/compile-ai.py /build/compile-ai.py

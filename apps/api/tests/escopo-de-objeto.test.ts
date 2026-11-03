@@ -132,7 +132,9 @@ test('perfis de sensibilidade só alteram a confirmação e têm padrão seguro'
 test('confiança percentual controla o limiar REAL e respeita a faixa segura', () => {
   assert.equal(normalizarConfiancaDaIa(55), 55);
   assert.equal(normalizarConfiancaDaIa(73.6), 74);
-  assert.equal(normalizarConfiancaDaIa(10), 55);
+  assert.equal(normalizarConfiancaDaIa(10), 40);
+  assert.equal(normalizarConfiancaDaIa(40), 40);
+  assert.equal(politicaDeConfirmacaoDaIa('balanced', 40).confirmThreshold, 0.40);
   assert.equal(normalizarConfiancaDaIa(100), 90);
   assert.equal(normalizarConfiancaDaIa(undefined, 'precise'), 78);
   assert.deepEqual(politicaDeConfirmacaoDaIa('balanced', 64), {
