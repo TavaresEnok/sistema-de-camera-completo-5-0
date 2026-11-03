@@ -27,5 +27,12 @@ try {
   assert.ok(preferences.includes('Ouvir som'));
   for (const label of ['Atenção (atual)', 'Sirene de emergência', 'Sirene de invasão', 'Alarme de evacuação', 'Alarme pulsante']) assert.ok(preferences.includes(label));
   assert.ok(person.includes('value="10" selected=""'));
+  assert.ok(person.includes('Confiança mínima para confirmar o alerta'));
+  assert.ok(person.includes('type="range"') && person.includes('min="55"') && person.includes('max="90"'));
+  assert.ok(!motion.includes('Confiança mínima para confirmar o alerta'));
+  const precise = render({ object: true, allowed: ['person'], confidence: 85, recordingUsesConfidence: true });
+  assert.ok(precise.includes('value="85"') && precise.includes('85%'));
+  assert.ok(precise.includes('O mesmo limite de confiança também é usado'));
+  assert.ok(precise.includes('não é uma taxa de acerto'));
   console.log(JSON.stringify({ realReactRender: true, defaultOff: true, motionOnlyPlan: true, personOnlyPlan: true, vehiclePlan: true, licensedClassesOnly: true }));
 } finally { await server.close(); }

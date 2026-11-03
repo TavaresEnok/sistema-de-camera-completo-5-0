@@ -6,7 +6,6 @@ import {
   Bus,
   CarFront,
   Check,
-  Gauge,
   Loader2,
   Save,
   Search,
@@ -20,7 +19,7 @@ import { getRequestErrorMessage } from '../lib/request-error';
 import { useAuthStore } from '../store/authStore';
 import { useVmsDataStore } from '../store/vmsDataStore';
 import { toast } from '../hooks/use-toast';
-import { Slider } from './ui/slider';
+import { AiConfidenceControl } from './AiConfidenceControl';
 
 const API_URL = getApiBaseUrl();
 
@@ -254,28 +253,9 @@ export function ConfiguracaoFacilDaIa({
 
           <div className={`grid gap-4 xl:grid-cols-2 ${!iaLigada ? 'pointer-events-none opacity-50' : ''}`}>
             <section className="rounded-lg border border-border bg-card p-4">
-              <div className="flex items-center gap-2">
-                <Gauge className="h-4 w-4 text-[hsl(var(--primary))]" aria-hidden />
-                <h3 className="text-sm font-medium">Precisão</h3>
-                <strong className="ml-auto rounded-md bg-[hsl(var(--primary)_/_0.12)] px-2 py-0.5 text-sm text-[hsl(var(--primary))]">
-                  {draft.aiConfidence}%
-                </strong>
-              </div>
-              <Slider
-                className="mt-5"
-                min={55}
-                max={90}
-                step={1}
-                value={[draft.aiConfidence]}
-                onValueChange={([valor]) => setDraft({ ...draft, aiConfidence: valor ?? 70 })}
-                aria-label="Precisão da detecção"
-              />
-              <div className="mt-2 flex justify-between text-[10px] text-[hsl(var(--muted-foreground))]">
-                <span>55%</span><span>60%</span><span>70%</span><span>80%</span><span>90%</span>
-              </div>
-              <p className="mt-3 text-[11px] leading-relaxed text-[hsl(var(--muted-foreground))]">
-                Mais alta reduz alarmes falsos. Mais baixa ajuda a encontrar objetos pequenos ou distantes.
-              </p>
+              <AiConfidenceControl value={draft.aiConfidence} label="Confiança mínima para confirmar a detecção"
+                sharedWithRecording={camera.recordingMode === 'object'}
+                onChange={value => setDraft({ ...draft, aiConfidence: value })} />
             </section>
 
             <section className="rounded-lg border border-border bg-card p-4">

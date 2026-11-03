@@ -225,6 +225,7 @@ function WizardModal({
     objectNoticeClasses?: string[];
     retentionDays: number;
     retentionFollowsGroup?: boolean;
+    aiConfidence?: number;
     preferredRtspTransport: 'tcp' | 'udp';
     preferredLiveProtocol: PreferredLiveProtocol;
     streamVideoCodec: VideoCodec;
@@ -385,6 +386,7 @@ function WizardModal({
     noticeSound: 'attention',
     noticeDurationSeconds: 10,
     objectNoticeClasses: [] as string[],
+    aiConfidence: 70,
   });
   const [isSaving, setIsSaving] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
@@ -525,6 +527,7 @@ function WizardModal({
         noticeSound: form.noticeSound,
         noticeDurationSeconds: form.noticeDurationSeconds,
         objectNoticeClasses: form.objectNoticeClasses,
+        aiConfidence: form.aiConfidence,
       });
       onClose();
     } catch (error) {
@@ -835,6 +838,7 @@ function WizardModal({
           {step === 2 && (
             <div className="space-y-3">
               <CameraDetectionNotices motion={form.motionNoticeEnabled} object={form.objectNoticeEnabled} sound={form.noticeSoundEnabled} soundType={form.noticeSound} duration={form.noticeDurationSeconds} classes={form.objectNoticeClasses}
+                confidence={form.aiConfidence} recordingUsesConfidence={form.recordingMode === 'object'}
                 allowed={classesLiberadas} motionAllowed={motionAllowed} loading={noticeCapabilitiesLoading}
                 onChange={values => setForm(current => ({ ...current, ...values }))} />
               <div className="rounded-lg border border-border bg-background p-3 space-y-3">
@@ -1259,6 +1263,7 @@ export default function CamerasPage() {
     objectNoticeClasses?: string[];
     retentionDays: number;
     preferredRtspTransport: 'tcp' | 'udp';
+    aiConfidence?: number;
     preferredLiveProtocol: PreferredLiveProtocol;
     streamVideoCodec: VideoCodec;
     streamWidth?: number;

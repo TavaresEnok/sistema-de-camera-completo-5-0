@@ -3,21 +3,24 @@ import { CLASSES_DE_GRAVACAO, alternarClasse } from '../lib/classes-de-gravacao'
 import { useState } from 'react';
 import { Volume2 } from 'lucide-react';
 import { NOTICE_SOUNDS, normalizeNoticeSound, tocarSomDeAlerta } from '../lib/alert-sound';
+import { AiConfidenceControl } from './AiConfidenceControl';
 
 export type CameraNoticeSettings = {
   motionNoticeEnabled: boolean; objectNoticeEnabled: boolean; noticeSoundEnabled: boolean; objectNoticeClasses: string[];
   noticeSound: string; noticeDurationSeconds: number;
+  aiConfidence: number;
 };
 
-/** Same editor in General and Recording: notices never change recording. */
-export function CameraDetectionNotices({ motion, object, sound, soundType = 'attention', duration = 10, classes, allowed, motionAllowed, loading, onChange }: {
+/** Notice switches preserve recording. The confidence threshold is camera-wide. */
+export function CameraDetectionNotices({ motion, object, sound, soundType = 'attention', duration = 10, confidence = 70, recordingUsesConfidence = false, classes, allowed, motionAllowed, loading, onChange }: {
   motion: boolean; object: boolean; sound: boolean; classes: string[]; allowed: string[]; motionAllowed: boolean; loading: boolean;
   soundType?: string; duration?: number;
+  confidence?: number; recordingUsesConfidence?: boolean;
   onChange: (value: CameraNoticeSettings) => void;
 }) {
   const [previewError, setPreviewError] = useState(false);
   const update = (value: Partial<CameraNoticeSettings>) => onChange({ motionNoticeEnabled: motion, objectNoticeEnabled: object,
-    noticeSoundEnabled: sound, objectNoticeClasses: classes, noticeSound: soundType, noticeDurationSeconds: duration, ...value });
+    noticeSoundEnabled: sound, objectNoticeClasses: classes, noticeSound: soundType, noticeDurationSeconds: duration, aiConfidence: confidence, ...value });
   const enabled = motion || object;
   const mode = motion && object ? 'both' : object ? 'object' : 'motion';
   const changeMode = (value: string) => update({
@@ -46,6 +49,7 @@ export function CameraDetectionNotices({ motion, object, sound, soundType = 'att
             onClick={() => update({ objectNoticeClasses: alternarClasse(classes, c.valor) })}
             className={`min-h-10 rounded-md border px-3 text-xs ${classes.includes(c.valor) ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:bg-accent'}`}>{c.rotulo}</button>)}</div>
       </div>}
+      {object && <AiConfidenceControl value={confidence} onChange={value => update({ aiConfidence: value })} sharedWithRecording={recordingUsesConfidence} />}
       <label className="block space-y-1 text-xs"><span>Tempo do aviso na tela</span>
         <select aria-label="Tempo do aviso na tela" value={duration} onChange={e => update({ noticeDurationSeconds: Number(e.target.value) })}
           className="min-h-10 w-full rounded-md border border-input bg-background px-3 text-sm">

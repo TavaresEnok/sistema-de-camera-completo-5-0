@@ -2213,6 +2213,8 @@ export class CamerasService implements OnApplicationBootstrap {
         alarmsEnabled: dto.alarmsEnabled ?? true,
         hasEdgeAi: dto.hasEdgeAi ?? false,
         motionTrigger: dto.motionTrigger ?? (dto.hasEdgeAi ? 'CAMERA' : 'SYSTEM'),
+        aiConfidence: dto.aiConfidence ?? 70,
+        aiSensitivity: dto.aiSensitivity ?? 'balanced',
         ...(privacy?.isPrivate ? { isPrivate: true, ownerUserId: privacy.ownerUserId } : {}),
         ...(privacy?.viewerUserIds !== undefined ? { permissions: { create: privacyGrants(privacy) } } : {}),
       },

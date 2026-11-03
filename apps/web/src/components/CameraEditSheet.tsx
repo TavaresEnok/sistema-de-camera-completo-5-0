@@ -21,6 +21,7 @@ import { SeletorDeClassesDeGravacao } from './SeletorDeClassesDeGravacao';
 import { useClassesLiberadas } from '../hooks/use-classes-liberadas';
 import { CameraConnectionCheck } from './CameraConnectionCheck';
 import { CameraDetectionNotices } from './CameraDetectionNotices';
+import { AiConfidenceControl } from './AiConfidenceControl';
 import { CameraPrivacyFields } from './CameraPrivacyFields';
 import { cameraPrivacyChanged, cameraPrivacyError, cameraPrivacyPayload, type CameraPrivacyForm } from '../lib/camera-privacy';
 import { equipmentFields, equipmentError, equipmentPayload, readEquipment, type EquipmentForm } from '../lib/camera-edit';
@@ -612,6 +613,7 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
                   </FormField>
                   <CameraPrivacyFields value={form} onChange={privacy => { setDirty(true); setForm(current => current ? { ...current, ...privacy } : current); }} />
                   <CameraDetectionNotices motion={form.motionNoticeEnabled} object={form.objectNoticeEnabled} sound={form.noticeSoundEnabled} soundType={form.noticeSound} duration={form.noticeDurationSeconds} classes={form.objectNoticeClasses}
+                    confidence={form.aiConfidence} recordingUsesConfidence={form.recordingEnabled && form.recordingMode === 'object'}
                     allowed={classesLiberadas} motionAllowed={motionAllowed} loading={noticeCapabilitiesLoading}
                     onChange={values => { setDirty(true); setForm(current => current ? { ...current, ...values } : current); }} />
                   <ToggleRow label="Mostrar porcentagem do detector" desc="No grid, mostra o nome e a porcentagem acima do quadrado." value={form.showDetectorPercentage} onChange={v => upd('showDetectorPercentage', v)} />
@@ -968,6 +970,7 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
                   <ToggleRow label="Permitir gravação" desc="Autoriza o armazenamento de vídeo conforme o modo escolhido abaixo." value={form.recordingEnabled} onChange={v => upd('recordingEnabled', v)} />
                   <ToggleRow label="Alertas desta câmera" desc="Permite os alertas configurados para esta câmera." value={form.alarmsEnabled} onChange={v => upd('alarmsEnabled', v)} />
                   <CameraDetectionNotices motion={form.motionNoticeEnabled} object={form.objectNoticeEnabled} sound={form.noticeSoundEnabled} soundType={form.noticeSound} duration={form.noticeDurationSeconds} classes={form.objectNoticeClasses}
+                    confidence={form.aiConfidence} recordingUsesConfidence={form.recordingEnabled && form.recordingMode === 'object'}
                     allowed={classesLiberadas} motionAllowed={motionAllowed} loading={noticeCapabilitiesLoading}
                     onChange={values => { setDirty(true); setForm(current => current ? { ...current, ...values } : current); }} />
                   {!form.recordingEnabled && <p role="status" className="text-xs text-muted-foreground">A gravação está desativada. Escolher um modo não a ativa; ligue “Permitir gravação” para gravar.</p>}
@@ -1012,35 +1015,23 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
                       classesLiberadas={classesLiberadas}
                     />
                   )}
-                  {(form.recordingMode === 'motion' || form.recordingMode === 'object' || form.motionNoticeEnabled || form.objectNoticeEnabled) && (
+                  {form.recordingMode === 'object' && !form.objectNoticeEnabled && (
+                    <AiConfidenceControl value={form.aiConfidence} label="Confiança mínima para confirmar a detecção"
+                      sharedWithRecording={form.recordingEnabled} onChange={value => upd('aiConfidence', value)} />
+                  )}
+                  {(form.recordingMode === 'motion' || form.motionNoticeEnabled) && (
                     <div className="space-y-2">
-                      <Label htmlFor="recording-sensitivity">Sensibilidade da detecção</Label>
+                      <Label htmlFor="recording-sensitivity">Sensibilidade do movimento</Label>
                       <Select
-                        value={form.recordingMode !== 'object' ? form.motionSensitivity
-                          : form.aiConfidence === 85 && form.aiSensitivity === 'precise' ? 'baixa'
-                          : form.aiConfidence === 70 && form.aiSensitivity === 'balanced' ? 'media'
-                          : form.aiConfidence === 55 && form.aiSensitivity === 'sensitive' ? 'alta' : 'personalizada'}
+                        value={form.motionSensitivity}
                         onValueChange={(value) => {
-                          if (value === 'personalizada') return;
-                          if (form.recordingMode !== 'object') {
-                            upd('motionSensitivity', value as Form['motionSensitivity']);
-                          } else {
-                            const presets = { baixa: [85, 'precise'], media: [70, 'balanced'], alta: [55, 'sensitive'] } as const;
-                            const [confidence, profile] = presets[value as keyof typeof presets];
-                            setForm(current => current ? { ...current, aiConfidence: confidence, aiSensitivity: profile } : current);
-                            setDirty(true);
-                          }
+                          upd('motionSensitivity', value as Form['motionSensitivity']);
                         }}>
                         <SelectTrigger id="recording-sensitivity"><SelectValue /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value="baixa">Baixa</SelectItem>
                           <SelectItem value="media">Média</SelectItem>
                           <SelectItem value="alta">Alta</SelectItem>
-                          {form.recordingMode === 'object'
-                            && !((form.aiConfidence === 85 && form.aiSensitivity === 'precise')
-                              || (form.aiConfidence === 70 && form.aiSensitivity === 'balanced')
-                              || (form.aiConfidence === 55 && form.aiSensitivity === 'sensitive'))
-                            && <SelectItem value="personalizada">Personalizada ({form.aiConfidence}%)</SelectItem>}
                         </SelectContent>
                       </Select>
                       <p className="text-xs text-muted-foreground">
