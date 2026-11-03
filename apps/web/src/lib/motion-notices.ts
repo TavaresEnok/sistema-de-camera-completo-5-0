@@ -8,8 +8,8 @@ export function noticeDuration(value: unknown): number {
 export type TimedMotionNotice = MotionNotice & { queuedAt: number; expiresAt: number | null };
 /** Visible cards keep their own deadline. Waiting cards get their full time on display. */
 export function advanceNoticeQueue(items: TimedMotionNotice[], now: number): TimedMotionNotice[] {
-  return items.filter(item => item.expiresAt === null ? now - item.queuedAt <= 30_000 : item.expiresAt > now)
-    .slice(0, 12).map((item, index) => index < 3 && item.expiresAt === null
+  return items.filter(item => item.expiresAt === null || item.expiresAt > now)
+    .map((item, index) => index < 3 && item.expiresAt === null
       ? { ...item, expiresAt: now + noticeDuration(item.noticeDurationSeconds) * 1000 } : item);
 }
 

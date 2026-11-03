@@ -5,6 +5,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends gcc g++ binutil
     && rm -r /var/lib/apt/lists/*
 COPY services/ai-service-python/stream_processor.py /source/stream_processor.py
 COPY services/ai-service-python/detectors/confirmacao_de_objeto.py /source/detectors/confirmacao_de_objeto.py
+COPY services/ai-service-python/detectors/tripwire.py /source/detectors/tripwire.py
 COPY scripts/security/compile-ai.py /build/compile-ai.py
 RUN cd /build && python compile-ai.py \
     && find /native -type f -name '*.so' -exec strip --strip-unneeded '{}' '+'

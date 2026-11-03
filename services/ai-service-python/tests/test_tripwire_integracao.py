@@ -39,7 +39,7 @@ class TripwireIntegracaoTests(unittest.TestCase):
             self.assertIn(nome, importados, f"{nome} usado sem import")
 
     def test_o_detector_e_instanciado_com_as_zonas(self):
-        self.assertIn("DetectorDeTravessia(self.detection_zones)", self.texto,
+        self.assertIn("DetectorDeTravessia(self.detection_zones,", self.texto,
                       "o tripwire não recebe as linhas da câmera")
 
     def test_e_alimentado_no_ramo_QUE_TEM_RASTREAMENTO(self):

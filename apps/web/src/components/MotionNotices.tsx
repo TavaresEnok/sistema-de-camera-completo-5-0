@@ -23,6 +23,7 @@ export function MotionNotices() {
   const [previewFullscreen, setPreviewFullscreen] = useState(false);
   const enabled = useVmsDataStore(s => s.cameras.some(c => c.enabled !== false && (c.motionNoticeEnabled || c.objectNoticeEnabled)));
   const [notices, setNotices] = useState<TimedMotionNotice[]>([]);
+  const [showPending, setShowPending] = useState(false);
   const [portal, setPortal] = useState<HTMLElement>(() => document.fullscreenElement as HTMLElement ?? document.body);
 
   useEffect(() => {
@@ -91,7 +92,7 @@ export function MotionNotices() {
           const timed = incoming.map(item => ({ ...item, queuedAt: receivedAt, expiresAt: null,
             noticeDurationSeconds: noticeDuration(item.noticeDurationSeconds
               ?? cameras.find(camera=>camera.id===item.cameraId)?.noticeDurationSeconds) }));
-          // A fourth camera must not remove an unexpired toast. Queue briefly and bound memory.
+          // Pending notices remain available until displayed or dismissed.
           setNotices(previous => advanceNoticeQueue([...previous, ...timed], receivedAt));
         }
       } catch { /* Network failure must not create alarming or technical messages. */ }
@@ -115,8 +116,11 @@ export function MotionNotices() {
   }, [notices]);
 
   return <>{createPortal(
-    <div className="pointer-events-none fixed bottom-5 right-5 z-[100] flex w-80 max-w-[calc(100vw-2.5rem)] flex-col gap-2" role="status" aria-live="polite" aria-atomic="false">
-      {notices.slice(0, 3).map(notice => (
+    <div className="pointer-events-none fixed bottom-5 right-5 z-[100] flex max-h-[70vh] w-80 max-w-[calc(100vw-2.5rem)] flex-col gap-2 overflow-y-auto" role="status" aria-live="polite" aria-atomic="false">
+      {notices.length > 3 && <button type="button" className="pointer-events-auto rounded-md border bg-card p-2 text-sm text-card-foreground" onClick={() => setShowPending(value => !value)} aria-expanded={showPending}>
+        {showPending ? 'Recolher lista' : `Ver ${notices.length - 3} avisos aguardando`}
+      </button>}
+      {(showPending ? notices : notices.slice(0, 3)).map(notice => (
         <div key={notice.id} className="pointer-events-auto flex items-start gap-3 rounded-lg border border-border bg-card p-3 text-card-foreground shadow-lg">
           <Radar className="mt-0.5 h-5 w-5 shrink-0 text-primary" aria-hidden="true" />
           <button type="button" aria-label={`Abrir câmera ${notice.cameraName}`} onClick={() => setPreview(notice)} className="min-w-0 flex-1 rounded text-left text-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">

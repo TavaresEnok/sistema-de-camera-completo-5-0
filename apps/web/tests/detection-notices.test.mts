@@ -1,7 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { detectionNoticeMessage, selectMotionNotices } from '../src/lib/motion-notices.ts';
+import { advanceNoticeQueue, detectionNoticeMessage, selectMotionNotices, type TimedMotionNotice } from '../src/lib/motion-notices.ts';
+
+test('todos os avisos de uma rajada recebem tempo completo, mesmo após longa espera', () => {
+  for (const duration of [10,30,60,120]) {
+    let queue: TimedMotionNotice[] = Array.from({length:15},(_,i)=>({id:String(i),cameraId:'a',cameraName:'A',occurredAt:new Date(0).toISOString(),queuedAt:0,expiresAt:null,noticeDurationSeconds:duration}));
+    const displayed = new Set<string>();
+    for(let time=0;time<=duration*6000;time+=1000) {
+      queue=advanceNoticeQueue(queue,time);
+      for(const item of queue.slice(0,3)) {
+        if(!displayed.has(item.id)) assert.equal(item.expiresAt! - time,duration*1000);
+        displayed.add(item.id);
+      }
+    }
+    assert.equal(displayed.size,15);
+    assert.equal(queue.length,0);
+  }
+});
 
 test('avisos simples distinguem movimento, pessoa, carro e moto sem porcentagens', () => {
   const base = { id: '1', cameraId: 'a', cameraName: 'Portaria', occurredAt: new Date().toISOString() };

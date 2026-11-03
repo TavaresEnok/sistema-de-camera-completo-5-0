@@ -181,7 +181,9 @@ class StreamProcessor:
         )
         # Tripwire: as LINHAS viajam na mesma lista das zonas (kind: 'line').
         # Fica inativo — e sem custo — quando não há nenhuma desenhada.
-        self.tripwire = DetectorDeTravessia(self.detection_zones)
+        self.tripwire = DetectorDeTravessia(self.detection_zones,
+            confidence_threshold=float(self.object_policy["confirm_threshold"]),
+            min_frames=int(self.object_policy["confirm_min_frames"]))
         # Confirmação por persistência: um objeto só vira EVENTO depois de
         # provar que existe em vários quadros. Sem isto, um arbusto no vento
         # acordava o cliente — o único freio era um debounce de tempo, que
@@ -1341,6 +1343,7 @@ class StreamProcessor:
                                         "linhaNome": t.get("linhaNome"),
                                         "sentido": t.get("sentido"),
                                         "trackId": t.get("trackId"),
+                                        "confirmationConfidence": t.get("confirmationConfidence"),
                                         "frameWidth": int(advanced_width),
                                         "frameHeight": int(advanced_height),
                                     },

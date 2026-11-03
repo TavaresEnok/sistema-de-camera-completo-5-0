@@ -30,6 +30,8 @@ from __future__ import annotations
 
 import math
 import time
+import statistics
+from collections import deque
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 # Depois deste tempo sem ver um trackId, sua última posição é esquecida.
@@ -59,6 +61,8 @@ def _dentro(ponto: Tuple[float, float], poligono: List[Tuple[float, float]]) -> 
     for i in range(len(poligono)):
         x, y = poligono[i]
         xx, yy = poligono[j]
+        if abs((ponto[0]-xx)*(y-yy)-(ponto[1]-yy)*(x-xx)) < 1e-9 and min(x,xx)-1e-9 <= ponto[0] <= max(x,xx)+1e-9 and min(y,yy)-1e-9 <= ponto[1] <= max(y,yy)+1e-9:
+            return True
         if (y > ponto[1]) != (yy > ponto[1]):
             limite = (xx - x) * (ponto[1] - y) / (yy - y) + x
             if ponto[0] < limite:
@@ -150,7 +154,7 @@ def ponto_de_referencia(bbox: Any, largura: int, altura: int) -> Optional[Tuple[
 class DetectorDeTravessia:
     """Guarda o rastro de cada objeto e decide travessias por câmera."""
 
-    def __init__(self, zonas: Optional[Iterable[Any]] = None) -> None:
+    def __init__(self, zonas: Optional[Iterable[Any]] = None, *, confidence_threshold=0.0, min_frames=1) -> None:
         self.linhas = linhas_de(zonas)
         self.includes, self.excludes = areas_de(zonas)
         # trackId -> (x, y, visto_em)
@@ -158,6 +162,10 @@ class DetectorDeTravessia:
         # (trackId, linhaId) -> (último lado estável, ponto, visto_em). A faixa
         # neutra impede que tocar/tremular sobre a linha vire uma travessia.
         self._lados: Dict[Tuple[str, str], Tuple[int, Tuple[float, float], float]] = {}
+        self.confidence_threshold = confidence_threshold
+        self.min_frames = min_frames
+        self._scores = {}
+        self._pending = {}
 
     @property
     def ativo(self) -> bool:
@@ -168,6 +176,8 @@ class DetectorDeTravessia:
         self.linhas = linhas_de(zonas)
         self.includes, self.excludes = areas_de(zonas)
         self._lados.clear()
+        self._scores.clear()
+        self._pending.clear()
         if not self.linhas:
             self._rastros.clear()
 
@@ -176,6 +186,8 @@ class DetectorDeTravessia:
         vencidos = [k for k, (_, _, t) in self._rastros.items() if agora - t > TTL_RASTRO_S]
         for k in vencidos:
             self._rastros.pop(k, None)
+            self._scores.pop(k, None)
+            self._pending.pop(k, None)
             for estado in [estado for estado in self._lados if estado[0] == k]:
                 self._lados.pop(estado, None)
 
@@ -190,6 +202,8 @@ class DetectorDeTravessia:
             return
         for k, _ in sorted(self._rastros.items(), key=lambda kv: kv[1][2])[:excedente]:
             self._rastros.pop(k, None)
+            self._scores.pop(k, None)
+            self._pending.pop(k, None)
             for estado in [estado for estado in self._lados if estado[0] == k]:
                 self._lados.pop(estado, None)
 
@@ -232,10 +246,12 @@ class DetectorDeTravessia:
                 continue
 
             self._rastros[chave] = (atual[0], atual[1], agora)
-            if not self._permitido(atual):
-                for estado in [estado for estado in self._lados if estado[0] == chave]:
-                    self._lados.pop(estado, None)
-                continue
+            scores = self._scores.setdefault(chave, deque(maxlen=30))
+            scores.append(float(getattr(det, "confidence", 0.0) or 0.0))
+            pending = self._pending.setdefault(chave, {})
+            for lid, (_, when) in list(pending.items()):
+                if agora - when > TTL_RASTRO_S:
+                    del pending[lid]
 
             for linha in self.linhas:
                 comprimento = math.hypot(linha["b"][0] - linha["a"][0], linha["b"][1] - linha["a"][1])
@@ -250,9 +266,18 @@ class DetectorDeTravessia:
                 lado_antes, ponto_anterior, _ = anterior_estavel
                 if lado_antes == lado_atual or not _segmentos_cruzam(ponto_anterior, atual, linha["a"], linha["b"]):
                     continue
+                # Preserve the outside position. Validate the crossing point,
+                # not just the destination: entering and leaving both count.
+                a, b = linha["a"], linha["b"]
+                before = _lado(*a, *b, *ponto_anterior)
+                after = _lado(*a, *b, *atual)
+                fraction = before / (before - after)
+                crossing = tuple(ponto_anterior[i] + fraction * (atual[i]-ponto_anterior[i]) for i in (0,1))
+                if not self._permitido(crossing):
+                    continue
                 sentido = "ab" if lado_antes < 0 else "ba"
                 configurado = linha["sentido"]
-                travessias.append({
+                event = {
                     "linhaId": linha["id"],
                     "linhaNome": linha["name"],
                     "sentido": sentido,
@@ -260,6 +285,14 @@ class DetectorDeTravessia:
                     "label": getattr(det, "label", None),
                     "confidence": getattr(det, "confidence", None),
                     "trackId": str(track_id),
-                })
+                }
+                # Keep the latest crossing per line briefly while evidence
+                # matures; an early crossing must not disappear at frame two.
+                pending[linha["id"]] = (event, agora)
+            if len(scores) >= self.min_frames and statistics.median(scores) >= self.confidence_threshold:
+                for event, _ in pending.values():
+                    event["confirmationConfidence"] = statistics.median(scores)
+                    travessias.append(event)
+                pending.clear()
         self._limitar()
         return travessias
