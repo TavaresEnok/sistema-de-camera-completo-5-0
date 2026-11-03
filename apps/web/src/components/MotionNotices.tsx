@@ -11,12 +11,15 @@ import { useDetectionActivityStore } from '../store/detectionActivityStore';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
 import { LiveStreamPlayer } from './LiveStreamPlayer';
 import { Button } from './ui/button';
+import { useDesktopNoticeStore } from '../store/desktopNoticeStore';
+import { closeDesktopNotices, showDesktopDetection } from '../lib/desktop-notices';
 
 /** Mounted once, outside page layouts (including retained live layouts). */
 export function MotionNotices() {
   const token = useAuthStore(s => s.accessToken);
   const initialPassword = useAuthStore(s => s.user?.mustChangePassword);
   const userId = useAuthStore(s => s.user?.id);
+  const desktopEnabled = useDesktopNoticeStore(s => s.enabled);
   const [preview, setPreview] = useState<MotionNotice | null>(null);
   const previewCamera = useVmsDataStore(s => s.cameras.find(c => c.id === preview?.cameraId));
   const previewRef = useRef<HTMLDivElement>(null);
@@ -40,7 +43,13 @@ export function MotionNotices() {
 
   useEffect(() => { setPreview(null); useDetectionActivityStore.getState().reset(); }, [userId]);
   useEffect(() => {
+    useDesktopNoticeStore.getState().loadForUser(userId ?? null);
+    closeDesktopNotices();
+    return closeDesktopNotices;
+  }, [userId, desktopEnabled]);
+  useEffect(() => {
     if (!token || initialPassword || !previewCamera || previewCamera.canViewContent === false) setPreview(null);
+    if (!token || initialPassword) closeDesktopNotices();
   }, [token, initialPassword, previewCamera]);
 
   const closePreview = () => {
@@ -79,6 +88,18 @@ export function MotionNotices() {
         }
         const incoming = selectMotionNotices(data.items, seen, lastByCamera, Date.parse(data.cursor));
         if (incoming.length) {
+          const preference = useDesktopNoticeStore.getState();
+          if (userId && preference.userId === userId && preference.enabled) {
+            for (const item of incoming) showDesktopDetection(item, userId, clicked => {
+              const auth = useAuthStore.getState();
+              const currentPreference = useDesktopNoticeStore.getState();
+              const camera = useVmsDataStore.getState().cameras.find(c => c.id === clicked.cameraId);
+              if (auth.user?.id !== userId || !auth.accessToken || auth.user.mustChangePassword
+                || currentPreference.userId !== userId || !currentPreference.enabled
+                || !camera || camera.enabled === false || camera.canViewContent === false) return;
+              setPreview(clicked);
+            }, detectionNoticeMessage(item));
+          }
           // Um som por lote: três câmeras detectadas no mesmo ciclo não viram
           // ruído. Cada câmera controla se o próprio aviso deve tocar.
           const cameras = useVmsDataStore.getState().cameras;
@@ -106,7 +127,7 @@ export function MotionNotices() {
     document.addEventListener('visibilitychange', resume);
     void poll();
     return () => { cancelled = true; document.removeEventListener('visibilitychange', resume); controller.abort(); if (timer) clearTimeout(timer); };
-  }, [token, enabled, initialPassword]);
+  }, [token, enabled, initialPassword, userId]);
 
   useEffect(() => {
     if (!notices.length) return;

@@ -29,7 +29,7 @@ COPY apps/mobile/src /app/apps/mobile/src
 ARG FRONTEND_BUILD_ID=notice-preferences-20261028
 ENV VITE_FRONTEND_BUILD_ID=$FRONTEND_BUILD_ID
 RUN cd /app/apps/web && pnpm exec tsc --noEmit && pnpm exec vite build
-RUN cd /app/apps/web && node --test tests/detection-notices.test.mts tests/notice-sounds.test.mts && node tests/browser/render-detection-notices.mjs
+RUN cd /app/apps/web && node --test tests/detection-notices.test.mts tests/notice-sounds.test.mts tests/desktop-notices.test.mts && node tests/browser/render-detection-notices.mjs
 
 FROM drac-private-web:20261008 AS web
 ARG RELEASE_REVISION

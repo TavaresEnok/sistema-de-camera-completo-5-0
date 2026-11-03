@@ -15,6 +15,7 @@ import { useThemeStore } from '../store/themeStore';
 import { useBrandingStore } from '../store/brandingStore';
 import { ADMIN_PAGE_PERMISSION, hasPermission, usePermissionsStore } from '../store/permissionsStore';
 import { useDeteccoesNaoVistas, formatarContador } from '../hooks/use-deteccoes-nao-vistas';
+import { DesktopNoticeControl } from './DesktopNoticeControl';
 
 type NavItem = {
   path: string;
@@ -260,6 +261,7 @@ export function Sidebar({
 
       {/* ── Bottom controls ── */}
       <div className="sidebar-footer px-2 py-2 shrink-0 space-y-2">
+        <DesktopNoticeControl expanded={isExpanded} />
         <div className={`grid gap-1.5 ${isExpanded ? 'grid-cols-2' : 'grid-cols-1'}`}>
           <button
             onClick={onSearchOpen}
