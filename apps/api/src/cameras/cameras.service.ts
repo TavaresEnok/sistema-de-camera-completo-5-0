@@ -11,6 +11,7 @@ import { stat, statfs } from 'node:fs/promises';
 import { join } from 'node:path';
 import { aiEnabledEfetivo } from './helpers/motion-detector.helper';
 import { noticeClasses, noticeObjectClass, noticeWithinPerimeter } from './helpers/detection-notice.helper';
+import { NoticePoliciesService } from '../notice-policies/notice-policies.service';
 import { CommercialPolicyService } from '../commercial-policy/commercial-policy.service';
 import { applyCameraPrivacy, cameraPrivacyRevision, hasPrivacyFields, privateCreation, privacyGrants, type PrivateCreation } from './helpers/camera-privacy.helper';
 import { escolherGrupoDoCliente, type VinculoDeGrupo } from './helpers/grupo-do-cliente.helper';
@@ -1102,7 +1103,7 @@ export class CamerasService implements OnApplicationBootstrap {
         perimeterCrossing: e.type === 'LINE_CROSSED', noticeSoundEnabled: e.camera.noticeSoundEnabled,
         noticeSound: e.camera.noticeSound, noticeDurationSeconds: e.camera.noticeDurationSeconds }];
     });
-    return { items, cursor: now.toISOString() };
+    return this.moduleRef.get(NoticePoliciesService, {strict:false}).filterFeed(accessibleCameraIds, { items, cursor: now.toISOString() });
   }
 
   async listMotionNotices(accessibleCameraIds: string[], since?: string) {

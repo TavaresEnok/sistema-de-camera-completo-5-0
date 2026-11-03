@@ -34,7 +34,7 @@ test('classes normalize Portuguese labels and never fall back to unselected lice
 
 function service(allowed = ['person'], objectAllowed = true) {
   const svc: any = Object.create(CamerasService.prototype);
-  svc.moduleRef = { get: () => ({ getPolicy: async () => ({ aiObjectClasses: allowed }), isAllowed: async (feature: string) => feature !== 'aiObject' || objectAllowed }) };
+  svc.moduleRef = { get: () => ({ filterFeed: async (_:unknown,feed:unknown)=>feed, getPolicy: async () => ({ aiObjectClasses: allowed }), isAllowed: async (feature: string) => feature !== 'aiObject' || objectAllowed }) };
   return svc;
 }
 

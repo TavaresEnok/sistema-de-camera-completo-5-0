@@ -99,6 +99,7 @@ export interface Camera {
   isPrivate?: boolean;
   /** Este usuário pode ver o CONTEÚDO? (false p/ admin numa câmera privada de terceiro). */
   canViewContent?: boolean;
+  canManageNotices?: boolean;
   /** Zonas/linhas de perímetro. Só o `kind`/`sentido` importam para o resumo da
    *  página de Segurança; o desenho fica no editor do detalhe da câmera. */
   detectionZones?: Array<{ kind: 'include' | 'exclude' | 'line'; sentido?: 'ambos' | 'ab' | 'ba' }>;
@@ -405,6 +406,7 @@ function mapCameraItems(
       isPrivate: camera.isPrivate === true,
       // canView vem do withCapabilities da API; ausente = assume permitido (retrocompat).
       canViewContent: camera.canView !== false,
+      canManageNotices: camera.canAdmin === true,
       isOnline: camera.status === 'ONLINE',
       signalStrength: camera.status === 'ONLINE' ? 100 : 0,
       recordingMode: effectiveRecordingMode,

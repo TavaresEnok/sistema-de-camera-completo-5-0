@@ -19,6 +19,7 @@ import { toast } from '../hooks/use-toast';
 import { clientError } from '../lib/client-error';
 import { confirmAction } from '../components/ActionConfirmation';
 import { hasPermission, usePermissionsStore } from '../store/permissionsStore';
+import { NoticePolicyControl } from '../components/NoticePolicyControl';
 
 const API_URL = getApiBaseUrl();
 type PermissionLevel = 'VIEW' | 'CONTROL' | 'RECORD' | 'ADMIN';
@@ -452,6 +453,7 @@ export default function GroupsPage() {
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              {isAdmin && <NoticePolicyControl scope="group" id={selGroup.id} name={selGroup.name} />}
               {isAdmin && (
                 <div
                   className="flex items-center gap-2.5 h-8 rounded-md border border-border px-3"

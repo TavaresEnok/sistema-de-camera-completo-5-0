@@ -4,7 +4,7 @@ COPY apps/api/prisma /app/apps/api/prisma
 COPY apps/api/tests /app/apps/api/tests
 COPY apps/web/src/lib /app/apps/web/src/lib
 RUN cd /app/apps/api && pnpm exec prisma generate && pnpm exec tsc -p tsconfig.json
-RUN cd /app/apps/api && node --import tsx --test tests/notice-preferences-perimeter.test.ts tests/detection-notices.test.ts tests/motion-notices.test.ts tests/rtmp-confidence.test.ts tests/escopo-de-objeto.test.ts
+RUN cd /app/apps/api && node --import tsx --test tests/notice-periods.test.ts tests/notice-preferences-perimeter.test.ts tests/detection-notices.test.ts tests/motion-notices.test.ts tests/rtmp-confidence.test.ts tests/escopo-de-objeto.test.ts
 
 FROM node:22-alpine AS api
 ARG RELEASE_REVISION

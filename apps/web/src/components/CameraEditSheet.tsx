@@ -21,6 +21,7 @@ import { SeletorDeClassesDeGravacao } from './SeletorDeClassesDeGravacao';
 import { useClassesLiberadas } from '../hooks/use-classes-liberadas';
 import { CameraConnectionCheck } from './CameraConnectionCheck';
 import { CameraDetectionNotices } from './CameraDetectionNotices';
+import { NoticePolicyControl } from './NoticePolicyControl';
 import { AiConfidenceControl } from './AiConfidenceControl';
 import { CameraPrivacyFields } from './CameraPrivacyFields';
 import { cameraPrivacyChanged, cameraPrivacyError, cameraPrivacyPayload, type CameraPrivacyForm } from '../lib/camera-privacy';
@@ -616,6 +617,7 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
                     confidence={form.aiConfidence} recordingUsesConfidence={form.recordingEnabled && form.recordingMode === 'object'}
                     allowed={classesLiberadas} motionAllowed={motionAllowed} loading={noticeCapabilitiesLoading}
                     onChange={values => { setDirty(true); setForm(current => current ? { ...current, ...values } : current); }} />
+                  {cameraId && <NoticePolicyControl id={cameraId} name={camera?.name} canManage={canEdit} />}
                   <ToggleRow label="Mostrar porcentagem do detector" desc="No grid, mostra o nome e a porcentagem acima do quadrado." value={form.showDetectorPercentage} onChange={v => upd('showDetectorPercentage', v)} />
                   <div className="space-y-3 rounded-lg border border-border bg-background/55 p-3">
                     <div className="flex items-center gap-2">
@@ -973,6 +975,7 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
                     confidence={form.aiConfidence} recordingUsesConfidence={form.recordingEnabled && form.recordingMode === 'object'}
                     allowed={classesLiberadas} motionAllowed={motionAllowed} loading={noticeCapabilitiesLoading}
                     onChange={values => { setDirty(true); setForm(current => current ? { ...current, ...values } : current); }} />
+                  {cameraId && <NoticePolicyControl id={cameraId} name={camera?.name} canManage={canEdit} />}
                   {!form.recordingEnabled && <p role="status" className="text-xs text-muted-foreground">A gravação está desativada. Escolher um modo não a ativa; ligue “Permitir gravação” para gravar.</p>}
                   <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Modo de gravação</p>
                   {form.recordingMode === 'schedule' && (

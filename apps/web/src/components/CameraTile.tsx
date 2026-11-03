@@ -11,6 +11,8 @@ import { useAuthStore } from '../store/authStore';
 import { useDetectionActivityStore } from '../store/detectionActivityStore';
 import { liveDetectionsPoller } from '../lib/live-detections-poller';
 import { hasFreshDetection } from '../lib/detection-activity';
+import { NoticePolicyControl } from './NoticePolicyControl';
+import { hasPermission, usePermissionsStore } from '../store/permissionsStore';
 
 interface CameraTileProps {
   camera: Camera;
@@ -64,6 +66,7 @@ export function CameraTile({
   const [hovered, setHovered] = useState(false);
   const [keyboardFocused, setKeyboardFocused] = useState(false);
   const canRecord = useAuthStore(state => state.user?.role === 'admin' || state.user?.role === 'operator');
+  usePermissionsStore(state => state.permissions);
   const [playerStatus, setPlayerStatus] = useState<LivePlayerStatus | null>(null);
   const [audioControlContainer, setAudioControlContainer] = useState<HTMLDivElement | null>(null);
   const [streamControlsContainer, setStreamControlsContainer] = useState<HTMLDivElement | null>(null);
@@ -189,6 +192,7 @@ export function CameraTile({
               {[camera.isPrivate && 'Privada', isAlarm && 'Alarme', isMotion && 'Movimento', isManualRecordingActive && 'Gravação manual'].filter(Boolean).join(' · ')}
             </span>}
           </div>
+          {!contentLocked && <NoticePolicyControl id={camera.id} name={camera.name} compact canManage={canRecord && camera.canManageNotices === true && hasPermission('cameraConfig')} />}
           {!contentLocked && <div ref={setAudioControlContainer} className="pointer-events-none flex shrink-0 items-center" />}
           {!contentLocked && !showOfflineOverlay && !wallMode && <>
             {canRecord && camera.recordingMode !== 'continuous' && <button

@@ -2,6 +2,12 @@ import type { MotionNotice } from './motion-notices';
 
 const active = new Map<string, Notification>();
 
+export function closeDesktopNoticesForCamera(cameraId: string) {
+  for (const [tag, notice] of active) if (tag.endsWith(`:${cameraId}`)) {
+    notice.close(); active.delete(tag);
+  }
+}
+
 export function desktopNotificationsSupported(): boolean {
   return typeof window !== 'undefined' && window.isSecureContext && 'Notification' in window;
 }

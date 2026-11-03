@@ -43,7 +43,7 @@ test('motion uses monitored components, including multiple disconnected boxes',(
 
 test('feed filters object perimeter events on the server and returns current camera preferences',async()=>{
   const svc:any=Object.create(CamerasService.prototype);
-  svc.moduleRef={get:()=>({getPolicy:async()=>({aiObjectClasses:['person']}),isAllowed:async()=>true})};
+  svc.moduleRef={get:()=>({filterFeed:async(_:unknown,feed:unknown)=>feed,getPolicy:async()=>({aiObjectClasses:['person']}),isAllowed:async()=>true})};
   const camera={name:'Portaria',objectNoticeClasses:['person'],detectionZones:[include],noticeSound:'siren',noticeDurationSeconds:20,noticeSoundEnabled:true};
   svc.prisma={cameraEvent:{findMany:async()=>[
     {id:'outside',cameraId:'a',type:'OBJECT_DETECTED',occurredAt:new Date(),metadata:frame([0,0,10,10]),camera},

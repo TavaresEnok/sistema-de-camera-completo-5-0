@@ -12,7 +12,9 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { LiveStreamPlayer } from './LiveStreamPlayer';
 import { Button } from './ui/button';
 import { useDesktopNoticeStore } from '../store/desktopNoticeStore';
-import { closeDesktopNotices, showDesktopDetection } from '../lib/desktop-notices';
+import { closeDesktopNotices, closeDesktopNoticesForCamera, showDesktopDetection } from '../lib/desktop-notices';
+import { useNoticePolicyStore } from '../store/noticePolicyStore';
+import type { NoticeState } from '../lib/notice-policy';
 
 /** Mounted once, outside page layouts (including retained live layouts). */
 export function MotionNotices() {
@@ -20,6 +22,7 @@ export function MotionNotices() {
   const initialPassword = useAuthStore(s => s.user?.mustChangePassword);
   const userId = useAuthStore(s => s.user?.id);
   const desktopEnabled = useDesktopNoticeStore(s => s.enabled);
+  const policyStates = useNoticePolicyStore(s => s.states);
   const [preview, setPreview] = useState<MotionNotice | null>(null);
   const previewCamera = useVmsDataStore(s => s.cameras.find(c => c.id === preview?.cameraId));
   const previewRef = useRef<HTMLDivElement>(null);
@@ -42,6 +45,21 @@ export function MotionNotices() {
   }, []);
 
   useEffect(() => { setPreview(null); useDetectionActivityStore.getState().reset(); }, [userId]);
+  useEffect(() => {
+    useNoticePolicyStore.getState().reset();
+    if (!token || initialPassword) return;
+    const refresh = () => void useNoticePolicyStore.getState().refresh().catch(() => undefined);
+    refresh();
+    const timer = setInterval(refresh, 15000);
+    return () => clearInterval(timer);
+  }, [userId, token, initialPassword]);
+  useEffect(() => {
+    for (const state of Object.values(policyStates)) if (!state.active) closeDesktopNoticesForCamera(state.cameraId);
+    setNotices(previous => {
+      const filtered = previous.filter(n => policyStates[n.cameraId]?.active !== false);
+      return filtered.length === previous.length ? previous : advanceNoticeQueue(filtered, Date.now());
+    });
+  }, [policyStates]);
   useEffect(() => {
     useDesktopNoticeStore.getState().loadForUser(userId ?? null);
     closeDesktopNotices();
@@ -75,18 +93,20 @@ export function MotionNotices() {
       if (polling || cancelled) return;
       polling = true;
       try {
-        const { data } = await axios.get<{ items: MotionNotice[]; cursor: string }>(`${getApiBaseUrl()}/cameras/detection-notices`, {
+        const { data } = await axios.get<{ items: MotionNotice[]; cursor: string; states?: NoticeState[] }>(`${getApiBaseUrl()}/cameras/detection-notices`, {
           params: { since: cursor }, headers: { Authorization: `Bearer ${token}` }, signal: controller.signal, timeout: 10_000,
         });
         if (cancelled) return;
         cursor = data.cursor;
+        if (data.states) useNoticePolicyStore.getState().receive(data.states);
         // Highlight all recent events, independently of toast throttling/limit.
         const now = Date.parse(data.cursor);
         for (const item of data.items) {
           const occurred = Date.parse(item.occurredAt);
           if (Number.isFinite(occurred) && occurred <= now + 1000 && now - occurred <= 5000) useDetectionActivityStore.getState().mark(item.cameraId);
         }
-        const incoming = selectMotionNotices(data.items, seen, lastByCamera, Date.parse(data.cursor));
+        const incoming = selectMotionNotices(data.items, seen, lastByCamera, Date.parse(data.cursor))
+          .filter(item => useNoticePolicyStore.getState().states[item.cameraId]?.active !== false);
         if (incoming.length) {
           const preference = useDesktopNoticeStore.getState();
           if (userId && preference.userId === userId && preference.enabled) {
@@ -96,7 +116,8 @@ export function MotionNotices() {
               const camera = useVmsDataStore.getState().cameras.find(c => c.id === clicked.cameraId);
               if (auth.user?.id !== userId || !auth.accessToken || auth.user.mustChangePassword
                 || currentPreference.userId !== userId || !currentPreference.enabled
-                || !camera || camera.enabled === false || camera.canViewContent === false) return;
+                || !camera || camera.enabled === false || camera.canViewContent === false
+                || useNoticePolicyStore.getState().states[clicked.cameraId]?.active === false) return;
               setPreview(clicked);
             }, detectionNoticeMessage(item));
           }

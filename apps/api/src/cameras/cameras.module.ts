@@ -22,9 +22,10 @@ import { IntelbrasEventsService } from './intelbras-events.service';
 import { RtmpIngestSourceService } from './rtmp-ingest-source.service';
 import { RtmpDiscoveryService } from './rtmp-discovery.service';
 import { RtmpDiscoveryController } from './rtmp-discovery.controller';
+import { NoticePoliciesModule } from '../notice-policies/notice-policies.module';
 
 @Module({
-  imports: [AuditModule, AccessControlModule, AlarmsModule, forwardRef(() => RecordingsModule)],
+  imports: [NoticePoliciesModule, AuditModule, AccessControlModule, AlarmsModule, forwardRef(() => RecordingsModule)],
   controllers: [RtmpDiscoveryController, CamerasController],
   providers: [SharedRtspSourceService, RtmpDiscoveryService, PendingIngestRegistry, RtmpIngestSourceService, CamerasService, CryptoService, PortCheckerService, OnvifEventsService, IntelbrasEventsService],
   exports: [SharedRtspSourceService, RtmpDiscoveryService, PendingIngestRegistry, RtmpIngestSourceService, CamerasService, CryptoService, PortCheckerService, OnvifEventsService, IntelbrasEventsService],
