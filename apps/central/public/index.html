@@ -246,6 +246,16 @@
       .login-card > p { margin: 0 0 24px; color: var(--muted); line-height: 1.55; }
       .login-form { display: grid; gap: 14px; }
       .login-form button { min-height: 40px; margin-top: 4px; }
+      .login-password-wrap { position: relative; }
+      .login-password-wrap input { padding-right: 46px; }
+      .login-form .login-password-toggle {
+        position: absolute; inset: 1px 1px 1px auto; width: 40px; min-height: 0;
+        margin: 0; padding: 0; border: 0; color: var(--muted); background: transparent;
+      }
+      .login-form .login-password-toggle:hover { color: var(--ink); background: var(--surface-2); }
+      .login-form .login-password-toggle:focus-visible { outline: 2px solid var(--brand); outline-offset: -3px; }
+      .login-password-toggle svg { width: 18px; height: 18px; }
+      .login-password-toggle [hidden] { display: none; }
       .login-error { min-height: 18px; color: var(--red); font-size: 12px; }
       .login-foot { margin-top: 28px; color: var(--quiet); font-size: 11px; }
 
@@ -1070,7 +1080,16 @@
             </div>
             <div class="field">
               <label for="login-password">Senha</label>
-              <input id="login-password" type="password" autocomplete="current-password" />
+              <div class="login-password-wrap">
+                <input id="login-password" type="password" autocomplete="current-password" />
+                <button id="login-password-toggle" class="login-password-toggle" type="button" aria-label="Mostrar senha" aria-pressed="false" aria-controls="login-password" title="Mostrar senha">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z" />
+                    <circle cx="12" cy="12" r="3" />
+                    <path id="login-password-slash" d="M4 4l16 16" hidden />
+                  </svg>
+                </button>
+              </div>
             </div>
             <button id="login-button" class="primary">Entrar no painel</button>
             <div id="login-error" class="login-error"></div>
@@ -5387,6 +5406,7 @@
         } catch {
           els.loginError.textContent = 'Não foi possível conectar ao servidor central.';
         } finally {
+          setLoginPasswordVisible(false);
           els.loginButton.disabled = false;
           els.loginButton.textContent = 'Entrar no painel';
         }
@@ -6228,6 +6248,17 @@
       applyTheme(localStorage.getItem('drac-central-theme') === 'light' ? 'light' : 'dark');
 
       /* ── Ligações ────────────────────────────────────────────────────── */
+      const passwordToggle = document.querySelector('#login-password-toggle');
+      const passwordSlash = document.querySelector('#login-password-slash');
+      function setLoginPasswordVisible(visible) {
+        els.password.type = visible ? 'text' : 'password';
+        passwordToggle.setAttribute('aria-pressed', String(visible));
+        const label = visible ? 'Ocultar senha' : 'Mostrar senha';
+        passwordToggle.setAttribute('aria-label', label);
+        passwordToggle.title = label;
+        passwordSlash.toggleAttribute('hidden', !visible);
+      }
+      passwordToggle.addEventListener('click', () => setLoginPasswordVisible(els.password.type === 'password'));
       els.loginButton.addEventListener('click', login);
       [els.email, els.password].forEach(input => input.addEventListener('keydown', event => { if (event.key === 'Enter') login(); }));
       document.querySelector('#theme-toggle').addEventListener('click', () => applyTheme(document.body.classList.contains('light') ? 'dark' : 'light'));
