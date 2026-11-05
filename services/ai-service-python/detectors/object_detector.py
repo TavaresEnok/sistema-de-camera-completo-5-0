@@ -13,6 +13,7 @@ from .region_proposal import MotionRegionPlanner, RegionConfig
 from .native_roi import NativeRoiConfig, choose_native_roi, project_native_crop, merge_native_crop
 from onnxruntime_session import inference_threading_status
 from runtime_profiles import GENERAL_PROFILE
+from inference_capacity import global_request_limit
 from object_policy import filtrar_deteccoes_por_classe, normalizar_classe
 from detectors.escolha_de_modelo import TETO_DE_CPU_PADRAO, escolher_modelo
 from trackers import TrackerBackend, create_tracker, tracker_names
@@ -128,7 +129,7 @@ class ObjectDetector(Detector):
         self.openvino_performance_hint = str(GENERAL_PROFILE.get("openvino_performance_hint", "LATENCY") or "LATENCY").strip() or "LATENCY"
         self._runtime_lock = threading.Lock()
         self._runtimes: dict[int, dict] = {}
-        self._global_request_limit = max(1, min(8, int(GENERAL_PROFILE.get("global_infer_requests", 2))))
+        self._global_request_limit = global_request_limit(GENERAL_PROFILE.get("global_infer_requests", 2))
         self._global_requests = threading.BoundedSemaphore(self._global_request_limit)
         self._global_busy_drops = 0
         self._real_infer_runs = 0

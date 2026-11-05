@@ -1,0 +1,17 @@
+FROM drac-ai-perimeter-base:20261103 AS compile
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends gcc g++ binutils \
+    && pip install --no-cache-dir Cython \
+    && rm -r /var/lib/apt/lists/*
+COPY services/ai-service-python/detectors/object_detector.py /source/detectors/object_detector.py
+COPY services/ai-service-python/inference_capacity.py /source/inference_capacity.py
+COPY services/ai-service-python/tests/test_inference_capacity.py /checks/test_inference_capacity.py
+RUN PYTHONPATH=/source python /checks/test_inference_capacity.py
+COPY scripts/security/compile-ai.py /build/compile-ai.py
+RUN cd /build && python compile-ai.py \
+    && find /native -type f -name '*.so' -exec strip --strip-unneeded '{}' '+'
+
+FROM ajustcam-ai-confidence40:20261103
+ARG RELEASE_REVISION
+LABEL org.opencontainers.image.revision=$RELEASE_REVISION
+COPY --from=compile --chown=1000:1000 /native /app
