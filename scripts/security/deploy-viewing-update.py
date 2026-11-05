@@ -72,6 +72,12 @@ def validate_web_only_update(body, api_before, migration_approved):
         raise ValueError('Web-only updates must keep the API image and database schema unchanged')
 
 
+def validate_ai_only_update(body, api_before, web_before, migration_approved):
+    validate_web_only_update(body, api_before, migration_approved)
+    if body['images']['web']['imageId'] != web_before['Image']:
+        raise ValueError('AI-only updates must keep the web image unchanged')
+
+
 SGP_POLICY_MIGRATIONS = {
     '20261015160000_camera_notice_sound': ('10c863f7a3aa8a73211642364e1696833497ae4e2ed9077784faa15a7f276ebc', [('Camera', 'noticeSoundEnabled')]),
     '20261015170000_sgp_service_private_camera_limit': ('056d4d4ccd23bb1459159152203dde1a31535515982006d1521626be2b8adc35', [('SgpService', 'externalPlanId'), ('SgpService', 'privateCameraLimit')]),
@@ -161,12 +167,15 @@ def main():
     parser.add_argument('--approve-sgp-schema', action='store_true')
     parser.add_argument('--approve-confidence-40-schema', action='store_true')
     parser.add_argument('--web-only', action='store_true', help='Keep the running API and media services untouched')
+    parser.add_argument('--ai-only', action='store_true', help='Update only the signed AI image; requires --include-ai and unchanged API/web/schema')
     parser.add_argument('--include-ai', action='store_true', help='Explicitly approve the signed AI image while preserving transport services')
     parser.add_argument('--approve-sgp-policy-schema', action='store_true', help='Approve only the three hash-pinned additive SGP policy migrations; reconcile stale metadata against the actual installed image')
     parser.add_argument('--approve-notice-preferences-schema', action='store_true', help='Approve only the hash-pinned additive sound and duration preferences')
     args = parser.parse_args()
     if args.include_ai and args.web_only:
         raise ValueError('AI updates cannot be combined with web-only updates')
+    if args.ai_only and (not args.include_ai or args.web_only):
+        raise ValueError('AI-only requires --include-ai and cannot be web-only')
     if args.approve_confidence_40_schema and (args.approve_sgp_schema or args.approve_sgp_policy_schema or args.approve_notice_preferences_schema or args.approve_detector_percentage_schema or args.approve_object_notice_schema):
         raise ValueError('Choose only one schema approval mechanism')
     root = args.root.resolve()
@@ -205,6 +214,8 @@ def main():
         migration_approved = allow_schema_transition(state.get('databaseSchemaHash'), body, args.approve_detector_percentage_schema, args.approve_object_notice_schema, args.approve_sgp_schema, args.approve_confidence_40_schema)
     if args.web_only:
         validate_web_only_update(body, api_before, migration_approved or bool(reviewed_policy))
+    if args.ai_only:
+        validate_ai_only_update(body, api_before, inspect('vms-web'), migration_approved or bool(reviewed_policy))
     files = []
     for name in ['vms-api', 'vms-web']:
         for value in inspect(name)['Config']['Labels']['com.docker.compose.project.config_files'].split(','):
@@ -253,7 +264,7 @@ def main():
             expected_sql = statement
         if statement != expected_sql:
             raise ValueError('Image does not contain the narrowly reviewed additive migration')
-    if not args.web_only:
+    if not args.web_only and not args.ai_only:
         configuration['services']['api'].setdefault('environment', {})['DRAC_VERSION'] = body['commit']
     compose = ['docker', 'compose', '--project-name', api_before['Config']['Labels'].get('com.docker.compose.project', 'infra'),
                '--env-file', str(root / 'infra/.env')]
@@ -262,8 +273,8 @@ def main():
     if persistent not in files:
         compose += ['-f', str(persistent)]
     up = ['up', '-d', '--no-build', '--pull', 'never', '--no-deps', '--wait', '--wait-timeout', '180']
-    up += ['web'] if args.web_only else ['api', 'web']
-    if args.include_ai:
+    up += ['ai-service'] if args.ai_only else ['web'] if args.web_only else ['api', 'web']
+    if args.include_ai and not args.ai_only:
         up += ['ai-service']
     snapshot = json.loads(sql('''SELECT json_build_object('at',now(),'cameras',
       COALESCE(json_agg(json_build_object('id',id,'enabled',enabled,'recordingMode',"recordingMode",
@@ -272,7 +283,7 @@ def main():
     os.chmod(backup / 'recording-choices-before.json', 0o600)
     try:
         restored = 0
-        if not args.web_only:
+        if not args.web_only and not args.ai_only:
             command(['docker', 'stop', '--time', '45', 'vms-api'])
             restored = restore_legacy_shutdown(snapshot)
         persistent.write_text(json.dumps(configuration))
@@ -280,7 +291,7 @@ def main():
         command(compose + up)
         if media_state(include_ai=not args.include_ai) != media_before:
             raise ValueError('A media service changed unexpectedly')
-        if args.web_only:
+        if args.web_only or args.ai_only:
             api_after = inspect('vms-api')
             if (api_after['Id'], api_after['State']['StartedAt']) != (api_before['Id'], api_before['State']['StartedAt']):
                 raise ValueError('Web-only update unexpectedly changed the API container')
@@ -301,13 +312,13 @@ def main():
     except Exception:
         persistent.write_bytes(original)
         os.chmod(persistent, 0o600)
-        if not args.web_only:
+        if not args.web_only and not args.ai_only:
             restore_legacy_shutdown(snapshot)
         command(compose + up)
         raise
     result = {'commit': body['commit'], 'signed': True, 'ready': True, 'mediaServicesUnchanged': not args.include_ai,
               'transportServicesUnchanged': True, 'aiUpdated': args.include_ai,
-              'webOnly': args.web_only, 'apiContainerUnchanged': args.web_only,
+              'webOnly': args.web_only, 'aiOnly': args.ai_only, 'apiContainerUnchanged': args.web_only or args.ai_only,
               'legacyRecordingChoicesRestored': restored, 'cssFilesVerified': len(styles), 'reviewedAdditiveMigration': migration_approved}
     result['reviewedSgpPolicyMigrations'] = reviewed_policy
     (backup / 'result.json').write_text(json.dumps(result))
