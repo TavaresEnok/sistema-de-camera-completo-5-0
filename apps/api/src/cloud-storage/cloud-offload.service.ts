@@ -722,6 +722,11 @@ export class CloudOffloadService {
     };
   }
 
+  /** Configuração do storage em nuvem provisionada (ou null). */
+  cloudConfig() {
+    return this.cloudConnector.getCloudStorageConfig();
+  }
+
   async summary() {
     const cfg = await this.cloudConnector.getCloudStorageConfig();
     if (!cfg) return { enabled: false as const };

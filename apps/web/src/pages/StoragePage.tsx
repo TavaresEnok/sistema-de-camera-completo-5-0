@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import axios from 'axios';
-import { HardDrive, RefreshCw, Trash2, ChevronDown } from 'lucide-react';
+import { CheckCircle2, ChevronDown, Cloud, CloudOff, HardDrive, Info, RefreshCw, Settings2, Trash2, TriangleAlert } from 'lucide-react';
+import { BarChart, Bar, XAxis, YAxis, Tooltip as ReTooltip, ResponsiveContainer } from 'recharts';
 import { useVmsDataStore } from '../store/vmsDataStore';
 import { useAuthStore } from '../store/authStore';
 import { getApiBaseUrl } from '../lib/api-base';
 import { toast } from '../hooks/use-toast';
 import { formatarBytes } from '../lib/formato';
+import { haQuantoTempo, pontosDoGrafico, resumoDaNuvem, rotuloDeRetencao, statusDoArmazenamento, type Tom, type Visao } from '../lib/armazenamento';
 import { CloudStorageCard } from '../components/CloudStorageCard';
 import { PreviousStoragesCard } from '../components/PreviousStoragesCard';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -19,341 +22,260 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 
-function Ring({ value }: { value: number }) {
+// ── ARMAZENAMENTO ───────────────────────────────────────────────────────────
+// Uma tela, de cima para baixo, respondendo o que o cliente pergunta:
+//   1. Está tudo bem, e por quanto tempo guardo?  → frase de status + disco × nuvem
+//   2. Quanto gravo por dia, e onde está?         → gráfico empilhado
+//   3. Quem mais ocupa?                           → câmeras (ou grupos)
+//   4. A nuvem está enviando?                     → uma linha + "Configurar"
+// O que é técnico (volume, servidor, storages antigos) fica recolhido.
+
+const COR_DISCO = 'hsl(var(--primary))';
+const COR_NUVEM = 'hsl(var(--status-online))';
+
+const TOM: Record<Tom, { icone: typeof CheckCircle2; cor: string }> = {
+  ok: { icone: CheckCircle2, cor: 'text-[hsl(var(--status-online))]' },
+  neutro: { icone: Info, cor: 'text-muted-foreground' },
+  aviso: { icone: TriangleAlert, cor: 'text-[hsl(var(--status-warning))]' },
+  perigo: { icone: TriangleAlert, cor: 'text-[hsl(var(--destructive))]' },
+};
+
+function Barra({ percentual, cor }: { percentual: number; cor: string }) {
   return (
-    <div className="relative h-40 w-40 rounded-full" style={{ background: `conic-gradient(hsl(var(--primary)) ${value}%, hsl(var(--border)) 0)` }}>
-      <div className="absolute inset-4 rounded-full bg-card border border-border flex flex-col items-center justify-center">
-        <div className="text-3xl font-semibold">{value}%</div>
-        <div className="text-[11px] text-[hsl(var(--muted-foreground))]">Uso</div>
-      </div>
+    <div className="h-2 overflow-hidden rounded-full bg-[hsl(var(--border))]">
+      <div className="h-full rounded-full" style={{ width: `${Math.max(0, Math.min(100, percentual))}%`, background: cor }} />
     </div>
   );
 }
 
-function Bar({ value }: { value: number }) {
-  const tone = value >= 95 ? 'bg-[hsl(var(--destructive))]' : value >= 80 ? 'bg-[hsl(var(--chart-4))]' : 'bg-[hsl(var(--primary))]';
-  return <div className="h-1.5 rounded-full bg-[hsl(var(--border))] overflow-hidden"><div className={`h-full ${tone}`} style={{ width: `${value}%` }} /></div>;
+function Cartao({ children, className = '' }: { children: ReactNode; className?: string }) {
+  return <section className={`rounded-xl border border-border bg-card p-5 ${className}`}>{children}</section>;
 }
 
-function StorageSection({ title, open, onToggle, children }: { title: string; open: boolean; onToggle: () => void; children: ReactNode }) {
-  return (
-    <section className="overflow-hidden rounded-lg border border-border bg-card shadow-sm">
-      <button
-        type="button"
-        onClick={onToggle}
-        className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left transition-colors hover:bg-accent/45"
-      >
-        <span className="text-sm font-semibold">{title}</span>
-        <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${open ? 'rotate-180' : ''}`} />
-      </button>
-      {open ? <div className="border-t border-border">{children}</div> : null}
-    </section>
-  );
-}
-
-const USAGE_PAGE_SIZE = 20;
-
-function UsagePagination({ page, total, onChange }: { page: number; total: number; onChange: (page: number) => void }) {
-  const pages = Math.max(1, Math.ceil(total / USAGE_PAGE_SIZE));
-  if (pages <= 1) return null;
-  const firstPage = Math.min(Math.max(1, page - 2), Math.max(1, pages - 5));
-  const visible = Array.from({ length: Math.min(pages, 6) }, (_, index) => firstPage + index);
-  return (
-    <nav className="flex flex-wrap items-center justify-end gap-1.5 px-5 py-3" aria-label="Paginação do consumo de armazenamento">
-      <button type="button" onClick={() => onChange(Math.max(1, page - 1))} disabled={page === 1} className="h-7 rounded-md border border-border px-2 text-[11px] disabled:opacity-40">Anterior</button>
-      {visible.map((item) => (
-        <button key={item} type="button" onClick={() => onChange(item)} aria-current={page === item ? 'page' : undefined} className={`h-7 min-w-7 rounded-md border px-2 text-[11px] ${page === item ? 'border-primary bg-primary text-primary-foreground' : 'border-border hover:bg-accent'}`}>{item}</button>
-      ))}
-      {pages > 6 ? <span className="px-1 text-[11px] text-muted-foreground">de {pages}</span> : null}
-      <button type="button" onClick={() => onChange(Math.min(pages, page + 1))} disabled={page === pages} className="h-7 rounded-md border border-border px-2 text-[11px] disabled:opacity-40">Próxima</button>
-    </nav>
-  );
-}
-
-export default function MonitoramentoPage() {
+export default function ArmazenamentoPage() {
   const API_URL = getApiBaseUrl();
   const accessToken = useAuthStore((state) => state.accessToken);
   const currentUser = useAuthStore((state) => state.user);
   const isAdmin = currentUser?.role === 'admin';
   const cameras = useVmsDataStore((state) => state.cameras);
   const system = useVmsDataStore((state) => state.system);
+  const resumoDeCameras = useVmsDataStore((state) => state.overview);
   const load = useVmsDataStore((state) => state.load);
+
+  const [visao, setVisao] = useState<Visao | null>(null);
+  const [falhou, setFalhou] = useState(false);
+  const [versao, setVersao] = useState(0);
+  const [porGrupo, setPorGrupo] = useState(false);
+  const [configurarAberto, setConfigurarAberto] = useState(false);
+  const [tecnicoAberto, setTecnicoAberto] = useState(false);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [confirmApagarVideos, setConfirmApagarVideos] = useState('');
-  const [fromDate, setFromDate] = useState(() => new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10));
-  const [toDate, setToDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [reloadNonce, setReloadNonce] = useState(0);
   const [deletingVideos, setDeletingVideos] = useState(false);
-  const [analytics, setAnalytics] = useState<{
-    summary: { rows: number; totalRecordingsBytes: string; totalClipsBytes: string; totalBytes: string };
-    items: Array<{
-      cameraId: string;
-      cameraName: string;
-      day: string;
-      recordingsCount: number;
-      clipsCount: number;
-      recordingsBytes: string;
-      clipsBytes: string;
-      totalBytes: string;
-    }>;
-    byCamera?: Array<{
-      cameraId: string; cameraName: string; groupId: string | null; groupName: string;
-      recordingsCount: number; clipsCount: number; recordingsBytes: string; clipsBytes: string; totalBytes: string;
-    }>;
-    byGroup?: Array<{
-      groupId: string | null; groupName: string; camerasCount: number;
-      recordingsCount: number; clipsCount: number; recordingsBytes: string; clipsBytes: string; totalBytes: string;
-    }>;
-  } | null>(null);
-  const [analyticsLoading, setAnalyticsLoading] = useState(false);
-  const [analyticsError, setAnalyticsError] = useState<string | null>(null);
-  const [usageView, setUsageView] = useState<'camera' | 'group'>('camera');
-  const [cameraUsagePage, setCameraUsagePage] = useState(1);
-  const [groupUsagePage, setGroupUsagePage] = useState(1);
-  const [openStorageSections, setOpenStorageSections] = useState({
-    volumes: true,
-    cameras: true,
-    cloud: true,
-  });
-
-  // Total na nuvem no topo, ao lado do disco local (só admin; some sem storage).
-  const [nuvem, setNuvem] = useState<{ cloudBytes: number; cloudCount: number; pendingCount: number } | null>(null);
-  useEffect(() => {
-    if (!accessToken || !isAdmin) return;
-    axios.get(`${API_URL}/cloud-storage/usage`, { headers: { Authorization: `Bearer ${accessToken}` }, params: { days: 1 } })
-      .then(({ data }) => setNuvem(data?.enabled ? data.totals : null))
-      .catch(() => setNuvem(null));
-  }, [accessToken, isAdmin, reloadNonce]);
-
-  const toggleStorageSection = (key: keyof typeof openStorageSections) => {
-    setOpenStorageSections((current) => ({ ...current, [key]: !current[key] }));
-  };
 
   useEffect(() => {
     if (!accessToken) return;
-    let cancelled = false;
-    setAnalyticsLoading(true);
-    setAnalyticsError(null);
-    void axios.get(`${API_URL}/recordings/storage-usage`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-      params: {
-        from: new Date(`${fromDate}T00:00:00.000Z`).toISOString(),
-        to: new Date(`${toDate}T23:59:59.999Z`).toISOString(),
-      },
-    }).then(({ data }) => {
-      if (cancelled) return;
-      setAnalytics(data);
-      setCameraUsagePage(1);
-      setGroupUsagePage(1);
-    }).catch((error) => {
-      if (cancelled) return;
-      setAnalytics(null);
-      setAnalyticsError(error instanceof Error ? error.message : 'Falha ao carregar análise de armazenamento.');
-    }).finally(() => {
-      if (!cancelled) setAnalyticsLoading(false);
-    });
-    return () => { cancelled = true; };
-  }, [API_URL, accessToken, fromDate, toDate, reloadNonce]);
+    let cancelado = false;
+    axios.get<Visao>(`${API_URL}/cloud-storage/overview`, { headers: { Authorization: `Bearer ${accessToken}` }, params: { days: 14 } })
+      .then(({ data }) => { if (!cancelado) { setVisao(data); setFalhou(false); } })
+      .catch(() => { if (!cancelado) setFalhou(true); });
+    return () => { cancelado = true; };
+  }, [API_URL, accessToken, versao]);
+
+  const atualizar = () => { setVersao((v) => v + 1); void load(); };
+
+  const discoPercent = system?.disk.usagePercent ?? 0;
+  const retencao = useMemo(
+    () => rotuloDeRetencao(cameras.map((c) => c.effectiveRetentionDays ?? c.retentionDays)),
+    [cameras],
+  );
+  const camerasGravando = resumoDeCameras?.recordingEnabled ?? 0;
+  const nuvem = visao?.cloud ?? null;
+  const status = statusDoArmazenamento({
+    discoPercent,
+    retencao,
+    camerasGravando,
+    nuvem,
+    totais: { pendingCount: visao?.totals.pendingCount ?? 0, lastUploadAt: visao?.totals.lastUploadAt ?? null },
+  });
+  const IconeStatus = TOM[status.tom].icone;
+  const pontos = useMemo(() => pontosDoGrafico(visao?.daily ?? []), [visao]);
+  const temDados = pontos.some((p) => p.disco > 0 || p.nuvem > 0);
+  const lista = porGrupo
+    ? (visao?.byGroup ?? []).map((g) => ({ chave: g.groupName, nome: g.groupName, detalhe: `${g.cameras} câmera${g.cameras === 1 ? '' : 's'}`, disco: g.diskBytes, nuvem: g.cloudBytes }))
+    : (visao?.byCamera ?? []).slice(0, 8).map((c) => ({ chave: c.cameraId, nome: c.cameraName, detalhe: c.groupName ?? '', disco: c.diskBytes, nuvem: c.cloudBytes }));
+  const maior = Math.max(1, ...lista.map((l) => l.disco + l.nuvem));
+  const ultimoEnvio = haQuantoTempo(visao?.totals.lastUploadAt ?? null);
+  const nuvemBytes = visao?.totals.cloudBytes ?? 0;
+  const totalGuardado = (visao?.totals.diskBytes ?? 0) + nuvemBytes;
 
   async function handleDeleteAllVideos() {
-    if (!accessToken) return;
     setConfirmDeleteOpen(false);
     setDeletingVideos(true);
     try {
-      await axios.delete(`${API_URL}/recordings`, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-      setReloadNonce((value) => value + 1);
-      await load();
+      await axios.delete(`${API_URL}/recordings`, { headers: { Authorization: `Bearer ${accessToken}` } });
+      atualizar();
       toast({ title: 'Gravações apagadas', description: 'Todas as gravações e clipes exportados foram removidos.' });
     } catch (error) {
       const msg = axios.isAxiosError(error) ? (error.response?.data?.message || error.message) : 'Falha ao apagar vídeos.';
-      toast({
-        title: 'Falha ao apagar vídeos',
-        description: Array.isArray(msg) ? msg.join(' | ') : String(msg),
-        variant: 'destructive',
-      });
+      toast({ title: 'Falha ao apagar vídeos', description: Array.isArray(msg) ? msg.join(' | ') : String(msg), variant: 'destructive' });
     } finally {
       setDeletingVideos(false);
     }
   }
 
-  // Formatador único (lib/formato): escolhe a unidade pelo tamanho e usa a
-  // notação brasileira. O `toGB` local forçava GB sempre — uma câmera de 30 MB
-  // aparecia como "0.03 GB" — com ponto decimal e sem separador de milhar.
-  const toGB = (raw: string | number | bigint) => formatarBytes(Number(raw));
-  const volumes = useMemo(() => system ? [
-    {
-      server: system.server.hostname,
-      volume: system.recordingsRoot,
-      type: 'Local FS',
-      use: system.disk.usagePercent,
-    },
-  ] : [], [system]);
-  const percent = system?.disk.usagePercent ?? 0;
-  // Retenção real das câmeras acessíveis (antes era um "90 dias" fixo e falso).
-  const retentionLabel = useMemo(() => {
-    const days = Array.from(new Set(
-      cameras.map((camera) => camera.retentionDays).filter((value): value is number => typeof value === 'number' && value > 0),
-    ));
-    if (!days.length) return '—';
-    if (days.length === 1) return `${days[0]} dias`;
-    return `${Math.min(...days)}–${Math.max(...days)} dias`;
-  }, [cameras]);
-  const cameraUsage = analytics?.byCamera ?? [];
-  const groupUsage = analytics?.byGroup ?? [];
-  const pagedCameraUsage = cameraUsage.slice((cameraUsagePage - 1) * USAGE_PAGE_SIZE, cameraUsagePage * USAGE_PAGE_SIZE);
-  const pagedGroupUsage = groupUsage.slice((groupUsagePage - 1) * USAGE_PAGE_SIZE, groupUsagePage * USAGE_PAGE_SIZE);
-
   return (
-    <div className="flex flex-col h-full min-h-0">
-      {isAdmin && (
-        <div className="px-6 py-3 border-b border-border shrink-0 flex items-center justify-end">
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex shrink-0 items-center justify-end gap-2 border-b border-border px-6 py-3">
+        <button type="button" onClick={atualizar} className="btn btn-secondary btn-sm"><RefreshCw className="h-3.5 w-3.5" /> Atualizar</button>
+        {isAdmin && (
           <button
             onClick={() => setConfirmDeleteOpen(true)}
             disabled={deletingVideos}
             className="btn btn-sm border-[hsl(var(--destructive)_/_0.35)] text-[hsl(var(--destructive))] hover:bg-[hsl(var(--destructive)_/_0.08)] disabled:opacity-50"
           >
-            <Trash2 className="w-3.5 h-3.5" /> {deletingVideos ? 'Apagando...' : 'Apagar vídeos'}
+            <Trash2 className="h-3.5 w-3.5" /> {deletingVideos ? 'Apagando…' : 'Apagar vídeos'}
           </button>
-        </div>
-      )}
-      <div className="flex-1 overflow-y-auto p-6 space-y-6">
-      <div className="grid gap-6 lg:grid-cols-[260px_1fr]">
-        <div className="bg-card border border-border rounded-xl p-5 flex items-center justify-center">
-          <Ring value={percent} />
-        </div>
-        <div className={`grid gap-4 ${nuvem ? 'sm:grid-cols-2 xl:grid-cols-4' : 'sm:grid-cols-3'}`}>
-          <div className="bg-card border border-border rounded-xl p-4"><div className="text-[10px] uppercase text-[hsl(var(--muted-foreground))]">Capacidade total</div><div className="mt-2 text-2xl font-semibold">{formatarBytes(system?.disk.totalBytes)}</div></div>
-          <div className="bg-card border border-border rounded-xl p-4"><div className="text-[10px] uppercase text-[hsl(var(--muted-foreground))]">Em uso</div><div className="mt-2 text-2xl font-semibold">{formatarBytes(system?.disk.usedBytes)}</div></div>
-          <div className="bg-card border border-border rounded-xl p-4"><div className="text-[10px] uppercase text-[hsl(var(--muted-foreground))]">Disponível</div><div className="mt-2 text-2xl font-semibold">{formatarBytes(system?.disk.freeBytes)}</div></div>
-          {nuvem && <div className="bg-card border border-border rounded-xl p-4"><div className="text-[10px] uppercase text-[hsl(var(--muted-foreground))]">Na nuvem</div><div className="mt-2 text-2xl font-semibold">{formatarBytes(nuvem.cloudBytes)}</div><div className="mt-1 text-[11px] text-[hsl(var(--muted-foreground))]">{nuvem.cloudCount} gravações{nuvem.pendingCount ? ` · ${nuvem.pendingCount} aguardando` : ''}</div></div>}
-        </div>
+        )}
       </div>
-      <StorageSection title="Volumes" aria-label="Volumes" open={openStorageSections.volumes} onToggle={() => toggleStorageSection('volumes')}>
-        <div className="px-5 py-4 border-b border-border flex items-center justify-between">
-          <div>
-            <div className="text-xs font-semibold text-[hsl(var(--muted-foreground))]">Detalhes de armazenamento</div>
-          </div>
-          <button onClick={() => { setReloadNonce((value) => value + 1); void load(); }} className="text-xs flex items-center gap-2 text-[hsl(var(--muted-foreground))] hover:text-foreground transition-colors"><RefreshCw className="w-3.5 h-3.5" /> Atualizar</button>
-        </div>
-        <table className="w-full text-sm">
-          <thead className="text-[10px] text-[hsl(var(--muted-foreground))]">
-            <tr className="border-b border-border">
-              <th className="text-left px-5 py-3">Servidor</th>
-              <th className="text-left px-5 py-3">Volume</th>
-              <th className="text-left px-5 py-3">Tipo</th>
-              <th className="text-left px-5 py-3">Uso</th>
-            </tr>
-          </thead>
-          <tbody>
-            {volumes.map(row => (
-              <tr key={row.volume} className="border-b border-border last:border-0">
-                <td className="px-5 py-4 font-mono text-xs">{row.server}</td>
-                <td className="px-5 py-4 flex items-center gap-2"><HardDrive className="w-4 h-4 text-[hsl(var(--muted-foreground))]" />{row.volume}</td>
-                <td className="px-5 py-4 text-xs text-[hsl(var(--muted-foreground))]">{row.type}</td>
-                <td className="px-5 py-4 w-72"><div className="space-y-2"><Bar value={row.use} /><div className="text-xs text-[hsl(var(--muted-foreground))]">{row.use}%</div></div></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </StorageSection>
-      <StorageSection title="Armazenamento em nuvem" aria-label="Armazenamento em nuvem" open={openStorageSections.cloud} onToggle={() => toggleStorageSection('cloud')}>
-        <CloudStorageCard apiUrl={API_URL} accessToken={accessToken} />
-        {/* Só aparece quando existe storage anterior — é o que sobra de uma
-            troca de fornecedor, e continua sendo pago até alguém esvaziá-lo. */}
-        <PreviousStoragesCard apiUrl={API_URL} accessToken={accessToken} />
-      </StorageSection>
 
-      <StorageSection title="Uso de armazenamento" aria-label="Uso de armazenamento" open={openStorageSections.cameras} onToggle={() => toggleStorageSection('cameras')}>
-        <div className="px-5 py-4 border-b border-border flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <div className="text-xs font-semibold text-[hsl(var(--muted-foreground))]">Gravações e clipes exportados no período selecionado</div>
+      <div className="mx-auto w-full max-w-5xl flex-1 space-y-4 overflow-y-auto p-6">
+        {/* 1. Resumo: está tudo bem? disco × nuvem */}
+        <Cartao>
+          <div className="mb-5 flex items-center gap-2 text-sm">
+            <IconeStatus className={`h-5 w-5 shrink-0 ${TOM[status.tom].cor}`} />
+            <span className={status.tom === 'perigo' || status.tom === 'aviso' ? TOM[status.tom].cor : ''}>{status.texto}</span>
           </div>
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <input aria-label="Data inicial do uso de armazenamento" type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="h-8 min-w-0 rounded border border-border bg-background px-2 text-xs" />
-            <input aria-label="Data final do uso de armazenamento" type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className="h-8 min-w-0 rounded border border-border bg-background px-2 text-xs" />
+          <div className="grid gap-6 sm:grid-cols-2">
+            <div>
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <span className="flex items-center gap-1.5"><HardDrive className="h-3.5 w-3.5" /> Disco</span>
+                <span className="text-foreground">{formatarBytes(system?.disk.usedBytes)} de {formatarBytes(system?.disk.totalBytes)}</span>
+              </div>
+              <div className="my-2"><Barra percentual={discoPercent} cor={discoPercent >= 85 ? 'hsl(var(--status-warning))' : COR_DISCO} /></div>
+              <div className="text-[11px] text-muted-foreground">
+                {formatarBytes(system?.disk.freeBytes)} livres{nuvem?.policy?.enabled && !nuvem.policy.keepLocalCopy ? ` · cópia local de ${nuvem.localWindowHours} h` : ''}
+              </div>
+            </div>
+            <div>
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <span className="flex items-center gap-1.5">
+                  {nuvem ? <Cloud className="h-3.5 w-3.5" /> : <CloudOff className="h-3.5 w-3.5" />} Nuvem
+                </span>
+                <span className="text-foreground">{nuvem ? formatarBytes(nuvemBytes) : '—'}</span>
+              </div>
+              {/* Nuvem não tem "capacidade": a barra mostra quanto do que está
+                  guardado já está lá (o resto ainda só existe no disco). */}
+              <div className="my-2"><Barra percentual={nuvem && totalGuardado > 0 ? (nuvemBytes / totalGuardado) * 100 : 0} cor={COR_NUVEM} /></div>
+              <div className="text-[11px] text-muted-foreground">
+                {nuvem
+                  ? `${visao?.totals.cloudCount ?? 0} gravações · ${ultimoEnvio ? `último envio ${ultimoEnvio}` : 'nenhum envio ainda'}${visao?.totals.pendingCount ? ` · ${visao.totals.pendingCount} aguardando` : ''}`
+                  : 'Não configurada · contrate pela Central'}
+              </div>
+            </div>
           </div>
-        </div>
-        <div className="px-5 py-3 text-xs text-[hsl(var(--muted-foreground))]">
-          {analyticsLoading && 'Carregando uso de armazenamento...'}
-          {!analyticsLoading && analyticsError && analyticsError}
-          {!analyticsLoading && analytics && (
-            <span>
-              {analytics.summary.rows} linha(s) · gravações: {toGB(analytics.summary.totalRecordingsBytes)} · clipes: {toGB(analytics.summary.totalClipsBytes)} · total: {toGB(analytics.summary.totalBytes)}
+        </Cartao>
+
+        {/* 2. Quanto gravo por dia, e onde está */}
+        <Cartao>
+          <div className="mb-3 flex items-center justify-between text-xs text-muted-foreground">
+            <span>Gravado por dia · {visao?.days ?? 14} dias</span>
+            <span className="flex items-center gap-3">
+              <span className="flex items-center gap-1"><i className="inline-block h-2 w-2 rounded-sm" style={{ background: COR_DISCO }} /> só no disco</span>
+              {nuvem ? <span className="flex items-center gap-1"><i className="inline-block h-2 w-2 rounded-sm" style={{ background: COR_NUVEM }} /> na nuvem</span> : null}
             </span>
-          )}
-        </div>
-        <div className="flex gap-2 border-t border-border px-5 pt-3">
-          <button type="button" onClick={() => setUsageView('camera')} className={`rounded-md px-3 py-1.5 text-xs font-medium ${usageView === 'camera' ? 'bg-primary text-primary-foreground' : 'border border-border text-muted-foreground hover:bg-accent'}`}>Por câmera</button>
-          <button type="button" onClick={() => setUsageView('group')} className={`rounded-md px-3 py-1.5 text-xs font-medium ${usageView === 'group' ? 'bg-primary text-primary-foreground' : 'border border-border text-muted-foreground hover:bg-accent'}`}>Por grupo</button>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="text-[10px] text-[hsl(var(--muted-foreground))]">
-              {usageView === 'camera' ? (
-                <tr className="border-b border-border">
-                  <th className="text-left px-5 py-3">Câmera</th>
-                  <th className="text-left px-5 py-3">Grupo</th>
-                  <th className="text-left px-5 py-3">Gravações</th>
-                  <th className="text-left px-5 py-3">Clipes</th>
-                  <th className="text-left px-5 py-3">Total</th>
-                </tr>
-              ) : (
-                <tr className="border-b border-border">
-                  <th className="text-left px-5 py-3">Grupo</th>
-                  <th className="text-left px-5 py-3">Câmeras</th>
-                  <th className="text-left px-5 py-3">Gravações</th>
-                  <th className="text-left px-5 py-3">Clipes</th>
-                  <th className="text-left px-5 py-3">Total</th>
-                </tr>
-              )}
-            </thead>
-            <tbody>
-              {usageView === 'camera' ? pagedCameraUsage.map((row) => (
-                <tr key={row.cameraId} className="border-b border-border last:border-0">
-                  <td className="px-5 py-3 text-xs font-medium">{row.cameraName}</td>
-                  <td className="px-5 py-3 text-xs text-muted-foreground">{row.groupName}</td>
-                  <td className="px-5 py-3 text-xs">{row.recordingsCount} arquivo(s) · {toGB(row.recordingsBytes)}</td>
-                  <td className="px-5 py-3 text-xs">{row.clipsCount} arquivo(s) · {toGB(row.clipsBytes)}</td>
-                  <td className="px-5 py-3 text-xs font-semibold">{toGB(row.totalBytes)}</td>
-                </tr>
-              )) : pagedGroupUsage.map((row) => (
-                <tr key={row.groupId ?? 'no-group'} className="border-b border-border last:border-0">
-                  <td className="px-5 py-3 text-xs font-medium">{row.groupName}</td>
-                  <td className="px-5 py-3 text-xs">{row.camerasCount}</td>
-                  <td className="px-5 py-3 text-xs">{row.recordingsCount} arquivo(s) · {toGB(row.recordingsBytes)}</td>
-                  <td className="px-5 py-3 text-xs">{row.clipsCount} arquivo(s) · {toGB(row.clipsBytes)}</td>
-                  <td className="px-5 py-3 text-xs font-semibold">{toGB(row.totalBytes)}</td>
-                </tr>
+          </div>
+          <div className="h-44">
+            {temDados ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={pontos} margin={{ top: 4, right: 4, bottom: 0, left: -12 }}>
+                  <XAxis dataKey="rotulo" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
+                  <YAxis tick={{ fontSize: 10 }} unit=" GB" width={56} />
+                  <ReTooltip cursor={{ fillOpacity: 0.08 }} contentStyle={{ fontSize: 12 }} formatter={(v: number, nome) => [`${v} GB`, nome === 'disco' ? 'Só no disco' : 'Na nuvem']} />
+                  <Bar dataKey="disco" stackId="a" fill={COR_DISCO} />
+                  <Bar dataKey="nuvem" stackId="a" fill={COR_NUVEM} radius={[3, 3, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="flex h-full items-center justify-center text-xs text-muted-foreground">
+                {falhou ? 'Não foi possível carregar o uso.' : 'Nenhuma gravação nos últimos 14 dias.'}
+              </div>
+            )}
+          </div>
+        </Cartao>
+
+        {/* 3. Quem mais ocupa */}
+        {lista.length > 0 && (
+          <Cartao>
+            <div className="mb-3 flex items-center justify-between">
+              <span className="text-xs text-muted-foreground">{porGrupo ? 'Grupos' : 'Câmeras'} que mais ocupam</span>
+              <div className="segment" aria-label="Agrupar por">
+                <button type="button" className={`seg-btn ${!porGrupo ? 'active' : ''}`} aria-pressed={!porGrupo} onClick={() => setPorGrupo(false)}>Câmera</button>
+                <button type="button" className={`seg-btn ${porGrupo ? 'active' : ''}`} aria-pressed={porGrupo} onClick={() => setPorGrupo(true)}>Grupo</button>
+              </div>
+            </div>
+            <div className="space-y-2.5">
+              {lista.map((l) => (
+                <div key={l.chave} className="grid grid-cols-[minmax(0,11rem)_1fr_auto] items-center gap-3 text-xs">
+                  <span className="min-w-0">
+                    <span className="block truncate" title={l.nome}>{l.nome}</span>
+                    {l.detalhe ? <span className="block truncate text-[11px] text-muted-foreground">{l.detalhe}</span> : null}
+                  </span>
+                  <div className="flex h-2 overflow-hidden rounded-full bg-[hsl(var(--border))]">
+                    <div style={{ width: `${(l.disco / maior) * 100}%`, background: COR_DISCO }} />
+                    <div style={{ width: `${(l.nuvem / maior) * 100}%`, background: COR_NUVEM }} />
+                  </div>
+                  <span className="tabular-nums text-muted-foreground">{formatarBytes(l.disco + l.nuvem)}</span>
+                </div>
               ))}
-              {!analyticsLoading && ((usageView === 'camera' && cameraUsage.length === 0) || (usageView === 'group' && groupUsage.length === 0)) ? (
-                <tr><td colSpan={5} className="px-5 py-8 text-center text-xs text-muted-foreground">Nenhum uso encontrado no período selecionado.</td></tr>
-              ) : null}
-            </tbody>
-          </table>
-        </div>
-        <UsagePagination page={usageView === 'camera' ? cameraUsagePage : groupUsagePage} total={usageView === 'camera' ? cameraUsage.length : groupUsage.length} onChange={usageView === 'camera' ? setCameraUsagePage : setGroupUsagePage} />
-      </StorageSection>
-      <div className="grid gap-4 lg:grid-cols-2">
-        <div className="bg-card border border-border rounded-xl p-4">
-          <div className="text-xs text-[hsl(var(--muted-foreground))]">Retenção</div>
-          <div className="mt-3 text-2xl font-semibold">{retentionLabel}</div>
-          <div className="mt-3 text-xs text-[hsl(var(--muted-foreground))]">Configurada por câmera (gravações e eventos).</div>
-        </div>
-        <div className="bg-card border border-border rounded-xl p-4">
-          <div className="text-xs text-[hsl(var(--muted-foreground))]">Câmeras</div>
-          <div className="mt-3 text-2xl font-semibold">{cameras.length}</div>
-          <div className="mt-3 text-xs text-[hsl(var(--muted-foreground))]">Base para cálculo de retenção por carga.</div>
-        </div>
+            </div>
+          </Cartao>
+        )}
+
+        {/* 4. Nuvem: uma linha + Configurar */}
+        <Cartao className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3 text-sm">
+            {nuvem ? <Cloud className="h-5 w-5 text-[hsl(var(--status-online))]" /> : <CloudOff className="h-5 w-5 text-muted-foreground" />}
+            <span>{resumoDaNuvem(nuvem)}</span>
+          </div>
+          {isAdmin && nuvem ? (
+            <button type="button" onClick={() => setConfigurarAberto(true)} className="btn btn-secondary btn-sm"><Settings2 className="h-3.5 w-3.5" /> Configurar</button>
+          ) : null}
+        </Cartao>
+
+        {/* 5. Técnico, recolhido */}
+        <section className="overflow-hidden rounded-xl border border-border bg-card">
+          <button type="button" onClick={() => setTecnicoAberto((v) => !v)} className="flex w-full items-center justify-between px-5 py-3 text-left text-xs text-muted-foreground hover:bg-accent/45">
+            <span>Detalhes técnicos</span>
+            <ChevronDown className={`h-4 w-4 transition-transform ${tecnicoAberto ? 'rotate-180' : ''}`} />
+          </button>
+          {tecnicoAberto && (
+            <div className="space-y-3 border-t border-border px-5 py-4 text-xs">
+              <dl className="grid grid-cols-[9rem_1fr] gap-y-1.5">
+                <dt className="text-muted-foreground">Servidor</dt><dd className="font-mono">{system?.server.hostname ?? '—'}</dd>
+                <dt className="text-muted-foreground">Pasta de gravação</dt><dd className="font-mono">{system?.recordingsRoot ?? '—'}</dd>
+                <dt className="text-muted-foreground">Uso do disco</dt><dd>{discoPercent}%</dd>
+                <dt className="text-muted-foreground">Câmeras</dt><dd>{cameras.length} · retenção {retencao ?? '—'}</dd>
+                {nuvem ? (<>
+                  <dt className="text-muted-foreground">Nuvem</dt><dd>{nuvem.provider}{nuvem.bucket ? ` · ${nuvem.bucket}` : ''}{nuvem.endpoint ? <span className="font-mono"> · {nuvem.endpoint}</span> : null}</dd>
+                  <dt className="text-muted-foreground">Só na nuvem</dt><dd>{formatarBytes(visao?.totals.cloudOnlyBytes ?? 0)} (disco já liberado)</dd>
+                </>) : null}
+              </dl>
+              {isAdmin ? <PreviousStoragesCard apiUrl={API_URL} accessToken={accessToken} /> : null}
+            </div>
+          )}
+        </section>
       </div>
+
+      <Dialog open={configurarAberto} onOpenChange={setConfigurarAberto}>
+        <DialogContent className="max-h-[85vh] max-w-xl overflow-y-auto p-0">
+          <DialogHeader className="px-5 pt-5"><DialogTitle>Nuvem</DialogTitle></DialogHeader>
+          <CloudStorageCard apiUrl={API_URL} accessToken={accessToken} onChange={() => setVersao((v) => v + 1)} />
+        </DialogContent>
+      </Dialog>
 
       <AlertDialog open={confirmDeleteOpen} onOpenChange={setConfirmDeleteOpen}>
         <AlertDialogContent>
-          {/* ATRITO PROPORCIONAL. Esta é a ação mais destrutiva do sistema —
-              apaga o acervo inteiro — e era um clique com texto genérico,
-              enquanto esvaziar um bucket JÁ DESATIVADO exige digitar o nome do
-              bucket. O atrito estava invertido. */}
+          {/* ATRITO PROPORCIONAL: apagar o acervo inteiro exige digitar APAGAR. */}
           <AlertDialogHeader>
             <AlertDialogTitle>Apagar todas as gravações?</AlertDialogTitle>
             <AlertDialogDescription asChild>
@@ -362,15 +284,13 @@ export default function MonitoramentoPage() {
                   Isto remove <strong>todas</strong> as gravações e clipes exportados de{' '}
                   <strong>todas as câmeras</strong>. Não pode ser desfeito.
                 </p>
-                {analytics?.summary ? (
+                {visao ? (
                   <p className="rounded border border-[hsl(var(--destructive)_/_0.3)] bg-[hsl(var(--destructive)_/_0.08)] px-2 py-1.5 text-[hsl(var(--destructive))]">
-                    No período consultado são <strong>{analytics.summary.rows}</strong> registro(s),{' '}
-                    <strong>{toGB(analytics.summary.totalBytes)}</strong> de vídeo.
+                    Hoje são <strong>{visao.totals.recordings}</strong> gravação(ões), <strong>{formatarBytes(visao.totals.diskBytes)}</strong> no disco.
                   </p>
                 ) : null}
                 <p>
-                  As cópias já enviadas para a <strong>nuvem não são apagadas</strong> por esta ação —
-                  para removê-las, use “Esvaziar” no armazenamento correspondente.
+                  As cópias já enviadas para a <strong>nuvem não são apagadas</strong> por esta ação.
                 </p>
               </div>
             </AlertDialogDescription>
@@ -399,7 +319,6 @@ export default function MonitoramentoPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      </div>
     </div>
   );
 }

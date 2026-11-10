@@ -3,6 +3,9 @@ import { UserRole } from '@prisma/client';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { CloudOffloadService } from './cloud-offload.service';
 import { CloudStorageAdminService } from './cloud-storage-admin.service';
+import { StorageOverviewService } from './storage-overview.service';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { type AuthUser } from '../common/types/auth-user.type';
 
 // Estado do storage em nuvem DESTA instalação.
 //
@@ -18,12 +21,21 @@ export class CloudStorageController {
   constructor(
     private readonly offload: CloudOffloadService,
     private readonly admin: CloudStorageAdminService,
+    private readonly overviewService: StorageOverviewService,
   ) {}
 
   @Roles(UserRole.ADMIN)
   @Get('status')
   status() {
     return this.offload.summary();
+  }
+
+  // Página de Armazenamento: disco + nuvem, por dia e por câmera/grupo.
+  // Operador também vê (só as câmeras que pode assistir); bucket/endpoint só admin.
+  @Roles(UserRole.OPERATOR)
+  @Get('overview')
+  overview(@CurrentUser() user: AuthUser, @Query('days') days?: string) {
+    return this.overviewService.overview(user, days);
   }
 
   @Roles(UserRole.ADMIN)

@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from 'react';
 import axios from 'axios';
 import { Cloud, CloudOff, Upload, RefreshCw } from 'lucide-react';
 import { toast } from '../hooks/use-toast';
-import { UsoDaNuvem } from './UsoDaNuvem';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ARMAZENAMENTO EM NUVEM — o que a instalação decide.
@@ -45,14 +44,13 @@ const TIPOS: Array<{ key: keyof Policy['triggerModes']; nome: string; ajuda: str
   { key: 'manual', nome: 'Gravação manual', ajuda: 'Iniciada por um operador. Costuma ter motivo específico.' },
 ];
 
-export function CloudStorageCard({ apiUrl, accessToken }: { apiUrl: string; accessToken: string | null }) {
+export function CloudStorageCard({ apiUrl, accessToken, onChange }: { apiUrl: string; accessToken: string | null; onChange?: () => void }) {
   const [status, setStatus] = useState<CloudStatus | null>(null);
   const [policy, setPolicy] = useState<Policy | null>(null);
   const [carregando, setCarregando] = useState(true);
   const [falhaConsulta, setFalhaConsulta] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [enviando, setEnviando] = useState(false);
-  const [versao, setVersao] = useState(0);
 
   const headers = accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined;
 
@@ -93,6 +91,7 @@ export function CloudStorageCard({ apiUrl, accessToken }: { apiUrl: string; acce
     try {
       const { data } = await axios.put<Policy>(`${apiUrl}/cloud-storage/policy`, { policy: proxima }, { headers });
       setPolicy(data);
+      onChange?.();
       toast({ title: 'Política de armazenamento salva' });
     } catch {
       toast({ title: 'Não foi possível salvar', variant: 'destructive' });
@@ -110,8 +109,8 @@ export function CloudStorageCard({ apiUrl, accessToken }: { apiUrl: string; acce
         title: data?.skipped ? 'Nada a enviar' : `${data.uploaded} gravação(ões) enviada(s)`,
         description: data?.reason ?? (data?.deletedLocal ? `${data.deletedLocal} liberada(s) do disco local.` : undefined),
       });
-      setVersao((v) => v + 1);
       await carregar();
+      onChange?.();
     } catch {
       toast({ title: 'Falha ao enviar', variant: 'destructive' });
     } finally {
@@ -187,14 +186,12 @@ export function CloudStorageCard({ apiUrl, accessToken }: { apiUrl: string; acce
         </div>
         <button
           type="button"
-          onClick={() => { setVersao((v) => v + 1); void carregar(); }}
+          onClick={() => void carregar()}
           className="flex items-center gap-1.5 rounded border border-border px-2.5 py-1.5 text-xs hover:bg-accent/45"
         >
           <RefreshCw className="h-3.5 w-3.5" /> Atualizar
         </button>
       </div>
-
-      <UsoDaNuvem apiUrl={apiUrl} accessToken={accessToken} versao={versao} />
 
       {/* Interruptor mestre. Deixar explícito que instalar ≠ enviar. */}
       <label className="flex cursor-pointer items-start gap-3 rounded border border-border p-3">
