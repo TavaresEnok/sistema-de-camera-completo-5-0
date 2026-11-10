@@ -1,3 +1,4 @@
+import { diasDoPainel, FUSO_DO_PAINEL, preencherDias } from './cloud-usage.helper';
 import { Injectable, Logger } from '@nestjs/common';
 import { open, readFile, stat, unlink } from 'node:fs/promises';
 import { PrismaService } from '../common/prisma/prisma.service';
@@ -670,6 +671,57 @@ export class CloudOffloadService {
   }
 
   /** Resumo para a página de Armazenamento. */
+  /**
+   * Painel de uso da nuvem: volumes em bytes (não só contagem), envio por dia
+   * e divisão por câmera. Só leitura; agrega no banco.
+   */
+  async usage(diasPedidos?: unknown) {
+    const cfg = await this.cloudConnector.getCloudStorageConfig();
+    if (!cfg) return { enabled: false as const };
+    const dias = diasDoPainel(diasPedidos);
+    const [totais] = await this.prisma.$queryRaw<Array<Record<string, bigint | Date | null>>>`
+      SELECT
+        COALESCE(SUM("sizeBytes") FILTER (WHERE "cloudKey" IS NOT NULL), 0) AS "cloudBytes",
+        COUNT(*) FILTER (WHERE "cloudKey" IS NOT NULL) AS "cloudCount",
+        COALESCE(SUM("sizeBytes") FILTER (WHERE "cloudKey" IS NULL AND "localDeletedAt" IS NULL AND "endedAt" IS NOT NULL), 0) AS "pendingBytes",
+        COUNT(*) FILTER (WHERE "cloudKey" IS NULL AND "localDeletedAt" IS NULL AND "endedAt" IS NOT NULL) AS "pendingCount",
+        COALESCE(SUM("sizeBytes") FILTER (WHERE "cloudKey" IS NOT NULL AND "localDeletedAt" IS NOT NULL), 0) AS "cloudOnlyBytes",
+        COALESCE(SUM("sizeBytes") FILTER (WHERE "localDeletedAt" IS NULL), 0) AS "localBytes",
+        MAX("cloudUploadedAt") AS "lastUploadAt"
+      FROM "Recording"`;
+    const hoje = (await this.prisma.$queryRaw<Array<{ hoje: string }>>`
+      SELECT to_char((NOW() AT TIME ZONE ${FUSO_DO_PAINEL})::date, 'YYYY-MM-DD') AS hoje`)[0].hoje;
+    const diarias = await this.prisma.$queryRaw<Array<{ day: string; bytes: bigint; count: bigint }>>`
+      SELECT to_char((("cloudUploadedAt" AT TIME ZONE 'UTC') AT TIME ZONE ${FUSO_DO_PAINEL})::date, 'YYYY-MM-DD') AS day,
+             COALESCE(SUM("sizeBytes"), 0) AS bytes, COUNT(*) AS count
+        FROM "Recording"
+       WHERE "cloudUploadedAt" >= NOW() - make_interval(days => ${dias}::int + 1)
+       GROUP BY 1`;
+    const porCamera = await this.prisma.$queryRaw<Array<{ cameraId: string; cameraName: string; cloudBytes: bigint; localBytes: bigint; pendingBytes: bigint }>>`
+      SELECT r."cameraId", COALESCE(c.name, r."cameraId") AS "cameraName",
+             COALESCE(SUM(r."sizeBytes") FILTER (WHERE r."cloudKey" IS NOT NULL), 0) AS "cloudBytes",
+             COALESCE(SUM(r."sizeBytes") FILTER (WHERE r."localDeletedAt" IS NULL), 0) AS "localBytes",
+             COALESCE(SUM(r."sizeBytes") FILTER (WHERE r."cloudKey" IS NULL AND r."localDeletedAt" IS NULL AND r."endedAt" IS NOT NULL), 0) AS "pendingBytes"
+        FROM "Recording" r LEFT JOIN "Camera" c ON c.id = r."cameraId"
+       GROUP BY 1, 2
+       ORDER BY 3 DESC, 4 DESC
+       LIMIT 12`;
+    const n = (v: unknown) => Number(v ?? 0);
+    return {
+      enabled: true as const,
+      days: dias,
+      timezone: FUSO_DO_PAINEL,
+      totals: {
+        cloudBytes: n(totais.cloudBytes), cloudCount: n(totais.cloudCount),
+        pendingBytes: n(totais.pendingBytes), pendingCount: n(totais.pendingCount),
+        cloudOnlyBytes: n(totais.cloudOnlyBytes), localBytes: n(totais.localBytes),
+        lastUploadAt: totais.lastUploadAt instanceof Date ? totais.lastUploadAt.toISOString() : null,
+      },
+      daily: preencherDias(diarias.map((d) => ({ day: d.day, bytes: n(d.bytes), count: n(d.count) })), dias, hoje),
+      byCamera: porCamera.map((c) => ({ cameraId: c.cameraId, cameraName: c.cameraName, cloudBytes: n(c.cloudBytes), localBytes: n(c.localBytes), pendingBytes: n(c.pendingBytes) })),
+    };
+  }
+
   async summary() {
     const cfg = await this.cloudConnector.getCloudStorageConfig();
     if (!cfg) return { enabled: false as const };

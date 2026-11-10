@@ -27,6 +27,12 @@ export class CloudStorageController {
   }
 
   @Roles(UserRole.ADMIN)
+  @Get('usage')
+  usage(@Query('days') days?: string) {
+    return this.offload.usage(days);
+  }
+
+  @Roles(UserRole.ADMIN)
   @Post('offload/run')
   runOffload() {
     return this.offload.runOnce();

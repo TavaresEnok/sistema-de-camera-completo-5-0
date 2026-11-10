@@ -116,6 +116,15 @@ export default function MonitoramentoPage() {
     cloud: true,
   });
 
+  // Total na nuvem no topo, ao lado do disco local (só admin; some sem storage).
+  const [nuvem, setNuvem] = useState<{ cloudBytes: number; cloudCount: number; pendingCount: number } | null>(null);
+  useEffect(() => {
+    if (!accessToken || !isAdmin) return;
+    axios.get(`${API_URL}/cloud-storage/usage`, { headers: { Authorization: `Bearer ${accessToken}` }, params: { days: 1 } })
+      .then(({ data }) => setNuvem(data?.enabled ? data.totals : null))
+      .catch(() => setNuvem(null));
+  }, [accessToken, isAdmin, reloadNonce]);
+
   const toggleStorageSection = (key: keyof typeof openStorageSections) => {
     setOpenStorageSections((current) => ({ ...current, [key]: !current[key] }));
   };
@@ -214,10 +223,11 @@ export default function MonitoramentoPage() {
         <div className="bg-card border border-border rounded-xl p-5 flex items-center justify-center">
           <Ring value={percent} />
         </div>
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div className={`grid gap-4 ${nuvem ? 'sm:grid-cols-2 xl:grid-cols-4' : 'sm:grid-cols-3'}`}>
           <div className="bg-card border border-border rounded-xl p-4"><div className="text-[10px] uppercase text-[hsl(var(--muted-foreground))]">Capacidade total</div><div className="mt-2 text-2xl font-semibold">{formatarBytes(system?.disk.totalBytes)}</div></div>
           <div className="bg-card border border-border rounded-xl p-4"><div className="text-[10px] uppercase text-[hsl(var(--muted-foreground))]">Em uso</div><div className="mt-2 text-2xl font-semibold">{formatarBytes(system?.disk.usedBytes)}</div></div>
           <div className="bg-card border border-border rounded-xl p-4"><div className="text-[10px] uppercase text-[hsl(var(--muted-foreground))]">Disponível</div><div className="mt-2 text-2xl font-semibold">{formatarBytes(system?.disk.freeBytes)}</div></div>
+          {nuvem && <div className="bg-card border border-border rounded-xl p-4"><div className="text-[10px] uppercase text-[hsl(var(--muted-foreground))]">Na nuvem</div><div className="mt-2 text-2xl font-semibold">{formatarBytes(nuvem.cloudBytes)}</div><div className="mt-1 text-[11px] text-[hsl(var(--muted-foreground))]">{nuvem.cloudCount} gravações{nuvem.pendingCount ? ` · ${nuvem.pendingCount} aguardando` : ''}</div></div>}
         </div>
       </div>
       <StorageSection title="Volumes" aria-label="Volumes" open={openStorageSections.volumes} onToggle={() => toggleStorageSection('volumes')}>

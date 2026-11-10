@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import axios from 'axios';
 import { Cloud, CloudOff, Upload, RefreshCw } from 'lucide-react';
 import { toast } from '../hooks/use-toast';
+import { UsoDaNuvem } from './UsoDaNuvem';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ARMAZENAMENTO EM NUVEM — o que a instalação decide.
@@ -51,6 +52,7 @@ export function CloudStorageCard({ apiUrl, accessToken }: { apiUrl: string; acce
   const [falhaConsulta, setFalhaConsulta] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [enviando, setEnviando] = useState(false);
+  const [versao, setVersao] = useState(0);
 
   const headers = accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined;
 
@@ -108,6 +110,7 @@ export function CloudStorageCard({ apiUrl, accessToken }: { apiUrl: string; acce
         title: data?.skipped ? 'Nada a enviar' : `${data.uploaded} gravação(ões) enviada(s)`,
         description: data?.reason ?? (data?.deletedLocal ? `${data.deletedLocal} liberada(s) do disco local.` : undefined),
       });
+      setVersao((v) => v + 1);
       await carregar();
     } catch {
       toast({ title: 'Falha ao enviar', variant: 'destructive' });
@@ -184,27 +187,14 @@ export function CloudStorageCard({ apiUrl, accessToken }: { apiUrl: string; acce
         </div>
         <button
           type="button"
-          onClick={() => void carregar()}
+          onClick={() => { setVersao((v) => v + 1); void carregar(); }}
           className="flex items-center gap-1.5 rounded border border-border px-2.5 py-1.5 text-xs hover:bg-accent/45"
         >
           <RefreshCw className="h-3.5 w-3.5" /> Atualizar
         </button>
       </div>
 
-      <div className="grid grid-cols-3 gap-3">
-        <div className="rounded border border-border bg-background/55 p-3">
-          <div className="text-[11px] text-muted-foreground">Na nuvem</div>
-          <div className="text-lg font-semibold">{status.recordingsInCloud}</div>
-        </div>
-        <div className="rounded border border-border bg-background/55 p-3">
-          <div className="text-[11px] text-muted-foreground">Aguardando envio</div>
-          <div className="text-lg font-semibold">{status.recordingsPendingUpload}</div>
-        </div>
-        <div className="rounded border border-border bg-background/55 p-3">
-          <div className="text-[11px] text-muted-foreground">Só na nuvem</div>
-          <div className="text-lg font-semibold">{status.recordingsCloudOnly}</div>
-        </div>
-      </div>
+      <UsoDaNuvem apiUrl={apiUrl} accessToken={accessToken} versao={versao} />
 
       {/* Interruptor mestre. Deixar explícito que instalar ≠ enviar. */}
       <label className="flex cursor-pointer items-start gap-3 rounded border border-border p-3">
