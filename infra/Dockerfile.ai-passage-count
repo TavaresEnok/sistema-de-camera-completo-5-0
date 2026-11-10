@@ -18,7 +18,9 @@ COPY services/ai-service-python/main.py /source/main.py
 COPY services/ai-service-python/contagem_de_passagem.py /source/contagem_de_passagem.py
 COPY services/ai-service-python/detectors/tripwire.py /source/detectors/tripwire.py
 COPY services/ai-service-python/tests/test_contagem_de_passagem.py /checks/test_contagem_de_passagem.py
-RUN cd /checks && PYTHONPATH=/source python test_contagem_de_passagem.py
+# object_policy já está compilado na imagem da Vibe; aqui só serve ao teste.
+COPY services/ai-service-python/object_policy.py /checks/object_policy.py
+RUN cd /checks && PYTHONPATH=/source:/checks python test_contagem_de_passagem.py
 COPY scripts/security/compile-ai.py /build/compile-ai.py
 RUN cd /build && python compile-ai.py \
     && find /native -type f -name '*.so' -exec strip --strip-unneeded '{}' '+'
