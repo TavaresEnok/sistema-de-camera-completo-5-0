@@ -256,7 +256,7 @@ export default function ArmazenamentoPage() {
                 <dt className="text-muted-foreground">Uso do disco</dt><dd>{discoPercent}%</dd>
                 <dt className="text-muted-foreground">Câmeras</dt><dd>{cameras.length} · retenção {retencao ?? '—'}</dd>
                 {nuvem ? (<>
-                  <dt className="text-muted-foreground">Nuvem</dt><dd>{nuvem.provider}{nuvem.bucket ? ` · ${nuvem.bucket}` : ''}{nuvem.endpoint ? <span className="font-mono"> · {nuvem.endpoint}</span> : null}</dd>
+                  <dt className="text-muted-foreground">Nuvem</dt><dd>{nuvem.provider}{nuvem.bucket ? ` · ${nuvem.bucket}` : ''}</dd>
                   <dt className="text-muted-foreground">Só na nuvem</dt><dd>{formatarBytes(visao?.totals.cloudOnlyBytes ?? 0)} (disco já liberado)</dd>
                 </>) : null}
               </dl>

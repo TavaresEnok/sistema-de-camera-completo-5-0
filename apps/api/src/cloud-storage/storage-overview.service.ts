@@ -34,7 +34,8 @@ export class StorageOverviewService {
         provider: cfg.provider,
         mode: cfg.mode,
         localWindowHours: cfg.localWindowHours,
-        ...(admin ? { bucket: cfg.bucket, endpoint: cfg.endpoint } : {}),
+        // Endereço do fornecedor nunca sai daqui (é da revenda, não do cliente).
+        ...(admin ? { bucket: cfg.bucket } : {}),
         policy,
       }
       : null;

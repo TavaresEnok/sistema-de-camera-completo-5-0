@@ -742,7 +742,8 @@ export class CloudOffloadService {
       provider: cfg.provider,
       mode: cfg.mode,
       bucket: cfg.bucket,
-      endpoint: cfg.endpoint,
+      // O endereço do fornecedor não vai para a tela: é contrato da revenda,
+      // não informação do cliente. Fica só na Central e no servidor.
       prefix: cfg.prefix,
       localWindowHours: cfg.localWindowHours,
       recordingsInCloud: naNuvem,

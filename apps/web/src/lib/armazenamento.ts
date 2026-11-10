@@ -4,7 +4,7 @@ export type Tom = 'ok' | 'aviso' | 'perigo' | 'neutro';
 export type Politica = { enabled: boolean; triggerModes: { continuous: boolean; motion: boolean; manual: boolean }; keepLocalCopy: boolean };
 export type Visao = {
   days: number;
-  cloud: null | { configured: true; provider: string; mode: 'tier' | 'mount'; localWindowHours: number; bucket?: string; endpoint?: string; policy: Politica | null };
+  cloud: null | { configured: true; provider: string; mode: 'tier' | 'mount'; localWindowHours: number; bucket?: string; policy: Politica | null };
   totals: { diskBytes: number; cloudBytes: number; cloudOnlyBytes: number; cloudCount: number; pendingBytes: number; pendingCount: number; recordings: number; lastUploadAt: string | null };
   daily: Array<{ day: string; diskBytes: number; cloudBytes: number }>;
   byCamera: Array<{ cameraId: string; cameraName: string; groupName: string | null; diskBytes: number; cloudBytes: number }>;

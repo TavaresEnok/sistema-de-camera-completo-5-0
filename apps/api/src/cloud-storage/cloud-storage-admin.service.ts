@@ -23,7 +23,6 @@ import { CloudStorageResolverService } from './cloud-storage-resolver.service';
 export type StorageComUso = {
   id: string;
   name: string;
-  endpoint: string;
   bucket: string;
   prefix: string;
   provider: string;
@@ -79,7 +78,6 @@ export class CloudStorageAdminService {
       return {
         id: linha.id,
         name: linha.name,
-        endpoint: linha.endpoint,
         bucket: linha.bucket,
         prefix: linha.prefix,
         provider: linha.provider,

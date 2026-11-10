@@ -63,3 +63,10 @@ test('página: técnico recolhido e configuração da nuvem atrás de um botão'
   assert.match(f, /statusDoArmazenamento/);
   assert.doesNotMatch(f, /UsagePagination/);
 });
+
+test('o endereço do fornecedor da nuvem nunca aparece para o cliente', () => {
+  for (const arquivo of ['src/pages/StoragePage.tsx', 'src/components/PreviousStoragesCard.tsx', 'src/components/CloudStorageCard.tsx']) {
+    const fonte = readFileSync(arquivo, 'utf8').split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+    assert.doesNotMatch(fonte, /\.endpoint\b/, `${arquivo} exibe o endpoint`);
+  }
+});

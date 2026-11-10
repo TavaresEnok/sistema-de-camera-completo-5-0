@@ -23,7 +23,6 @@ type CloudStatus =
     provider: string;
     mode: 'tier' | 'mount';
     bucket: string;
-    endpoint: string;
     prefix: string;
     localWindowHours: number;
     recordingsInCloud: number;

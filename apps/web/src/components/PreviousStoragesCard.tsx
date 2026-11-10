@@ -26,7 +26,6 @@ import { toast } from '../hooks/use-toast';
 type Storage = {
   id: string;
   name: string;
-  endpoint: string;
   bucket: string;
   prefix: string;
   provider: string;
@@ -185,7 +184,7 @@ export function PreviousStoragesCard({ apiUrl, accessToken }: { apiUrl: string; 
                   )}
                 </div>
                 <div className="truncate font-mono text-xs text-muted-foreground">
-                  {s.endpoint}/{s.bucket}{s.prefix ? `/${s.prefix}` : ''}
+                  {s.bucket}{s.prefix ? `/${s.prefix}` : ''}
                 </div>
                 <div className="mt-1 text-xs text-muted-foreground">
                   {s.gravacoes > 0
