@@ -34,6 +34,8 @@ import statistics
 from collections import deque
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from object_policy import normalizar_classe
+
 # Depois deste tempo sem ver um trackId, sua última posição é esquecida.
 # Reaproveitar posição velha faria um objeto "saltar" o quadro inteiro e cruzar
 # tudo no caminho — o modo mais fácil de gerar alarme falso em massa.
@@ -134,7 +136,7 @@ def linhas_de(zonas: Optional[Iterable[Any]]) -> List[Dict[str, Any]]:
         entrada = z.get("entrada") if z.get("entrada") in ("ab", "ba") else "ab"
         classes_brutas = z.get("classes")
         classes = (
-            {str(c).strip().lower() for c in classes_brutas if str(c).strip()}
+            {normalizar_classe(c) for c in classes_brutas if normalizar_classe(c)}
             if isinstance(classes_brutas, list) else set()
         ) or {"person"}
         saida.append({
@@ -294,7 +296,9 @@ class DetectorDeTravessia:
                 sentido = "ab" if lado_antes < 0 else "ba"
                 configurado = linha["sentido"]
                 contagem = linha.get("uso") == "contagem"
-                if contagem and str(getattr(det, "label", "") or "").lower() not in linha["classes"]:
+                # O detector rotula em português ("pessoa"); a linha guarda o nome
+                # canônico ("person"). Comparar sem normalizar descartava tudo.
+                if contagem and normalizar_classe(getattr(det, "label", "")) not in linha["classes"]:
                     continue
                 event = {
                     "linhaId": linha["id"],

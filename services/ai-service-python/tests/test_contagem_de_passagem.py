@@ -71,6 +71,18 @@ class LinhasDeContagem(unittest.TestCase):
         volta = atravessar(DetectorDeTravessia(linha_contagem()), 0.7, 0.3)[0]
         self.assertNotEqual(ida["direcao"], volta["direcao"])
 
+    def test_rotulo_em_portugues_do_detector_conta(self):
+        # O object_detector entrega "pessoa"; a linha guarda "person".
+        det = DetectorDeTravessia(linha_contagem())
+        self.assertEqual(len(atravessar(det, 0.3, 0.7, label="pessoa")), 1)
+        det = DetectorDeTravessia(linha_contagem(classes=["carro"]))
+        self.assertEqual(len(atravessar(det, 0.3, 0.7, label="carro")), 1)
+
+    def test_contador_grava_classe_canonica(self):
+        c = ContadorDePassagem(sessao="s1")
+        c.registrar({"linhaId": "porta", "label": "pessoa", "trackId": "1", "direcao": "in"}, 1000.0)
+        self.assertEqual(c.lote_para_envio(1010.0)[0]["classLabel"], "person")
+
     def test_classe_fora_da_linha_nao_conta(self):
         det = DetectorDeTravessia(linha_contagem())
         self.assertEqual(atravessar(det, 0.3, 0.7, label="car"), [])

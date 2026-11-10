@@ -30,6 +30,8 @@ import time
 import uuid
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from object_policy import normalizar_classe
+
 logger = logging.getLogger("ai-service.contagem")
 
 ESPERA_S = 1.5
@@ -89,7 +91,7 @@ class ContadorDePassagem:
         direcao = travessia.get("direcao")
         if not linha or direcao not in ("in", "out"):
             return
-        classe = str(travessia.get("label") or "person")
+        classe = normalizar_classe(travessia.get("label")) or "person"
         nome = str(travessia.get("linhaNome") or "Linha")
         chave = (objeto, linha)
         with self._lock:
