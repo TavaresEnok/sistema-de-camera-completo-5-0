@@ -331,6 +331,9 @@ export class AiManagerService implements OnModuleInit {
             },
             select: { id: true, name: true },
           });
+          for (const cam of await this.camerasComContagem()) {
+            if (!armed.some((item) => item.id === cam.id)) armed.push(cam);
+          }
           for (const cam of armed) {
             if (active.includes(cam.id)) continue;
             const lastAt = this.lastDegradedRecoveryAt.get(cam.id) ?? 0;
@@ -393,6 +396,7 @@ export class AiManagerService implements OnModuleInit {
               select: { id: true },
             })).map((cam) => cam.id),
           );
+          for (const cam of await this.camerasComContagem()) legitimas.add(cam.id);
           for (const cameraId of active) {
             const processor = health?.processors?.[cameraId];
             // Simular não liga o toggle nem arma a câmera. Uma sessão de
@@ -529,7 +533,9 @@ export class AiManagerService implements OnModuleInit {
         // gastam nossa CPU. Assim nada é analisado sem necessidade. Nos modos de
         // objetos (general/face) segue analisando todas as câmeras habilitadas.
         if (settings.mode === 'motion') {
-          return needsSystemMotion(cam);
+          // Linha de CONTAGEM também é demanda: contar exige a análise ligada,
+          // mesmo com a câmera sem gravação/aviso armados.
+          return needsSystemMotion(cam) || temLinhaDeContagem(cam.detectionZones);
         }
         return true;
       });
@@ -559,6 +565,18 @@ export class AiManagerService implements OnModuleInit {
       this.logger.error(`Erro ao sincronizar IA: ${err.message}`);
       return { started: 0, error: err.message };
     }
+  }
+
+  /**
+   * Câmeras com linha de CONTAGEM que a IA deve manter analisando: mesmo
+   * critério do auto-start (habilitada, toggle de IA ligado, não OFFLINE).
+   */
+  private async camerasComContagem(): Promise<Array<{ id: string; name: string }>> {
+    const candidatas = await this.prisma.camera.findMany({
+      where: { enabled: { not: false }, aiEnabled: { not: false }, status: { not: CameraStatus.OFFLINE } },
+      select: { id: true, name: true, detectionZones: true },
+    });
+    return candidatas.filter((cam) => temLinhaDeContagem(cam.detectionZones)).map(({ id, name }) => ({ id, name }));
   }
 
   async restartAll() {
@@ -609,7 +627,8 @@ export class AiManagerService implements OnModuleInit {
     // câmera desarmada não arma gravação nenhuma e não desenha nada (o
     // overlay de movimento foi removido de vez): é só custo. Objeto/face
     // (modo avançado) seguem podendo nascer do live — lá o overlay é real.
-    if (!options?.simulationMode && settings.mode === 'motion' && !options?.allowCameraTrigger && !needsSystemMotion(cam)) {
+    if (!options?.simulationMode && settings.mode === 'motion' && !options?.allowCameraTrigger && !needsSystemMotion(cam)
+      && !temLinhaDeContagem(cam.detectionZones)) {
       return { status: 'disabled', cameraId, reason: 'not_armed' };
     }
     // No modo 'motion', câmeras com detecção própria (motionTrigger='CAMERA')
