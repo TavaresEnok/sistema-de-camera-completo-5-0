@@ -27,7 +27,9 @@ import {
   normalizarSensibilidadeDaIa,
   politicaDeConfirmacaoDaIa,
   temLinhaDePerimetro,
+  temLinhaDeContagem,
 } from './helpers/escopo-de-objeto.helper';
+import { linhasDeContagem } from '../passage-counts/passage-count.helper';
 import { devePularPorDeteccaoNativa, modoDaCamera } from './helpers/modo-por-camera.helper';
 
 /** A decisão de objeto, lida do source_info que buildAiSource já montou. */
@@ -698,6 +700,7 @@ export class AiManagerService implements OnModuleInit {
           recordingMode: cam.recordingMode,
           motionTrigger: cam.motionTrigger,
           temLinha: temLinhaDePerimetro(cam.detectionZones),
+          temLinhaDeContagem: temLinhaDeContagem(cam.detectionZones),
         };
       }),
     };
@@ -1229,9 +1232,15 @@ export class AiManagerService implements OnModuleInit {
     const otherObjectDemand = decidirObjetoDaCamera({ ...cam, objectNoticeEnabled: false }, {
       politicaLiberaObjeto: classesPermitidasNaInstalacao.length > 0,
     }).roda;
+    // Classes das linhas de CONTAGEM entram no detector desta câmera, sempre
+    // dentro do que a Central liberou: contar não amplia o que foi vendido.
+    const classesDeContagem = linhasDeContagem(cam.detectionZones)
+      .flatMap((linha) => linha.classes)
+      .filter((classe) => classesPermitidasNaInstalacao.includes(classe));
     const classesDeObjeto = [...new Set([
       ...(otherObjectDemand || !cam.objectNoticeEnabled ? classesEfetivasDaCamera(classesPermitidasNaInstalacao, cam.aiObjectClasses) : []),
       ...(cam.objectNoticeEnabled ? noticeClasses(classesPermitidasNaInstalacao, cam.objectNoticeClasses) : []),
+      ...classesDeContagem,
     ])];
     const sensibilidade = normalizarSensibilidadeDaIa(cam.aiSensitivity);
     const confirmacao = politicaDeConfirmacaoDaIa(sensibilidade, cam.aiConfidence);
@@ -1280,9 +1289,13 @@ export class AiManagerService implements OnModuleInit {
       // desenhada); quem decide O QUE detectar é a Central, via política
       // comercial. Mandar os dois no source_info deixa o ai-service aplicar
       // sem precisar consultar nada.
+      // Contagem de passagem: taxa própria desta câmera (5/8/12; null = 8).
+      countingFps: cam.countingFps ?? null,
       objectDetection: {
         ativo: decisaoDeObjeto.roda,
         motivo: decisaoDeObjeto.motivo,
+        // Objeto ligado só para contar: a IA não emite OBJECT_DETECTED.
+        somenteContagem: decisaoDeObjeto.motivo === 'linha-de-contagem',
         classes: classesDeObjeto,
         sensibilidade,
         ...confirmacao,

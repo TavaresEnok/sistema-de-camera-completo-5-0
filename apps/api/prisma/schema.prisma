@@ -126,6 +126,10 @@ model Camera {
   /// Faixa configurável: 40–90. Substitui os três rótulos da interface,
   /// mas `aiSensitivity` permanece para compatibilidade com instalações antigas.
   aiConfidence Int @default(70)
+  /// Contagem de passagem: quadros por segundo da IA nesta câmera quando ela tem
+  /// linha com uso "contagem" (5, 8 ou 12). Null = padrão (8). Só vale com linha
+  /// de contagem; as demais câmeras seguem o perfil global.
+  countingFps Int?
 
   /// CLASSES que iniciam gravação no modo `object` (recordingMode='object').
   ///
@@ -277,6 +281,7 @@ model Camera {
   alarms        AlarmInstance[]
   permissions   CameraPermission[]
   groupMessages GroupMessage[]
+  passageCounts PassageCount[]
 
   @@index([siteId])
   @@index([areaId])
@@ -418,6 +423,31 @@ model CameraEvent {
   @@index([cameraId, type, occurredAt])
   @@index([occurredAt])
   @@index([reviewedAt])
+}
+
+/// Contagem de passagem por linha (uso "contagem"), agregada por MINUTO.
+///
+/// A IA envia o TOTAL ABSOLUTO de cada minuto da sua sessão; o upsert grava com
+/// SET, então reenviar não duplica. A sessão do processador entra na chave: se a
+/// IA reiniciar no meio do minuto, a nova sessão soma ao lado da anterior em vez
+/// de sobrescrevê-la. Relatórios somam todas as sessões.
+model PassageCount {
+  id          String   @id @default(uuid())
+  cameraId    String
+  camera      Camera   @relation(fields: [cameraId], references: [id], onDelete: Cascade)
+  lineId      String
+  lineName    String
+  classLabel  String
+  /// 'in' = entrada, 'out' = saída (o lado da entrada é escolhido na linha).
+  direction   String
+  minuteStart DateTime
+  session     String
+  count       Int
+  updatedAt   DateTime @updatedAt
+
+  @@unique([cameraId, lineId, classLabel, direction, minuteStart, session], map: "PassageCount_minute_session_key")
+  @@index([cameraId, minuteStart])
+  @@index([minuteStart])
 }
 
 /// Revisão POR USUÁRIO: cada operador tem o seu próprio "visto". Substitui o

@@ -11,7 +11,8 @@ from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 from detectors.base import Detection
 from detectors.motion import MotionDetector
-from detectors.tripwire import DetectorDeTravessia
+from detectors.tripwire import DetectorDeTravessia, linhas_de
+from contagem_de_passagem import ContadorDePassagem, EnvioDeContagem, quadros_de_contagem
 from detectors.confirmacao_de_objeto import ConfirmadorDeObjeto, PoliticaDeConfirmacao
 from detectors.agrupamento_de_evento import (
     AgrupadorDeEventos,
@@ -170,6 +171,20 @@ class StreamProcessor:
         # normalizados). Sem zonas, o detector monitora a câmera inteira.
         zones = (source_info or {}).get("detectionZones") if isinstance(source_info, dict) else None
         self.detection_zones = zones if isinstance(zones, list) else []
+        # ── CONTAGEM DE PASSAGEM ──────────────────────────────────────────
+        # Só existe se a câmera tem linha com uso "contagem". A taxa de quadros
+        # própria (5/8/12) vale apenas para essa câmera; as demais seguem o
+        # perfil global. Ver contagem_de_passagem.py.
+        tem_contagem = any(l.get("uso") == "contagem" for l in linhas_de(self.detection_zones))
+        self.counting_fps = quadros_de_contagem((source_info or {}).get("countingFps")) if tem_contagem else None
+        if tem_contagem and self.counting_fps is None:
+            self.counting_fps = 8
+        self.contador_de_passagem = ContadorDePassagem() if tem_contagem else None
+        self._envio_de_contagem = None
+        objeto_info = (source_info or {}).get("objectDetection") if isinstance(source_info, dict) else None
+        # Objeto ligado SÓ por causa da contagem: conta, mas não gera evento de
+        # "pessoa detectada" para cada cliente que passa na porta.
+        self.somente_contagem = bool(isinstance(objeto_info, dict) and objeto_info.get("somenteContagem"))
         self.object_policy = politica_de_objeto(
             self.source_info,
             default_threshold=float(self.profile.get("confirm_median_threshold", 0.70)),
@@ -484,6 +499,9 @@ class StreamProcessor:
         self.running = True
         if self.emit_events:
             self._event_delivery = EventDelivery(self._send_event_payload)
+        if self.contador_de_passagem is not None and self.emit_events and not self.simulation_only:
+            self._envio_de_contagem = EnvioDeContagem(self.contador_de_passagem, self._send_passage_counts)
+            self._envio_de_contagem.iniciar()
         
         # Thread de captura
         self.capture_thread = threading.Thread(target=self._capture_frames)
@@ -503,6 +521,8 @@ class StreamProcessor:
             self.thread.join(timeout=2)
         if self._event_delivery:
             self._event_delivery.close()
+        if self._envio_de_contagem:
+            self._envio_de_contagem.parar()
         # Do not free shared per-camera state while its old inference is alive.
         if not self.thread or not self.thread.is_alive():
             registry.release_context(self.camera_id, self._context_owner)
@@ -844,6 +864,11 @@ class StreamProcessor:
             process_fps = max(process_fps, float(MOTION_PROFILE["detection_fps"]))
         if self._has_perimeter_motion_test_session_locked():
             process_fps = max(process_fps, self.perimeter_motion_test_fps)
+        if self.counting_fps and self.advanced_analysis_type and not self.simulation_only:
+            # Contagem precisa ver a pessoa dos dois lados da linha: a taxa
+            # escolhida na câmera fica fixa, acima do perfil e do modo adaptativo.
+            process_fps = max(process_fps, float(self.counting_fps))
+            advanced_fps = max(advanced_fps, float(self.counting_fps))
 
         self.process_fps = process_fps
         self.advanced_process_fps = advanced_fps
@@ -1331,6 +1356,10 @@ class StreamProcessor:
                     if self.tripwire.ativo:
                         try:
                             for t in self.tripwire.avaliar(advanced_detections, advanced_width, advanced_height):
+                                if t.get("uso") == "contagem":
+                                    if self.contador_de_passagem is not None and self.emit_events and not self.simulation_only:
+                                        self.contador_de_passagem.registrar(t)
+                                    continue
                                 if not t.get("proibido"):
                                     continue  # travessia no sentido permitido: registrada, não alarmada
                                 detections.append(Detection(
@@ -1389,6 +1418,8 @@ class StreamProcessor:
                     candidatos = [d for d in detections if eh_objeto_para_confirmar(d)]
                     outros = [d for d in detections if not eh_objeto_para_confirmar(d)]
                     detections = outros + self.confirmador.avaliar(candidatos)
+                    if self.somente_contagem:
+                        detections = [d for d in detections if (d.event_type or "") != "OBJECT_DETECTED"]
                 except Exception as exc:
                     # Confirmação quebrada não pode cegar a câmera: sem ela o
                     # comportamento volta a ser o antigo, que é ruidoso mas vivo.
@@ -1814,6 +1845,28 @@ class StreamProcessor:
             self._event_delivery.submit(payload)
         else:
             self._send_event_payload(payload)
+
+    def _send_passage_counts(self, payload):
+        try:
+            url = f"{self.api_url}/passage-counts/internal/{self.camera_id}"
+            response = requests.post(url, json=payload, headers={"X-Service-Token": self.service_token}, timeout=5)
+            if response.status_code not in (200, 201):
+                logger.warning("[%s] contagem recusada pela API: %s", self.camera_id, response.status_code)
+                return False
+            return True
+        except Exception as e:
+            logger.warning("[%s] falha ao enviar contagem (%s)", self.camera_id, type(e).__name__)
+            return False
+
+    def counting_state(self):
+        if self.contador_de_passagem is None:
+            return None
+        estado = self.contador_de_passagem.estado()
+        estado["fps"] = self.counting_fps
+        envio = self._envio_de_contagem
+        estado["lastSentAt"] = envio.ultimo_envio_ok_em if envio else None
+        estado["sendFailures"] = envio.falhas_seguidas if envio else 0
+        return estado
 
     def _send_event_payload(self, payload):
         report_started = time.perf_counter()

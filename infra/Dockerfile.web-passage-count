@@ -1,0 +1,13 @@
+# Painel com a aba Contagem, por cima do painel em produção na Vibe (b270e7a).
+# Só a pasta compilada muda; nginx e configuração seguem os da imagem atual.
+#
+#   docker build -f infra/Dockerfile.web-passage-count --build-arg BASE=<id da imagem web atual> \
+#     --build-arg RELEASE_REVISION=<commit> <pasta com dist/>
+ARG BASE
+FROM ${BASE}
+ARG RELEASE_REVISION
+LABEL org.opencontainers.image.revision=$RELEASE_REVISION
+USER root
+RUN rm -r /usr/share/nginx/html
+COPY dist/ /usr/share/nginx/html/
+USER nginx

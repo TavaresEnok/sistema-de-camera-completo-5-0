@@ -60,18 +60,36 @@ export type DecisaoDeObjeto = {
     | 'gravacao-por-objeto'
     | 'aviso-por-objeto'
     | 'sempre-ligado'
-    | 'sem-linha-desenhada';
+    | 'sem-linha-desenhada'
+    | 'linha-de-contagem';
 };
 
 export function normalizarModoDeObjeto(valor: unknown): ModoDeObjeto {
   return valor === 'sempre' || valor === 'nunca' ? valor : 'auto';
 }
 
-/** A câmera tem ao menos uma linha de perímetro utilizável? */
+function linhaUtilizavel(z: any): boolean {
+  if (!z || z.kind !== 'line' || !Array.isArray(z.points) || z.points.length !== 2) return false;
+  const [a, b] = z.points;
+  const ax = Number(a?.[0]); const ay = Number(a?.[1]);
+  const bx = Number(b?.[0]); const by = Number(b?.[1]);
+  if (![ax, ay, bx, by].every(Number.isFinite)) return false;
+  return Math.hypot(bx - ax, by - ay) > 1e-6;
+}
+
+/** A câmera tem ao menos uma linha de CONTAGEM utilizável? */
+export function temLinhaDeContagem(zonas: unknown): boolean {
+  return Array.isArray(zonas) && zonas.some((z: any) => z?.uso === 'contagem' && linhaUtilizavel(z));
+}
+
+/**
+ * A câmera tem ao menos uma linha de perímetro (ALERTA) utilizável?
+ * Linha de contagem não é perímetro: ela soma passagens e nunca alerta.
+ */
 export function temLinhaDePerimetro(zonas: unknown): boolean {
   if (!Array.isArray(zonas)) return false;
   return zonas.some((z: any) => {
-    if (!z || z.kind !== 'line' || !Array.isArray(z.points) || z.points.length !== 2) return false;
+    if (!z || z.kind !== 'line' || z.uso === 'contagem' || !Array.isArray(z.points) || z.points.length !== 2) return false;
     const [a, b] = z.points;
     const ax = Number(a?.[0]); const ay = Number(a?.[1]);
     const bx = Number(b?.[0]); const by = Number(b?.[1]);
@@ -114,12 +132,19 @@ export function decidirObjetoDaCamera(
     return { cameraId, roda: true, motivo: 'gravacao-por-objeto' };
   }
 
-  if (modo === 'nunca') return { cameraId, roda: false, motivo: 'desligado-pelo-operador' };
   if (modo === 'sempre') return { cameraId, roda: true, motivo: 'sempre-ligado' };
-
-  return temLinhaDePerimetro(camera.detectionZones)
-    ? { cameraId, roda: true, motivo: 'linha-de-perimetro' }
-    : { cameraId, roda: false, motivo: 'sem-linha-desenhada' };
+  if (modo !== 'nunca' && temLinhaDePerimetro(camera.detectionZones)) {
+    return { cameraId, roda: true, motivo: 'linha-de-perimetro' };
+  }
+  // Linha de CONTAGEM é pedido explícito do mesmo jeito que a de perímetro,
+  // mas o objeto roda SÓ para contar: sem evento de "pessoa detectada" a cada
+  // passagem (ver `somenteContagem` no source_info). Vale mesmo em "nunca",
+  // que existe para frear alerta/evento — contar é a razão de a linha existir.
+  if (temLinhaDeContagem(camera.detectionZones)) {
+    return { cameraId, roda: true, motivo: 'linha-de-contagem' };
+  }
+  if (modo === 'nunca') return { cameraId, roda: false, motivo: 'desligado-pelo-operador' };
+  return { cameraId, roda: false, motivo: 'sem-linha-desenhada' };
 }
 
 /**
@@ -199,6 +224,7 @@ export function explicarDecisao(decisao: DecisaoDeObjeto): string {
     case 'gravacao-por-objeto': return 'Ligado automaticamente: a câmera grava por objeto.';
     case 'aviso-por-objeto': return 'Ligado para avisar na tela, sem iniciar gravação.';
     case 'sempre-ligado': return 'Ligado manualmente para esta câmera.';
+    case 'linha-de-contagem': return 'Ligado para contar passagens na linha de contagem.';
     case 'sem-linha-desenhada': return 'Sem linha de perímetro — desenhe uma linha para ativar, ou marque "sempre".';
   }
 }

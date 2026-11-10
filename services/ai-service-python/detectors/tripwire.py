@@ -128,12 +128,24 @@ def linhas_de(zonas: Optional[Iterable[Any]]) -> List[Dict[str, Any]]:
         if math.hypot(bx - ax, by - ay) <= 1e-6:
             continue
         sentido = z.get("sentido")
+        # Linha de CONTAGEM soma passagens e nunca vira alerta. Sem `uso`, a
+        # linha é de alerta — exatamente como antes deste campo existir.
+        uso = "contagem" if z.get("uso") == "contagem" else "alerta"
+        entrada = z.get("entrada") if z.get("entrada") in ("ab", "ba") else "ab"
+        classes_brutas = z.get("classes")
+        classes = (
+            {str(c).strip().lower() for c in classes_brutas if str(c).strip()}
+            if isinstance(classes_brutas, list) else set()
+        ) or {"person"}
         saida.append({
             "id": str(z.get("id") or ""),
             "name": str(z.get("name") or "Linha"),
             "a": (ax, ay),
             "b": (bx, by),
             "sentido": sentido if sentido in ("ambos", "ab", "ba") else "ambos",
+            "uso": uso,
+            "entrada": entrada,
+            "classes": classes,
         })
     return saida
 
@@ -166,6 +178,10 @@ class DetectorDeTravessia:
         self.min_frames = min_frames
         self._scores = {}
         self._pending = {}
+
+    @property
+    def tem_contagem(self) -> bool:
+        return any(linha.get("uso") == "contagem" for linha in self.linhas)
 
     @property
     def ativo(self) -> bool:
@@ -277,15 +293,22 @@ class DetectorDeTravessia:
                     continue
                 sentido = "ab" if lado_antes < 0 else "ba"
                 configurado = linha["sentido"]
+                contagem = linha.get("uso") == "contagem"
+                if contagem and str(getattr(det, "label", "") or "").lower() not in linha["classes"]:
+                    continue
                 event = {
                     "linhaId": linha["id"],
                     "linhaNome": linha["name"],
                     "sentido": sentido,
-                    "proibido": configurado in ("ambos", sentido),
+                    # Linha de contagem nunca é "proibida": ela soma, não alerta.
+                    "proibido": (not contagem) and configurado in ("ambos", sentido),
                     "label": getattr(det, "label", None),
                     "confidence": getattr(det, "confidence", None),
                     "trackId": str(track_id),
                 }
+                if contagem:
+                    event["uso"] = "contagem"
+                    event["direcao"] = "in" if sentido == linha["entrada"] else "out"
                 # Keep the latest crossing per line briefly while evidence
                 # matures; an early crossing must not disappear at frame two.
                 pending[linha["id"]] = (event, agora)

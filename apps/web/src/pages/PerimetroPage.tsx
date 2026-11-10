@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import axios from 'axios';
+import { QuadrosDaContagem } from '../components/QuadrosDaContagem';
 import { getApiBaseUrl } from '../lib/api-base';
 import { perimeterState, type PerimeterProcessor } from '../lib/perimeter-state';
 import { CameraEditSheet } from '../components/CameraEditSheet';
@@ -274,6 +275,14 @@ export default function PerimetroPage() {
               {(selecionada.resumo.monitorar > 0 || selecionada.resumo.ignorar > 0) && <p><strong className="text-foreground">Áreas:</strong> limitam onde movimento e travessias podem valer.</p>}
               <p><strong className="text-foreground">Resposta:</strong> eventos são registrados; {selecionada.camera.alarmsEnabled ? 'esta câmera permite alarmes, sujeitos às regras e silenciamentos ativos.' : 'os alarmes desta câmera estão desligados.'}</p>
             </div>}
+            {selecionada.zonas?.some((z: { kind: string; uso?: string }) => z.kind === 'line' && z.uso === 'contagem') && (
+              <QuadrosDaContagem
+                cameraId={selecionada.camera.id}
+                inicial={(selecionada.camera as { countingFps?: number | null }).countingFps}
+                token={token}
+                podeEditar={userRole === 'admin'}
+              />
+            )}
             <div className="mt-4 flex flex-wrap items-center gap-2">
               <button className="btn btn-primary btn-sm" disabled={dirty || (!podeSimularMovimento && !podeSimularObjeto)} title={dirty ? 'Salve ou descarte o desenho antes de simular' : (!podeSimularMovimento && !podeSimularObjeto) ? 'O plano não possui detecção liberada' : undefined} onClick={() => setTesting(!testing)}>{testing ? 'Voltar ao desenho' : 'Simular regras nesta câmera'}</button>
               <div className="segment" aria-label="O que mostrar na simulação">

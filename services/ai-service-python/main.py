@@ -169,6 +169,7 @@ def health_check():
                 "performance": processor.performance_state(),
                 "readiness": readiness[camera_id],
                 "inference": inference_states[camera_id],
+                "counting": processor.counting_state(),
             }
             for camera_id, processor in snapshot
         },

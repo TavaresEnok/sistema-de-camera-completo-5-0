@@ -40,7 +40,7 @@ const NAV_SECTIONS: NavSection[] = [
       { path: '/map',      label: 'Mapa',           icon: MapPinned },
       { path: '/review',   label: 'Revisão',        icon: Sparkles },
       // Alertas requerem operador ou superior (viewers não têm acesso)
-      { path: '/alarms',   label: 'Alarmes',        icon: Bell,     roles: ['admin', 'operator'] },
+      { path: '/alarms',   label: 'Alertas e contagem',        icon: Bell,     roles: ['admin', 'operator'] },
       { path: '/ptz',      label: 'Controle PTZ',   icon: Crosshair },
       { path: '/perimetro', label: 'Perímetro',     icon: ShieldAlert, roles: ['admin', 'operator'] },
       // "Modo Mural" apenas ligava o mural do /live e redirecionava — item de

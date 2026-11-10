@@ -877,6 +877,8 @@ export class CamerasService implements OnApplicationBootstrap {
         ...(dto.aiObjectClasses !== undefined ? { aiObjectClasses: dto.aiObjectClasses } : {}),
         ...(dto.aiSensitivity !== undefined ? { aiSensitivity: dto.aiSensitivity } : {}),
         ...(dto.aiConfidence !== undefined ? { aiConfidence: dto.aiConfidence } : {}),
+        // Contagem de passagem: 5/8/12; null volta ao padrão (8).
+        ...(dto.countingFps !== undefined ? { countingFps: dto.countingFps } : {}),
         ...(dto.motionSensitivity != null ? { motionSensitivity: dto.motionSensitivity } : {}),
         // Classes que iniciam gravação no modo objeto. `undefined` preserva;
         // array vazio VOLTA ao conjunto padrão (pessoa + veículos) — nunca

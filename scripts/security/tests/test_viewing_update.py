@@ -40,6 +40,31 @@ class RecordingChoiceMigrationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             viewing.allow_schema_transition('old', body, True)
 
+    def test_passage_count_transition_only_allows_reviewed_model_and_column(self):
+        base = 'model Camera {\n  id String @id\n  name String\n}\n'
+        target = ('model Camera {\n  id String @id\n  name String\n  /// taxa\n  countingFps Int?\n'
+                  '  passageCounts PassageCount[]\n}\nmodel PassageCount {\n  id String @id\n  count Int\n}\n')
+        digest = viewing.PASSAGE_COUNT_MIGRATIONS['20261110180000_passage_count'][0]
+        previous = {'schema': base, 'migrations': {'a': '1'}}
+        image = {'hash': 'h', 'schema': target, 'migrations': {'a': '1', '20261110180000_passage_count': digest}}
+        self.assertEqual(viewing.validate_sgp_policy_transition(previous, image, 'h', viewing.PASSAGE_COUNT_MIGRATIONS, viewing.PASSAGE_COUNT_MODELS),
+                         ['20261110180000_passage_count'])
+        # Sem o modelo liberado, o modelo novo é recusado.
+        with self.assertRaises(ValueError):
+            viewing.validate_sgp_policy_transition(previous, image, 'h', viewing.PASSAGE_COUNT_MIGRATIONS)
+        # Qualquer outra coluna nova em Camera é recusada.
+        sneaky = dict(image, schema=target.replace('  countingFps Int?\n', '  countingFps Int?\n  extra Int?\n'))
+        with self.assertRaises(ValueError):
+            viewing.validate_sgp_policy_transition(previous, sneaky, 'h', viewing.PASSAGE_COUNT_MIGRATIONS, viewing.PASSAGE_COUNT_MODELS)
+        # Migração com hash diferente do revisado é recusada.
+        changed = dict(image, migrations={'a': '1', '20261110180000_passage_count': 'outro'})
+        with self.assertRaises(ValueError):
+            viewing.validate_sgp_policy_transition(previous, changed, 'h', viewing.PASSAGE_COUNT_MIGRATIONS, viewing.PASSAGE_COUNT_MODELS)
+        # Migração existente alterada é recusada.
+        with self.assertRaises(ValueError):
+            viewing.validate_sgp_policy_transition(previous, dict(image, migrations={'a': '2', '20261110180000_passage_count': digest}), 'h',
+                                                   viewing.PASSAGE_COUNT_MIGRATIONS, viewing.PASSAGE_COUNT_MODELS)
+
     def test_legacy_shutdown_restore_is_conditional_and_manual_requires_active_timer(self):
         statements = []
         viewing.sql = lambda statement: statements.append(statement) or '1'

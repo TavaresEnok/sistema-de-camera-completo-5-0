@@ -16,6 +16,12 @@ export type DetectionZone = {
   points: number[][];
   /** Só em `line`: sentido PROIBIDO da travessia. */
   sentido?: 'ambos' | 'ab' | 'ba';
+  /** Só em `line`: alerta (padrão) ou contagem de passagens. */
+  uso?: 'alerta' | 'contagem';
+  /** Linha de contagem: o sentido da seta que conta como ENTRADA. */
+  entrada?: 'ab' | 'ba';
+  /** Linha de contagem: o que contar (padrão: pessoa). */
+  classes?: string[];
   /**
    * Quanto a região precisa "se mexer" para valer um alarme. Ausente = média
    * (o comportamento de sempre). Existe para resolver o dilema da árvore: com
@@ -51,6 +57,8 @@ const ZONE_COLOR = {
   // não se atravessa. Cor distinta evita confundir com as duas zonas de área.
   line: { stroke: 'hsl(38,92%,55%)', fill: 'none' },
 } as const;
+// Azul para a linha de CONTAGEM: ela não alerta, só soma passagens.
+const COUNT_COLOR = 'hsl(205,85%,58%)';
 
 /**
  * Editor visual de zonas de detecção.
@@ -663,25 +671,37 @@ export function DetectionZonesEditor({ cameraId, cameraName, configurationRevisi
               markerWidth="5" markerHeight="5" orient="auto-start-reverse">
               <path d="M 0 0 L 10 5 L 0 10 z" fill={ZONE_COLOR.line.stroke} />
             </marker>
+            <marker id="seta-contagem" viewBox="0 0 10 10" refX="9" refY="5"
+              markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill={COUNT_COLOR} />
+            </marker>
           </defs>
-          {zones.map((zone) => (zone.kind === 'line' ? (
+          {zones.map((zone) => (zone.kind === 'line' ? (() => {
+            const contagem = zone.uso === 'contagem';
+            const cor = contagem ? COUNT_COLOR : ZONE_COLOR.line.stroke;
+            const seta = contagem ? 'url(#seta-contagem)' : 'url(#seta-linha)';
+            // Contagem: a seta aponta só para o lado da ENTRADA.
+            const fim = contagem ? (zone.entrada ?? 'ab') === 'ab' : zone.sentido !== 'ba';
+            const inicio = contagem ? zone.entrada === 'ba' : zone.sentido !== 'ab';
+            return (
             <g key={zone.id} onClick={() => { if (!drawing) setSelectedZone(zone.id); }}>
               <line
                 x1={zone.points[0][0] * 100} y1={zone.points[0][1] * 100}
                 x2={zone.points[1][0] * 100} y2={zone.points[1][1] * 100}
-                stroke={ZONE_COLOR.line.stroke}
+                stroke={cor}
                 strokeWidth={selectedZone === zone.id ? 0.8 : 0.5}
               />
               {(() => { const arrow = crossingArrow(zone.points); return arrow ? <g pointerEvents="none">
-                <line {...arrow} stroke={ZONE_COLOR.line.stroke} strokeWidth={0.4} markerEnd={zone.sentido !== 'ba' ? 'url(#seta-linha)' : undefined} markerStart={zone.sentido !== 'ab' ? 'url(#seta-linha)' : undefined} />
-                <text x={arrow.x1} y={arrow.y1 - 1.5} fontSize="2.5" fill="white">A</text><text x={arrow.x2} y={arrow.y2 + 3} fontSize="2.5" fill="white">B</text>
+                <line {...arrow} stroke={cor} strokeWidth={0.4} markerEnd={fim ? seta : undefined} markerStart={inicio ? seta : undefined} />
+                <text x={arrow.x1} y={arrow.y1 - 1.5} fontSize="2.5" fill="white">{contagem && zone.entrada === 'ba' ? 'Entrada' : 'A'}</text><text x={arrow.x2} y={arrow.y2 + 3} fontSize="2.5" fill="white">{contagem && (zone.entrada ?? 'ab') === 'ab' ? 'Entrada' : 'B'}</text>
                 <text x={(zone.points[0][0] + zone.points[1][0]) * 50} y={(zone.points[0][1] + zone.points[1][1]) * 50 - 2.5} textAnchor="middle" fontSize="2.8" fill="white" stroke="black" strokeWidth="0.7" paintOrder="stroke">{zone.name}</text>
               </g> : null; })()}
               {zone.points.map(([x, y], i) => (
-                <circle key={i} cx={x * 100} cy={y * 100} r={0.9} fill={ZONE_COLOR.line.stroke} />
+                <circle key={i} cx={x * 100} cy={y * 100} r={0.9} fill={cor} />
               ))}
             </g>
-          ) : (
+            );
+          })() : (
             <g key={zone.id} onClick={() => { if (!drawing) setSelectedZone(zone.id); }}>
               <polygon points={polygonPoints(zone.points)} fill={ZONE_COLOR[zone.kind].fill} stroke={ZONE_COLOR[zone.kind].stroke} strokeWidth={selectedZone === zone.id ? 0.7 : 0.3} />
               <text x={zone.points.reduce((s, p) => s + p[0], 0) / zone.points.length * 100} y={zone.points.reduce((s, p) => s + p[1], 0) / zone.points.length * 100} textAnchor="middle" fontSize="2.8" fill="white" stroke="black" strokeWidth="0.7" paintOrder="stroke" pointerEvents="none">{zone.name}</text>
@@ -753,7 +773,55 @@ export function DetectionZonesEditor({ cameraId, cameraName, configurationRevisi
                 }}
                 className="min-w-0 flex-1 bg-transparent text-xs outline-none"
               />
-              {zone.kind === 'line' ? (
+              {zone.kind === 'line' ? (<>
+                <select
+                  value={zone.uso ?? 'alerta'}
+                  onChange={(event) => {
+                    remember();
+                    const uso = event.target.value as 'alerta' | 'contagem';
+                    setZones((current) => current.map((z) => (z.id === zone.id
+                      ? (uso === 'contagem'
+                        ? { ...z, uso, entrada: z.entrada ?? 'ab', classes: z.classes?.length ? z.classes : ['person'] }
+                        : { id: z.id, name: z.name, kind: z.kind, points: z.points, sentido: z.sentido ?? 'ambos', ...(z.color ? { color: z.color } : {}) })
+                      : z)));
+                    setDirty(true);
+                  }}
+                  className="rounded border border-border bg-background px-1.5 py-0.5 text-[10px]"
+                  aria-label={`Uso da linha ${zone.name}`}
+                >
+                  <option value="alerta">Alerta</option>
+                  <option value="contagem">Contagem</option>
+                </select>
+                {zone.uso === 'contagem' ? (<>
+                  <select
+                    value={zone.entrada ?? 'ab'}
+                    onChange={(event) => {
+                      remember();
+                      const entrada = event.target.value as 'ab' | 'ba';
+                      setZones((current) => current.map((z) => (z.id === zone.id ? { ...z, entrada } : z)));
+                      setDirty(true);
+                    }}
+                    className="rounded border border-border bg-background px-1.5 py-0.5 text-[10px]"
+                    aria-label={`Sentido de entrada da linha ${zone.name}`}
+                  >
+                    <option value="ab">Entrada A → B</option>
+                    <option value="ba">Entrada B → A</option>
+                  </select>
+                  <select
+                    value={(zone.classes ?? ['person'])[0] === 'car' ? 'car' : 'person'}
+                    onChange={(event) => {
+                      remember();
+                      const classes = [event.target.value];
+                      setZones((current) => current.map((z) => (z.id === zone.id ? { ...z, classes } : z)));
+                      setDirty(true);
+                    }}
+                    className="rounded border border-border bg-background px-1.5 py-0.5 text-[10px]"
+                    aria-label={`O que contar na linha ${zone.name}`}
+                  >
+                    <option value="person">Pessoas</option>
+                    <option value="car">Veículos</option>
+                  </select>
+                </>) : (
                 /* O sentido só faz sentido junto da seta no desenho acima —
                    por isso os rótulos falam de "início" e "fim" da linha, não
                    de "entrar" e "sair", que dependeriam de como ela foi
@@ -773,7 +841,8 @@ export function DetectionZonesEditor({ cameraId, cameraName, configurationRevisi
                   <option value="ab">Do lado A para B →</option>
                   <option value="ba">Do lado B para A ←</option>
                 </select>
-              ) : (
+                )}
+              </>) : (
                 <div className="flex items-center gap-2">
                   <span className="text-[10px] text-[hsl(var(--muted-foreground))]">
                     {zone.kind === 'exclude' ? 'ignorada' : 'monitorada'} · {zone.points.length} pontos

@@ -63,6 +63,28 @@ export class DetectionZoneDto {
   @IsIn(['ambos', 'ab', 'ba'])
   sentido?: 'ambos' | 'ab' | 'ba';
 
+  /**
+   * Só para `kind: 'line'` — para que serve a linha. Ausente = `alerta` (o
+   * comportamento de sempre). `contagem` soma passagens e nunca alerta.
+   */
+  @IsOptional()
+  @IsString()
+  @IsIn(['alerta', 'contagem'])
+  uso?: 'alerta' | 'contagem';
+
+  /** Linha de contagem: qual sentido da seta é ENTRADA (o outro é saída). */
+  @IsOptional()
+  @IsString()
+  @IsIn(['ab', 'ba'])
+  entrada?: 'ab' | 'ba';
+
+  /** Linha de contagem: o que contar. Padrão: pessoa. */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(4)
+  @IsIn(['person', 'car', 'motorcycle', 'bicycle'], { each: true })
+  classes?: string[];
+
   @IsOptional()
   @IsString()
   @MaxLength(16)

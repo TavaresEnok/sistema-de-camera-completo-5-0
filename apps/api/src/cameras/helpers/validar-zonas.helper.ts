@@ -76,6 +76,8 @@ export function validarZonasDeDeteccao(zonas: unknown): void {
       if (iguais) {
         throw new BadRequestException(`A linha "${nome}" tem os dois pontos no mesmo lugar — não há travessia possível.`);
       }
+    } else if (zona?.uso !== undefined || zona?.entrada !== undefined || zona?.classes !== undefined) {
+      throw new BadRequestException(`"${nome}": uso, entrada e classes só existem em linha.`);
     } else if (pontos.length < 3) {
       throw new BadRequestException(
         `A área "${nome}" precisa de pelo menos 3 pontos; com ${pontos.length} ela não tem interior e nunca dispararia.`,

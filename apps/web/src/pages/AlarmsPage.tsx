@@ -17,6 +17,7 @@ import { useAuthStore } from '../store/authStore';
 import { Alarm, Camera } from '../store/vmsDataStore';
 import { getApiBaseUrl } from '../lib/api-base';
 import { tocarSomDeAtencao } from '../lib/alert-sound';
+import { ContagemDePassagem } from '../components/ContagemDePassagem';
 
 const PRIORITY_STYLES: Record<string, { badge: string; iconBg: string }> = {
   P1: {
@@ -309,7 +310,7 @@ function AlarmCard({ alarm, onAck, onResolve, onAddNote }: { alarm: Alarm; onAck
   );
 }
 
-export default function AlertasPage() {
+function AlertasPage() {
   const { cameras, load } = useAlarmStore();
   const { accessToken } = useAuthStore();
   const [, setLocation] = useLocation();
@@ -1240,6 +1241,40 @@ export default function AlertasPage() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Alertas e contagem na mesma página. A aba vive na URL (?aba=contagem) para
+ * que links e notificações antigas de /alarms continuem abrindo os alertas.
+ */
+export default function AlertasEContagemPage() {
+  const search = useSearch();
+  const [, navigate] = useLocation();
+  const aba = new URLSearchParams(search).get('aba') === 'contagem' ? 'contagem' : 'alertas';
+  const abas = [
+    { id: 'alertas', label: 'Alertas', destino: '/alarms' },
+    { id: 'contagem', label: 'Contagem', destino: '/alarms?aba=contagem' },
+  ] as const;
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div role="tablist" aria-label="Alertas e contagem" className="flex shrink-0 gap-1 border-b border-border px-6 pt-2">
+        {abas.map((item) => (
+          <button
+            key={item.id}
+            role="tab"
+            aria-selected={aba === item.id}
+            onClick={() => navigate(item.destino)}
+            className={`-mb-px border-b-2 px-3 py-1.5 text-sm ${aba === item.id ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
+      <div className="flex min-h-0 flex-1 flex-col">
+        {aba === 'contagem' ? <ContagemDePassagem /> : <AlertasPage />}
+      </div>
     </div>
   );
 }

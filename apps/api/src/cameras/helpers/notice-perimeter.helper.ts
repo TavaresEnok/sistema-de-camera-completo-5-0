@@ -20,7 +20,9 @@ function inside(point: Point, points: number[][]): boolean {
 
 /** Raw detections still feed overlays/history. Only proven perimeter events make a toast. */
 export function noticeWithinPerimeter(type: string, metadata: unknown, zones: unknown): boolean {
-  const configured: Zone[] = Array.isArray(zones) ? zones.filter(z => z && ['include', 'exclude', 'line'].includes(z.kind)
+  // Linha de CONTAGEM não é regra de aviso: ela soma passagens e nunca vira
+  // toast. Fica de fora, para não calar avisos de objeto da câmera inteira.
+  const configured: Zone[] = Array.isArray(zones) ? zones.filter(z => z && z.uso !== 'contagem' && ['include', 'exclude', 'line'].includes(z.kind)
     && Array.isArray(z.points) && z.points.length >= (z.kind === 'line' ? 2 : 3)
     && z.points.every((p: unknown) => Array.isArray(p) && p.length === 2 && p.every(v => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1))) : [];
   if (!configured.length) return type !== 'LINE_CROSSED';

@@ -180,6 +180,15 @@ export class UpdateCameraDto extends CameraPrivacyDto {
   @Max(90)
   aiConfidence?: number;
 
+  /**
+   * Contagem de passagem: quadros por segundo da IA nesta câmera (5, 8 ou 12).
+   * `null` volta ao padrão (8). Só tem efeito com linha de contagem.
+   */
+  @IsOptional()
+  @IsInt()
+  @IsIn([5, 8, 12])
+  countingFps?: number | null;
+
   @IsOptional()
   @IsString()
   @IsIn(RECORDING_MODES)

@@ -24,7 +24,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/map':           'Mapa operacional',
   '/updates':       'Novidades',
   '/review':        'Revisão',
-  '/alarms':        'Alarmes',
+  '/alarms':        'Alertas e contagem',
   '/cameras':       'Câmeras',
   '/ptz':           'Controle PTZ',
   '/perimetro':     'Perímetro de segurança',
