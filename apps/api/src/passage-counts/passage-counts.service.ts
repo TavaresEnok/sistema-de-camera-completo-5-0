@@ -4,7 +4,7 @@ import { Prisma, UserRole } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { AccessControlService } from '../access-control/access-control.service';
 import { type AuthUser } from '../common/types/auth-user.type';
-import { linhasDeContagem, RETENCAO_DIAS, validarConsulta, validarLote } from './passage-count.helper';
+import { linhasDeContagem, RETENCAO_DIAS, validarConsulta, validarLote, validarTipoDeContagem } from './passage-count.helper';
 
 const FUSO = 'America/Sao_Paulo';
 const LIMPEZA_MS = 6 * 60 * 60 * 1000;
@@ -54,7 +54,7 @@ export class PassageCountsService implements OnModuleInit, OnModuleDestroy {
       INSERT INTO "PassageCount" ("id", "cameraId", "lineId", "lineName", "classLabel", "direction", "minuteStart", "session", "count", "updatedAt")
       VALUES ${Prisma.join(linhas)}
       ON CONFLICT ("cameraId", "lineId", "classLabel", "direction", "minuteStart", "session")
-      DO UPDATE SET "count" = EXCLUDED."count", "lineName" = EXCLUDED."lineName", "updatedAt" = NOW()`;
+      DO UPDATE SET "count" = GREATEST("PassageCount"."count", EXCLUDED."count"), "lineName" = EXCLUDED."lineName", "updatedAt" = NOW()`;
     return { stored: lote.baldes.length };
   }
 
@@ -72,10 +72,10 @@ export class PassageCountsService implements OnModuleInit, OnModuleDestroy {
     if (!ids.length) return [];
     const cameras = await this.prisma.camera.findMany({
       where: { id: { in: ids } },
-      select: { id: true, name: true, detectionZones: true, countingFps: true, group: { select: { id: true, name: true } } },
+      select: { id: true, name: true, detectionZones: true, countingFps: true, enabled: true, aiEnabled: true, group: { select: { id: true, name: true } } },
       orderBy: { name: 'asc' },
     });
-    return cameras.flatMap((c) => linhasDeContagem(c.detectionZones).map((l) => ({
+    const configured = cameras.flatMap((c) => linhasDeContagem(c.detectionZones).map((l) => ({
       cameraId: c.id,
       cameraName: c.name,
       groupId: c.group?.id ?? null,
@@ -84,13 +84,29 @@ export class PassageCountsService implements OnModuleInit, OnModuleDestroy {
       lineName: l.name,
       classes: l.classes,
       fps: c.countingFps ?? 8,
+      active: true,
+      enabled: c.enabled && c.aiEnabled,
     })));
+    const keys = new Set(configured.map(l => JSON.stringify([l.cameraId, l.lineId])));
+    const historical = await this.prisma.$queryRaw<Array<{ cameraId: string; lineId: string; lineName: string; classes: string[] }>>`
+      SELECT "cameraId", "lineId", MAX("lineName") AS "lineName", array_agg(DISTINCT "classLabel") AS classes
+      FROM "PassageCount" WHERE "cameraId" IN (${Prisma.join(ids)}) GROUP BY "cameraId", "lineId"`;
+    for (const h of historical) {
+      if (keys.has(JSON.stringify([h.cameraId, h.lineId]))) continue;
+      const camera = cameras.find(c => c.id === h.cameraId);
+      if (!camera) continue;
+      configured.push({ ...h, cameraName: camera.name, groupId: camera.group?.id ?? null,
+        groupName: camera.group?.name ?? null, fps: camera.countingFps ?? 8, active: false, enabled: false });
+    }
+    return configured;
   }
 
-  async report(user: AuthUser, q: { from?: string; to?: string; groupBy?: string; cameraId?: string; lineId?: string }) {
+  async report(user: AuthUser, q: { from?: string; to?: string; groupBy?: string; cameraId?: string; lineId?: string; kind?: string }) {
     let consulta;
+    let kind;
     try {
       consulta = validarConsulta(q);
+      kind = validarTipoDeContagem(q.kind);
     } catch (e: any) {
       throw new BadRequestException(e?.message ?? 'Consulta inválida.');
     }
@@ -99,6 +115,8 @@ export class PassageCountsService implements OnModuleInit, OnModuleDestroy {
     if (!ids.length) return { groupBy: consulta.groupBy, from: consulta.from, to: consulta.to, series: [], totals: { in: 0, out: 0 } };
     const unidade = consulta.groupBy === 'day' ? 'day' : 'hour';
     const filtroLinha = q.lineId ? Prisma.sql`AND "lineId" = ${q.lineId}` : Prisma.empty;
+    const filtroClasse = kind === 'person' ? Prisma.sql`AND "classLabel" = 'person'`
+      : kind === 'vehicle' ? Prisma.sql`AND "classLabel" IN ('car', 'motorcycle', 'bicycle', 'bus', 'truck')` : Prisma.empty;
     const rows = await this.prisma.$queryRaw<Array<{ bucket: string; cameraId: string; lineId: string; lineName: string; entradas: bigint; saidas: bigint }>>`
       SELECT to_char(date_trunc(${unidade}, ("minuteStart" AT TIME ZONE 'UTC') AT TIME ZONE ${FUSO}), 'YYYY-MM-DD"T"HH24:MI') AS bucket,
              "cameraId", "lineId", MAX("lineName") AS "lineName",
@@ -108,6 +126,7 @@ export class PassageCountsService implements OnModuleInit, OnModuleDestroy {
        WHERE "cameraId" IN (${Prisma.join(ids)})
          AND "minuteStart" >= ${consulta.from} AND "minuteStart" < ${consulta.to}
          ${filtroLinha}
+         ${filtroClasse}
        GROUP BY 1, 2, 3
        ORDER BY 1, 2, 3`;
     const series = rows.map((r) => ({

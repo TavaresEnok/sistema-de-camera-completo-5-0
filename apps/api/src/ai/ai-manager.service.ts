@@ -1248,7 +1248,8 @@ export class AiManagerService implements OnModuleInit {
     // se pode; a regra por câmera diz ONDE vale a pena pagar por isso.
     const politica = await this.commercialPolicy.getPolicy().catch(() => null);
     const classesPermitidasNaInstalacao = classesPermitidas({ aiObjectClasses: politica?.aiObjectClasses });
-    const otherObjectDemand = decidirObjetoDaCamera({ ...cam, objectNoticeEnabled: false }, {
+    const otherObjectDemand = decidirObjetoDaCamera({ ...cam, objectNoticeEnabled: false,
+      detectionZones: Array.isArray(cam.detectionZones) ? cam.detectionZones.filter((zone: any) => zone?.uso !== 'contagem') : cam.detectionZones }, {
       politicaLiberaObjeto: classesPermitidasNaInstalacao.length > 0,
     }).roda;
     // Classes das linhas de CONTAGEM entram no detector desta câmera, sempre
@@ -1257,7 +1258,7 @@ export class AiManagerService implements OnModuleInit {
       .flatMap((linha) => linha.classes)
       .filter((classe) => classesPermitidasNaInstalacao.includes(classe));
     const classesDeObjeto = [...new Set([
-      ...(otherObjectDemand || !cam.objectNoticeEnabled ? classesEfetivasDaCamera(classesPermitidasNaInstalacao, cam.aiObjectClasses) : []),
+      ...((otherObjectDemand || (!cam.objectNoticeEnabled && !linhasDeContagem(cam.detectionZones).length)) ? classesEfetivasDaCamera(classesPermitidasNaInstalacao, cam.aiObjectClasses) : []),
       ...(cam.objectNoticeEnabled ? noticeClasses(classesPermitidasNaInstalacao, cam.objectNoticeClasses) : []),
       ...classesDeContagem,
     ])];

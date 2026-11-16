@@ -5,16 +5,15 @@ export function inside(point: Point, polygon: Point[]) {
   let result = false;
   for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
     const [x, y] = polygon[i], [xx, yy] = polygon[j];
+    if (Math.abs((point[0] - xx) * (y - yy) - (point[1] - yy) * (x - xx)) < 1e-9
+      && point[0] >= Math.min(x, xx) - 1e-9 && point[0] <= Math.max(x, xx) + 1e-9
+      && point[1] >= Math.min(y, yy) - 1e-9 && point[1] <= Math.max(y, yy) + 1e-9) return true;
     if ((y > point[1]) !== (yy > point[1]) && point[0] < (xx - x) * (point[1] - y) / (yy - y) + x) result = !result;
   }
   return result;
 }
 export function testTrajectory(previous: Point | null, current: Point, zones: Zone[]) {
-  if (zones.some((z) => z.kind === 'exclude' && inside(current, z.points))) return [];
   const includes = zones.filter((z) => z.kind === 'include');
-  if (includes.length && !includes.some((z) => inside(current, z.points))) return [];
-  if (previous && zones.some((z) => z.kind === 'exclude' && inside(previous, z.points))) return [];
-  if (previous && includes.length && !includes.some((z) => inside(previous, z.points))) return [];
   const nomes: string[] = [];
   for (const zone of zones) {
     if (zone.kind !== 'line' || !previous || zone.points.length !== 2) continue;
@@ -23,6 +22,11 @@ export function testTrajectory(previous: Point | null, current: Point, zones: Zo
     if (Math.abs(before) < 1e-9 && Math.abs(after) < 1e-9) continue;
     if (Math.sign(before) === Math.sign(after)) continue;
     if (Math.sign(side(previous, current, a)) === Math.sign(side(previous, current, b))) continue;
+    // Match the detector: areas apply at the crossing, not at either endpoint.
+    const fraction = before / (before - after);
+    const crossing = previous.map((v, i) => v + fraction * (current[i] - v));
+    if (zones.some(z => z.kind === 'exclude' && inside(crossing, z.points))) continue;
+    if (includes.length && !includes.some(z => inside(crossing, z.points))) continue;
     const direction = before < 0 ? 'ab' : 'ba';
     // Linha de contagem: qualquer sentido conta — entrada ou saída.
     if (zone.uso === 'contagem') {

@@ -5,6 +5,7 @@ import { getApiBaseUrl } from '../lib/api-base';
 import { cameraPublicIdLabel } from '../lib/camera-list-metadata';
 
 export interface Camera {
+  countingFps?: number | null;
   recorderId?: string | null;
   id: string;
   updatedAt?: string;
@@ -340,6 +341,7 @@ function mapCameraItems(
       ipAddress: sourceLabel,
       sourceMode,
       recorderId: camera.recorderId ?? null,
+      countingFps: [5, 8, 12].includes(camera.countingFps) ? camera.countingFps : null,
       siteId: camera.siteId ?? null,
       areaId: camera.areaId ?? null,
       locationAddress: camera.locationAddress ?? null,

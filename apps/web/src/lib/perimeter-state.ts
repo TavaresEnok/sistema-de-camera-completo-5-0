@@ -1,4 +1,5 @@
 export type PerimeterProcessor = {
+  performance?: { object_model_frame_fps?: number };
   configuration_revision?: string;
   running?: boolean;
   last_seen?: number;

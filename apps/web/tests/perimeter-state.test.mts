@@ -31,7 +31,8 @@ test('teste respeita direção, extensão do segmento e áreas ignoradas', () =>
   assert.deepEqual(testTrajectory([0.9, 0.3], [0.9, 0.7], [line]), []);
   assert.deepEqual(testTrajectory([0.4, 0.5], [0.6, 0.5], [line]), []);
   assert.deepEqual(testTrajectory([0.5, 0.3], [0.5, 0.7], [line, { id: '2', name: 'Rua', kind: 'exclude', points: [[0, 0], [1, 0], [1, 1], [0, 1]] }]), []);
-  assert.deepEqual(testTrajectory([0.1, 0.3], [0.5, 0.7], [line, { id: '3', name: 'Pátio', kind: 'include', points: [[0.2, 0], [0.8, 0], [0.8, 1], [0.2, 1]] }]), []);
+  // The crossing itself is inside the patio, even though the trajectory starts outside.
+  assert.deepEqual(testTrajectory([0.1, 0.3], [0.5, 0.7], [line, { id: '3', name: 'Pátio', kind: 'include', points: [[0.2, 0], [0.8, 0], [0.8, 1], [0.2, 1]] }]), ['Portão']);
 });
 
 test('entrar em área monitorada não finge ser evento de intrusão', () => {

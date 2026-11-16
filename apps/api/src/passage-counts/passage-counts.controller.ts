@@ -37,7 +37,8 @@ export class PassageCountsController {
     @Query('groupBy') groupBy?: string,
     @Query('cameraId') cameraId?: string,
     @Query('lineId') lineId?: string,
+    @Query('kind') kind?: string,
   ) {
-    return this.service.report(user, { from, to, groupBy, cameraId, lineId });
+    return this.service.report(user, { from, to, groupBy, cameraId, lineId, kind });
   }
 }

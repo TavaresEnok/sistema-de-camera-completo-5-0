@@ -25,6 +25,9 @@ from __future__ import annotations
 
 import calendar
 import logging
+import json
+import os
+import tempfile
 import threading
 import time
 import uuid
@@ -42,6 +45,7 @@ GUARDAR_MINUTO_S = 180.0
 # Teto de minutos pendentes: API fora do ar por muito tempo não pode virar
 # vazamento de memória. Cerca de 6 h de uma linha com os dois sentidos.
 MAX_BALDES = 2000
+MAX_BALDES_POR_ENVIO = 500
 QUADROS_PERMITIDOS = (5, 8, 12)
 
 
@@ -67,7 +71,7 @@ Chave = Tuple[int, str, str, str]  # (minuto, linhaId, classe, direcao)
 
 
 class ContadorDePassagem:
-    def __init__(self, sessao: Optional[str] = None) -> None:
+    def __init__(self, sessao: Optional[str] = None, state_path: Optional[str] = None) -> None:
         self.sessao = sessao or uuid.uuid4().hex
         self._lock = threading.Lock()
         # (objeto, linha) -> (direcao, quando, nome, classe)
@@ -82,6 +86,75 @@ class ContadorDePassagem:
         self.total_saidas = 0
         self.anuladas = 0
         self.repetidas = 0
+        self.descartados = 0
+        self._state_path = state_path
+        self._storage_error: Optional[str] = None
+        if state_path:
+            self._carregar()
+            if self._storage_error is None and not os.path.exists(state_path):
+                self._salvar()
+
+    def _carregar(self) -> None:
+        try:
+            if not os.path.exists(self._state_path):
+                return
+            if os.path.getsize(self._state_path) > 2_000_000:
+                raise ValueError('state too large')
+            with open(self._state_path, encoding='utf-8') as source:
+                data = json.load(source)
+            if data.get('v') != 1 or not isinstance(data.get('session'), str) or not 8 <= len(data['session']) <= 64:
+                raise ValueError('invalid state')
+            restored = {}
+            names = {}
+            rows = data.get('buckets')
+            if not isinstance(rows, list) or len(rows) > MAX_BALDES:
+                raise ValueError('invalid buckets')
+            for minute, line, label, direction, count, name in rows:
+                if not isinstance(minute, int) or minute % 60 or not isinstance(count, int) or count < 0 or direction not in ('in', 'out'):
+                    raise ValueError('invalid bucket')
+                if not all(isinstance(v, str) and 0 < len(v) <= 128 for v in (line, label, name)):
+                    raise ValueError('invalid labels')
+                restored[(minute, line, label, direction)] = count
+                names[line] = name
+            self.sessao = data['session']
+            self._baldes, self._nomes = restored, names
+            # Resending acknowledged totals is safe, including a crash after HTTP success.
+            self._sujos = set(restored)
+            self.total_entradas = int(data.get('entries', 0))
+            self.total_saidas = int(data.get('exits', 0))
+        except (OSError, ValueError, TypeError, KeyError):
+            self._storage_error = 'Não foi possível recuperar o estado da contagem.'
+            logger.warning('falha ao recuperar estado persistido da contagem')
+
+    def _salvar(self) -> None:
+        if not self._state_path:
+            return
+        temporary = None
+        try:
+            directory = os.path.dirname(self._state_path)
+            os.makedirs(directory, mode=0o700, exist_ok=True)
+            with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=directory, delete=False) as target:
+                temporary = target.name
+                json.dump({'v': 1, 'session': self.sessao, 'entries': self.total_entradas, 'exits': self.total_saidas,
+                    'buckets': [[*k, count, self._nomes.get(k[1], 'Linha')] for k, count in self._baldes.items()]}, target)
+                target.flush()
+                os.fsync(target.fileno())
+            os.replace(temporary, self._state_path)
+            directory_fd = os.open(directory, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+            self._storage_error = None
+        except OSError:
+            self._storage_error = 'Não foi possível salvar o estado da contagem.'
+            logger.warning('falha ao persistir estado da contagem')
+        finally:
+            if temporary and os.path.exists(temporary):
+                try:
+                    os.unlink(temporary)
+                except OSError:
+                    pass
 
     def registrar(self, travessia: Dict[str, Any], agora: Optional[float] = None) -> None:
         """Recebe uma travessia de linha de contagem já confirmada pelo tripwire."""
@@ -110,10 +183,12 @@ class ContadorDePassagem:
             self._pendentes[chave] = (direcao, agora, nome, classe)
 
     def _consolidar(self, agora: float) -> None:
+        changed = False
         for chave, (direcao, quando, nome, classe) in list(self._pendentes.items()):
             if agora - quando < ESPERA_S:
                 continue
             del self._pendentes[chave]
+            changed = True
             self._ultima[chave] = (direcao, quando)
             linha = chave[1]
             self._nomes[linha] = nome
@@ -131,6 +206,14 @@ class ContadorDePassagem:
                 self._baldes.pop(balde, None)
                 self._sujos.discard(balde)
                 self._enviado_em.pop(balde, None)
+                self.descartados += 1
+                changed = True
+        if changed:
+            self._salvar()
+
+    def consolidar(self, agora: Optional[float] = None) -> None:
+        with self._lock:
+            self._consolidar(time.time() if agora is None else agora)
 
     def lote_para_envio(self, agora: Optional[float] = None) -> List[Dict[str, Any]]:
         """Totais absolutos dos minutos alterados desde o último envio aceito."""
@@ -159,12 +242,16 @@ class ContadorDePassagem:
                 if self._baldes.get(balde) == item["count"]:
                     self._sujos.discard(balde)
                     self._enviado_em[balde] = agora
+            removed = False
             for balde, quando in list(self._enviado_em.items()):
                 if balde in self._sujos:
                     continue
                 if agora - quando > GUARDAR_MINUTO_S and agora - balde[0] > GUARDAR_MINUTO_S:
                     self._baldes.pop(balde, None)
                     self._enviado_em.pop(balde, None)
+                    removed = True
+            if removed:
+                self._salvar()
 
     def estado(self) -> Dict[str, Any]:
         with self._lock:
@@ -176,6 +263,9 @@ class ContadorDePassagem:
                 "ignoredRepeats": self.repetidas,
                 "pendingCrossings": len(self._pendentes),
                 "unsentMinutes": len(self._sujos),
+                "durableState": bool(self._state_path) and self._storage_error is None,
+                "storageError": self._storage_error,
+                "discardedBuckets": self.descartados,
             }
 
 
@@ -191,6 +281,7 @@ class EnvioDeContagem:
         self._thread: Optional[threading.Thread] = None
         self.ultimo_envio_ok_em: Optional[float] = None
         self.falhas_seguidas = 0
+        self._send_lock = threading.Lock()
 
     def iniciar(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -208,20 +299,35 @@ class EnvioDeContagem:
         self.enviar_agora(time.time() + ESPERA_S)
 
     def _rodar(self) -> None:
-        while not self._parar.wait(self.intervalo):
-            self.enviar_agora()
+        next_send = time.monotonic() + self.intervalo
+        while not self._parar.wait(min(1.0, self.intervalo)):
+            # Confirmed passages reach disk without waiting 30 seconds for HTTP.
+            self.contador.consolidar()
+            if time.monotonic() >= next_send:
+                self.enviar_agora()
+                next_send = time.monotonic() + self.intervalo
 
     def enviar_agora(self, agora: Optional[float] = None) -> bool:
+        with self._send_lock:
+            return self._enviar_lotes(agora)
+
+    def _enviar_lotes(self, agora: Optional[float]) -> bool:
         lote = self.contador.lote_para_envio(agora)
         if not lote:
             return True
-        try:
-            ok = bool(self._enviar({"session": self.contador.sessao, "buckets": lote}))
-        except Exception as exc:  # rede/API: tenta de novo no próximo ciclo
-            logger.warning("envio de contagem falhou: %s", type(exc).__name__)
-            ok = False
+        ok = True
+        for offset in range(0, len(lote), MAX_BALDES_POR_ENVIO):
+            chunk = lote[offset:offset + MAX_BALDES_POR_ENVIO]
+            try:
+                accepted = bool(self._enviar({"session": self.contador.sessao, "buckets": chunk}))
+            except Exception as exc:
+                logger.warning("envio de contagem falhou: %s", type(exc).__name__)
+                accepted = False
+            if not accepted:
+                ok = False
+                break
+            self.contador.confirmar_envio(chunk)
         if ok:
-            self.contador.confirmar_envio(lote)
             self.ultimo_envio_ok_em = time.time()
             self.falhas_seguidas = 0
         else:

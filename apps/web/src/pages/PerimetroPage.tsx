@@ -281,6 +281,7 @@ export default function PerimetroPage() {
                 inicial={(selecionada.camera as { countingFps?: number | null }).countingFps}
                 token={token}
                 podeEditar={userRole === 'admin'}
+                realFps={processors[selecionada.camera.id]?.performance?.object_model_frame_fps}
               />
             )}
             <div className="mt-4 flex flex-wrap items-center gap-2">

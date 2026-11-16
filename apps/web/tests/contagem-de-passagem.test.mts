@@ -4,15 +4,15 @@ import { readFileSync } from 'node:fs';
 import { periodoDaContagem, rotuloDoBalde, somarPorBalde, csvDaContagem } from '../src/lib/contagem-de-passagem.ts';
 import { testTrajectory } from '../src/lib/perimeter-test.ts';
 
-const AGORA = new Date(2026, 10, 10, 15, 30);
+const AGORA = new Date('2026-11-10T18:30:00Z');
 
 test('hoje começa à meia-noite e agrupa por hora; 7 dias agrupa por dia', () => {
   const hoje = periodoDaContagem('hoje', AGORA);
   assert.equal(hoje.groupBy, 'hour');
-  assert.equal(hoje.from.getHours(), 0);
+  assert.equal(hoje.from.toISOString(), '2026-11-10T03:00:00.000Z');
   const semana = periodoDaContagem('7d', AGORA);
   assert.equal(semana.groupBy, 'day');
-  assert.equal(semana.from.getDate(), 4);
+  assert.equal(semana.from.toISOString(), '2026-11-04T03:00:00.000Z');
 });
 
 test('rótulos curtos', () => {
@@ -37,6 +37,23 @@ test('CSV com ponto e vírgula, BOM para o Excel, saídas opcionais', () => {
   assert.match(csvDaContagem(series, [], true), /Saídas/);
 });
 
+test('Brazilian day boundary is independent of the browser timezone', () => {
+  const old = process.env.TZ;
+  try {
+    for (const timezone of ['UTC', 'Asia/Tokyo', 'America/Los_Angeles']) {
+      process.env.TZ = timezone;
+      const p = periodoDaContagem('hoje', new Date('2026-11-11T01:00:00Z'));
+      assert.equal(p.from.toISOString(), '2026-11-10T03:00:00.000Z');
+    }
+  } finally { if (old === undefined) delete process.env.TZ; else process.env.TZ = old; }
+});
+
+test('CSV does not execute camera or line names as Excel formulas', () => {
+  const series = [{ bucket: '2026-11-10T14:00', cameraId: 'c', lineId: 'a', lineName: '=1+1', in: 5, out: 4 }];
+  const csv = csvDaContagem(series, [{ cameraId: 'c', lineId: 'a', cameraName: '+SUM(1)' }], true);
+  assert.ok(csv.includes(";'+SUM(1);'=1+1;5;4"));
+});
+
 test('simulação: linha de contagem mostra entrada ou saída em qualquer sentido', () => {
   const linha = { id: 'l', name: 'Porta', kind: 'line', points: [[0.5, 0.2], [0.5, 0.8]], uso: 'contagem', entrada: 'ab', sentido: 'ab' };
   const ida = testTrajectory([0.3, 0.5], [0.7, 0.5], [linha]);
@@ -46,6 +63,14 @@ test('simulação: linha de contagem mostra entrada ou saída em qualquer sentid
   assert.notEqual(ida[0], volta[0]);
   assert.ok([...ida, ...volta].some((n) => n.includes('entrada')));
   assert.ok([...ida, ...volta].some((n) => n.includes('saída')));
+});
+
+test('counting simulation accepts entry/exit at the boundary of an included area', () => {
+  const line = { id: 'l', name: 'Door', kind: 'line', points: [[0.5, 0.2], [0.5, 0.8]], uso: 'contagem' };
+  const area = { id: 'a', name: 'Store', kind: 'include', points: [[0.5, 0], [1, 0], [1, 1], [0.5, 1]] };
+  assert.equal(testTrajectory([0.3, 0.5], [0.7, 0.5], [line, area]).length, 1);
+  assert.equal(testTrajectory([0.7, 0.5], [0.3, 0.5], [line, area]).length, 1);
+  assert.equal(testTrajectory([0.3, 0.5], [0.7, 0.5], [line, { ...area, kind: 'exclude' }]).length, 0);
 });
 
 test('editor oferece uso Alerta/Contagem e sentido de entrada', () => {

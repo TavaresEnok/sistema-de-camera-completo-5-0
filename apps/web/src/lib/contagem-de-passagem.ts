@@ -3,17 +3,35 @@
 export type Periodo = 'hoje' | '7d' | '30d';
 export type LinhaDaSerie = { bucket: string; cameraId: string; lineId: string; lineName: string; in: number; out: number };
 export type PontoDoGrafico = { bucket: string; rotulo: string; in: number; out: number };
+export const FUSO_DA_CONTAGEM = 'America/Sao_Paulo';
 
-function inicioDoDia(d: Date): Date {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+function dataNoFuso(d: Date): [number, number, number] {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: FUSO_DA_CONTAGEM, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(d);
+  const part = (type: string) => Number(parts.find(p => p.type === type)?.value);
+  return [part('year'), part('month'), part('day')];
+}
+
+function inicioDoDia(year: number, month: number, day: number): Date {
+  const midnight = Date.UTC(year, month - 1, day);
+  let instant = midnight;
+  // Resolve local midnight using IANA rules, independently of the browser's timezone.
+  for (let i = 0; i < 3; i++) {
+    const parts = new Intl.DateTimeFormat('en-CA', { timeZone: FUSO_DA_CONTAGEM, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(instant));
+    const part = (type: string) => Number(parts.find(p => p.type === type)?.value);
+    const localAsUtc = Date.UTC(part('year'), part('month') - 1, part('day'), part('hour'), part('minute'), part('second'));
+    instant += midnight - localAsUtc;
+  }
+  return new Date(instant);
 }
 
 /** Hoje = desde a meia-noite, por hora. 7/30 dias = dias inteiros, por dia. */
 export function periodoDaContagem(periodo: Periodo, agora: Date): { from: Date; to: Date; groupBy: 'hour' | 'day' } {
-  const hoje = inicioDoDia(agora);
+  const [year, month, day] = dataNoFuso(agora);
+  const hoje = inicioDoDia(year, month, day);
   if (periodo === 'hoje') return { from: hoje, to: agora, groupBy: 'hour' };
   const dias = periodo === '7d' ? 7 : 30;
-  const from = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate() - (dias - 1));
+  const previous = new Date(Date.UTC(year, month - 1, day - (dias - 1)));
+  const from = inicioDoDia(previous.getUTCFullYear(), previous.getUTCMonth() + 1, previous.getUTCDate());
   return { from, to: agora, groupBy: 'day' };
 }
 
@@ -38,8 +56,10 @@ export function somarPorBalde(series: LinhaDaSerie[], groupBy: 'hour' | 'day'): 
 }
 
 function celula(valor: string | number): string {
-  const texto = String(valor);
-  return /[";\n]/.test(texto) ? `"${texto.replace(/"/g, '""')}"` : texto;
+  let texto = String(valor);
+  // Names are operator-controlled; Excel must not interpret them as formulas.
+  if (typeof valor === 'string' && /^[\s]*[=+@-]|^[\t\r]/.test(texto)) texto = "'" + texto;
+  return /[";\r\n]/.test(texto) ? `"${texto.replace(/"/g, '""')}"` : texto;
 }
 
 /** CSV com ";" (abre direto no Excel em português). */

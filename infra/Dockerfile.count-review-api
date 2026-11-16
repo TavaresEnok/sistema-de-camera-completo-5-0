@@ -1,0 +1,16 @@
+ARG BUILDER=pc-api-builder:20261110
+ARG BASE=ajustcam-api-recorders:20261116
+FROM ${BUILDER} AS builder
+WORKDIR /app
+COPY apps/api/src ./apps/api/src
+COPY apps/api/prisma ./apps/api/prisma
+COPY apps/api/tests ./apps/api/tests
+RUN pnpm --filter api prisma generate && pnpm --filter api build && cd apps/api && node --import tsx --test tests/passage-count.test.ts tests/passage-count-apply.test.ts tests/recorder-channel.test.ts tests/recorders-service.test.ts
+RUN rm /app/apps/api/prisma/seed.ts
+FROM ${BASE}
+ARG RELEASE_REVISION
+LABEL org.opencontainers.image.revision=$RELEASE_REVISION
+COPY --from=builder /app/node_modules /app/node_modules
+COPY --from=builder /app/apps/api/node_modules /app/apps/api/node_modules
+COPY --from=builder /app/apps/api/dist /app/apps/api/dist
+COPY --from=builder /app/apps/api/prisma /app/apps/api/prisma

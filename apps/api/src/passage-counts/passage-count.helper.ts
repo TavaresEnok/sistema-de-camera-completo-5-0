@@ -59,7 +59,7 @@ export function validarLote(body: any, linhas: LinhaDeContagem[], agora = new Da
   const porId = new Map(linhas.map((l) => [l.id, l]));
   const limiteFuturo = agora.getTime() + 5 * 60_000;
   const limitePassado = agora.getTime() - RETENCAO_DIAS * 86_400_000;
-  const baldes: BaldeDeContagem[] = [];
+  const baldes = new Map<string, BaldeDeContagem>();
   for (const b of brutos) {
     const linha = porId.get(String(b?.lineId ?? ''));
     if (!linha) continue; // linha removida/alterada desde o envio: descarta em silêncio
@@ -74,9 +74,20 @@ export function validarLote(body: any, linhas: LinhaDeContagem[], agora = new Da
     if (!Number.isInteger(count) || count < 0 || count > 100_000) throw new Error('Contagem inválida no lote.');
     const classLabel = String(b?.classLabel ?? '').trim().toLowerCase().slice(0, 40);
     if (!classLabel) throw new Error('Classe inválida no lote.');
-    baldes.push({ minuteStart: minuto, lineId: linha.id, lineName: linha.name.slice(0, 120), classLabel, direction, count });
+    if (!linha.classes.includes(classLabel)) continue;
+    const key = JSON.stringify([t, linha.id, classLabel, direction]);
+    // A duplicate key in one INSERT would make PostgreSQL reject the whole batch.
+    const previous = baldes.get(key);
+    if (!previous || count > previous.count) baldes.set(key, { minuteStart: minuto, lineId: linha.id, lineName: linha.name.slice(0, 120), classLabel, direction, count });
   }
-  return { session, baldes };
+  return { session, baldes: [...baldes.values()] };
+}
+
+export type TipoDeContagem = 'all' | 'person' | 'vehicle';
+export function validarTipoDeContagem(value?: string): TipoDeContagem {
+  if (value === undefined || value === 'all') return 'all';
+  if (value === 'person' || value === 'vehicle') return value;
+  throw new Error('Tipo de contagem inválido.');
 }
 
 export type ConsultaDeContagem = { from: Date; to: Date; groupBy: 'hour' | 'day' };
