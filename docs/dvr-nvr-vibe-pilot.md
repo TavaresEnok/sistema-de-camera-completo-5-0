@@ -37,3 +37,25 @@ O deploy assinado tem aprovação específica por hash e restringe este piloto a
 - Migração contra cópia somente de schema em PostgreSQL isolado; verifica unicidade e impedimento de remoção de gravador com canal.
 - Navegador com API simulada e rede bloqueada: desktop/celular, senha oculta, cadastro, verificação/importação manual e feature desabilitada.
 - Compatibilidade de hardware pendente até disponibilização de gravador de teste.
+
+## Publicação e conferência em 16/11/2026
+
+Publicado somente na Vibe, runtime `372b669e84c48531ce0be637cce4eadf3b58b37f`.
+O management foi usado apenas para compilar/assinar. Dguardian e IB Telecom
+não receberam este pacote. O instalador exige hostname `vibe` para liberar o piloto.
+
+- API e painel saudáveis; migração aplicada após backup do banco.
+- IA, MediaMTX, ingestão RTMP, PostgreSQL e Redis mantiveram contêiner, imagem e início de execução.
+- Inventário preservado: 36 câmeras, 35 habilitadas e duas com gravação armada, como antes da atualização.
+- API de gravadores retorna 401 sem login e 200 para o administrador. Cadastro vazio retorna 400, sem criar registro.
+- Navegador contra a Vibe real: desktop/celular, abertura e cancelamento do cadastro, senha oculta e recarga mantendo login. Sem erros JavaScript nem escrita de configurações.
+- Nenhum gravador ou canal fictício foi criado no banco de produção.
+
+O teste de navegador real está em `apps/web/tests/recorders-vibe-smoke.cjs`.
+Recebe usuário/senha por stdin, só permite a origem Vibe e bloqueia escritas de
+aplicação. Login/renovação de sessão são necessários ao teste; não usa logout
+global, que revogaria outras sessões do operador.
+
+A implementação desta etapa está entregue. Homologação de vídeo em equipamento
+real depende de informar modelo, endereço alcançável pela Vibe, portas e uma
+credencial de teste. Reprodução do HD e eventos nativos continuam fora desta etapa.
