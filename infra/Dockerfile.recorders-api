@@ -6,6 +6,8 @@ COPY apps/api/src ./apps/api/src
 COPY apps/api/prisma ./apps/api/prisma
 COPY apps/api/tests/recorder-channel.test.ts apps/api/tests/recorders-service.test.ts ./apps/api/tests/
 RUN pnpm --filter api prisma generate && pnpm --filter api build && cd apps/api && node --import tsx --test tests/recorder-channel.test.ts tests/recorders-service.test.ts
+# Seeds are development tools, never part of the distributable runtime layer.
+RUN rm /app/apps/api/prisma/seed.ts
 
 FROM ${API_BASE}
 ARG RELEASE_REVISION
