@@ -1028,6 +1028,7 @@ export default function CamerasPage() {
   }, [viewMode]);
   const [search, setSearch] = useState('');
   const [groupFilter, setGroupFilter] = useState('all');
+  const [originFilter, setOriginFilter] = useState('standalone');
   const [statusFilter, setStatusFilter] = useState<(typeof STATUSES)[number]>('all');
   const [showWizard, setShowWizard] = useState(false);
   const [showPushDialog, setShowPushDialog] = useState(false);
@@ -1197,6 +1198,7 @@ export default function CamerasPage() {
   }, [cameras]);
 
   const filtered = useMemo(() => cameras.filter(c => {
+    if (originFilter === 'standalone' && c.recorderId) return false;
     const query = search.trim().toLowerCase();
     if (query
       && !c.name.toLowerCase().includes(query)
@@ -1206,7 +1208,7 @@ export default function CamerasPage() {
     if (groupFilter !== 'all' && c.floor !== groupFilter) return false;
     if (statusFilter !== 'all' && c.status !== statusFilter) return false;
     return true;
-  }), [cameras, search, groupFilter, statusFilter]);
+  }), [cameras, search, groupFilter, statusFilter, originFilter]);
 
   const confirmDeleteCamera = async () => {
     if (!accessToken || !deleteTarget) return;
@@ -1473,7 +1475,7 @@ export default function CamerasPage() {
 
   const onlineCount = cameras.filter((c) => c.isOnline).length;
   const alarmCount = cameras.filter((c) => c.status === 'alarm').length;
-  const countFor = (s: (typeof STATUS_PILLS)[number]) => (s === 'all' ? cameras.length : cameras.filter((c) => c.status === s).length);
+  const countFor = (s: (typeof STATUS_PILLS)[number]) => cameras.filter(c => (originFilter === 'all' || !c.recorderId) && (s === 'all' || c.status === s)).length;
 
   return (
     <div className="cameras-workspace flex h-full min-h-0">
@@ -1511,6 +1513,10 @@ export default function CamerasPage() {
 
         {/* Filters */}
         <div className="px-6 py-3 border-b border-border shrink-0 flex items-center gap-3 flex-wrap">
+          <Select value={originFilter} onValueChange={setOriginFilter}>
+            <SelectTrigger className="w-44" aria-label="Origem das câmeras"><SelectValue /></SelectTrigger>
+            <SelectContent><SelectItem value="standalone">Câmeras individuais</SelectItem><SelectItem value="all">Todas, incluindo DVR/NVR</SelectItem></SelectContent>
+          </Select>
           <div className="flex items-center gap-1.5 flex-wrap">
             {STATUS_PILLS.map((s) => (
               <button key={s} onClick={() => setStatusFilter(s)}

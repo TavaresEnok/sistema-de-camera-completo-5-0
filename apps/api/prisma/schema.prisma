@@ -70,6 +70,8 @@ enum RecordingSource {
 }
 
 model Camera {
+  recorderId String?
+  recorder Recorder? @relation(fields: [recorderId], references: [id], onDelete: Restrict)
   integrationEnabledBeforeBlock Boolean?
   integrationRuntimePending Boolean @default(false)
   manualRecordingSession ManualRecordingSession?
@@ -287,6 +289,25 @@ model Camera {
   @@index([areaId])
   @@index([groupId])
   @@index([status])
+  @@unique([recorderId, channel])
+}
+
+model Recorder {
+  id String @id @default(uuid())
+  name String
+  ip String
+  rtspPort Int @default(554)
+  httpPort Int @default(80)
+  onvifPort Int?
+  username String
+  passwordEncrypted String
+  manufacturer String @default("generic")
+  groupId String
+  group CameraGroup @relation(fields: [groupId], references: [id], onDelete: Restrict)
+  channels Camera[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([groupId])
 }
 
 /// Um destino de armazenamento em nuvem da instalação.
@@ -745,6 +766,7 @@ model Area {
 }
 
 model CameraGroup {
+  recorders Recorder[]
   sgpCustomer SgpCustomer?
   id                String            @id @default(uuid())
   name              String

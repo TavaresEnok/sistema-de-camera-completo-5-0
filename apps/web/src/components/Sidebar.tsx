@@ -56,6 +56,7 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       // Câmeras e Armazenamento são exclusivos de admin/operador
       { path: '/cameras', label: 'Câmeras',       icon: Camera,   roles: ['admin', 'operator'] },
+      { path: '/recorders', label: 'DVR/NVR', icon: Server, roles: ['admin'] },
       { path: '/storage', label: 'Armazenamento', icon: HardDrive, roles: ['admin', 'operator'] },
       { path: '/performance', label: 'Desempenho', icon: Activity,  roles: ['admin', 'operator'] },
       { path: '/ia',      label: 'Inteligência', icon: Brain,    roles: ['admin', 'operator'] },
@@ -149,6 +150,7 @@ export function Sidebar({
   const facilityName = useBrandingStore((state) => state.facilityName);
   const logoDataUrl = useBrandingStore((state) => state.logoDataUrl);
   const aiFeatureEnabled = useBrandingStore((state) => state.aiFeatureEnabled);
+  const recordersEnabled = useBrandingStore((state) => state.recordersEnabled);
   const hiddenNavPaths = useBrandingStore((state) => state.hiddenNavPaths);
 
   const roleColor = ROLE_COLOR[user?.role ?? 'operator'] ?? ROLE_COLOR.operator;
@@ -158,7 +160,7 @@ export function Sidebar({
   // na lista POR-INSTALAÇÃO que o servidor entrega (hiddenNavPaths). A rota
   // segue de pé nos três casos — some só do menu.
   const escondida = (path: string) =>
-    PAGINAS_OCULTAS.has(path) || (path === '/ia' && !aiFeatureEnabled) || hiddenNavPaths.includes(path);
+    PAGINAS_OCULTAS.has(path) || (path === '/ia' && !aiFeatureEnabled) || (path === '/recorders' && !recordersEnabled) || hiddenNavPaths.includes(path);
 
   // Só busca o contador se a IA estiver contratada — numa instalação sem IA a
   // chamada seria puro custo, a cada minuto, para um item que nem aparece.

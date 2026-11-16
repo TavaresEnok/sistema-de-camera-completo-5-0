@@ -451,7 +451,7 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
           locationAddress: form.locationAddress.trim() || null,
           latitude,
           longitude,
-          ...(!modoPush ? {
+          ...(!modoPush && !camera?.recorderId ? {
           ip: form.ip.trim(),
           rtspPort: Number(form.rtspPort),
           username: form.username.trim(),
@@ -581,7 +581,7 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
               <Tabs defaultValue="geral" className="flex flex-col">
                 <TabsList className="mx-4 mt-4 grid h-auto min-h-10 shrink-0 grid-cols-2 sm:grid-cols-4 gap-1 rounded-lg border border-border bg-muted/45 p-1">
                   <TabsTrigger value="geral" className="rounded-md text-xs text-muted-foreground data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Geral</TabsTrigger>
-                  <TabsTrigger value="conexao" className="rounded-md text-xs text-muted-foreground data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Conexão</TabsTrigger>
+                  {!camera?.recorderId && <TabsTrigger value="conexao" className="rounded-md text-xs text-muted-foreground data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Conexão</TabsTrigger>}
                   <TabsTrigger value="stream" className="rounded-md text-xs text-muted-foreground data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Vídeo</TabsTrigger>
                   <TabsTrigger value="gravacao" className="rounded-md text-xs text-muted-foreground data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Gravação</TabsTrigger>
                 </TabsList>

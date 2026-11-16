@@ -5,6 +5,7 @@ import { getApiBaseUrl } from '../lib/api-base';
 import { cameraPublicIdLabel } from '../lib/camera-list-metadata';
 
 export interface Camera {
+  recorderId?: string | null;
   id: string;
   updatedAt?: string;
   /** Chave operacional curta e única; o UUID em `id` continua sendo interno. */
@@ -338,6 +339,7 @@ function mapCameraItems(
       floor: camera.group?.name ?? previous?.floor ?? '-',
       ipAddress: sourceLabel,
       sourceMode,
+      recorderId: camera.recorderId ?? null,
       siteId: camera.siteId ?? null,
       areaId: camera.areaId ?? null,
       locationAddress: camera.locationAddress ?? null,
