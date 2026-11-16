@@ -4,6 +4,7 @@ import threading
 import logging
 import requests
 import os
+import uuid
 import numpy as np
 from collections import deque
 from queue import Empty, Full, Queue
@@ -179,7 +180,16 @@ class StreamProcessor:
         self.counting_fps = quadros_de_contagem((source_info or {}).get("countingFps")) if tem_contagem else None
         if tem_contagem and self.counting_fps is None:
             self.counting_fps = 8
-        self.contador_de_passagem = ContadorDePassagem() if tem_contagem else None
+        counting_state_path = None
+        if tem_contagem and self.emit_events and not self.simulation_only:
+            directory = os.getenv('AI_COUNTING_STATE_DIR', '/storage/.passage-counts').strip()
+            try:
+                identity = str(uuid.UUID(self.camera_id))
+                if directory:
+                    counting_state_path = os.path.join(directory, identity + '.json')
+            except (ValueError, TypeError, AttributeError):
+                pass
+        self.contador_de_passagem = ContadorDePassagem(state_path=counting_state_path) if tem_contagem else None
         self._envio_de_contagem = None
         objeto_info = (source_info or {}).get("objectDetection") if isinstance(source_info, dict) else None
         # Objeto ligado SÓ por causa da contagem: conta, mas não gera evento de

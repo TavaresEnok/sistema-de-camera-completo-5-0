@@ -1066,6 +1066,7 @@ export class CamerasController {
       this.schedulePostCreateProvisioning(id);
     } else if (
       dto.detectionZones !== undefined
+      || dto.countingFps !== undefined
       || dto.objectMode !== undefined
       || dto.aiEnabled !== undefined
       || dto.aiObjectClasses !== undefined

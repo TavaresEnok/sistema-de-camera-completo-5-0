@@ -5,6 +5,9 @@ Rodam sem cv2 e sem modelo: geometria + contador puro.
 import calendar
 import time
 import unittest
+import tempfile
+import os
+import json
 
 from contagem_de_passagem import (
     ESPERA_S,
@@ -70,6 +73,12 @@ class LinhasDeContagem(unittest.TestCase):
         ida = atravessar(DetectorDeTravessia(linha_contagem()), 0.3, 0.7)[0]
         volta = atravessar(DetectorDeTravessia(linha_contagem()), 0.7, 0.3)[0]
         self.assertNotEqual(ida["direcao"], volta["direcao"])
+
+    def test_crossing_at_included_boundary_accepts_both_directions(self):
+        area = {'kind': 'include', 'points': [[0.5, 0], [1, 0], [1, 1], [0.5, 1]]}
+        for start, end in ((0.3, 0.7), (0.7, 0.3)):
+            detector = DetectorDeTravessia(linha_contagem() + [area])
+            self.assertEqual(len(atravessar(detector, start, end)), 1)
 
     def test_rotulo_em_portugues_do_detector_conta(self):
         # O object_detector entrega "pessoa"; a linha guarda "person".
@@ -169,6 +178,85 @@ class Contador(unittest.TestCase):
 class QuadrosDeContagem(unittest.TestCase):
     def test_so_opcoes_da_tela(self):
         self.assertEqual([quadros_de_contagem(v) for v in (5, "8", 12, 7, None, "x")], [5, 8, 12, None, None, None])
+
+
+class RecuperacaoDeContagem(unittest.TestCase):
+    def test_backlog_above_api_limit_is_sent_in_chunks(self):
+        c = ContadorDePassagem()
+        for i in range(601):
+            c.registrar(travessia('in', track=str(i)), 1_800_000_000 + i * 60)
+        payloads = []
+        sender = EnvioDeContagem(c, lambda p: payloads.append(p) or True)
+        self.assertTrue(sender.enviar_agora(1_800_000_000 + 602 * 60))
+        self.assertEqual([len(p['buckets']) for p in payloads], [500, 101])
+        self.assertEqual(c.estado()['unsentMinutes'], 0)
+
+    def test_partial_failure_retries_only_unacknowledged_chunk(self):
+        c = ContadorDePassagem()
+        for i in range(601):
+            c.registrar(travessia('in', track=str(i)), 1_800_000_000 + i * 60)
+        sizes = []
+        def send(payload):
+            sizes.append(len(payload['buckets']))
+            return len(sizes) != 2
+        sender = EnvioDeContagem(c, send)
+        self.assertFalse(sender.enviar_agora(1_800_000_000 + 602 * 60))
+        self.assertEqual(c.estado()['unsentMinutes'], 101)
+        self.assertTrue(sender.enviar_agora(1_800_000_000 + 602 * 60))
+        self.assertEqual(sizes, [500, 101, 101])
+
+    def test_restart_preserves_session_and_absolute_totals(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = os.path.join(directory, 'camera.json')
+            original = ContadorDePassagem(state_path=state)
+            original.registrar(travessia('in', 'first'), 1_800_000_010)
+            original.consolidar(1_800_000_012)
+            restored = ContadorDePassagem(state_path=state)
+            self.assertEqual(restored.sessao, original.sessao)
+            self.assertEqual(restored.lote_para_envio(1_800_000_013)[0]['count'], 1)
+            restored.registrar(travessia('in', 'second'), 1_800_000_014)
+            self.assertEqual(restored.lote_para_envio(1_800_000_016)[0]['count'], 2)
+            self.assertEqual(os.stat(state).st_mode & 0o777, 0o600)
+
+    def test_restart_after_http_success_can_safely_resend(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = os.path.join(directory, 'camera.json')
+            c = ContadorDePassagem(state_path=state)
+            c.registrar(travessia('in'), 1_800_000_010)
+            sent = c.lote_para_envio(1_800_000_012)
+            c.confirmar_envio(sent, 1_800_000_012)
+            restored = ContadorDePassagem(state_path=state)
+            self.assertEqual(restored.lote_para_envio(1_800_000_013), sent)
+
+    def test_disk_failure_is_visible_without_stopping_counting(self):
+        with tempfile.NamedTemporaryFile() as occupied:
+            c = ContadorDePassagem(state_path=occupied.name + '/camera.json')
+            c.registrar(travessia('in'), 1_800_000_010)
+            self.assertEqual(c.lote_para_envio(1_800_000_012)[0]['count'], 1)
+            self.assertIsNotNone(c.estado()['storageError'])
+            self.assertFalse(c.estado()['durableState'])
+
+    def test_background_checkpoints_before_http_interval(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, 'camera.json')
+            c = ContadorDePassagem(state_path=path)
+            c.registrar(travessia('in'), time.time() - 3)
+            requests = []
+            sender = EnvioDeContagem(c, lambda p: requests.append(p) or True, intervalo=30)
+            sender.iniciar()
+            try:
+                deadline = time.monotonic() + 3
+                while time.monotonic() < deadline:
+                    if os.path.exists(path):
+                        with open(path) as saved:
+                            if json.load(saved)['entries'] == 1:
+                                break
+                    time.sleep(0.02)
+                with open(path) as saved:
+                    self.assertEqual(json.load(saved)['entries'], 1)
+                self.assertEqual(requests, [])
+            finally:
+                sender.parar()
 
 
 if __name__ == "__main__":

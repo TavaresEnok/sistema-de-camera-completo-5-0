@@ -102,3 +102,10 @@ test('validação de zonas: campos de contagem só em linha', () => {
   assert.doesNotThrow(() => validarZonasDeDeteccao([LINHA]));
   assert.throws(() => validarZonasDeDeteccao([{ id: 'a', name: 'A', kind: 'include', points: [[0, 0], [1, 0], [1, 1]], uso: 'contagem' }]));
 });
+
+test('duplicate keys in a batch retain the largest absolute total', () => {
+  const b = { minuteStart: '2026-11-10T15:00:00Z', lineId: 'porta', classLabel: 'person', direction: 'in', count: 7 };
+  const result = validarLote({ session: SESSAO, buckets: [b, { ...b, count: 3 }, { ...b, count: 9 }] }, linhasDeContagem([LINHA]), AGORA);
+  assert.equal(result.baldes.length, 1);
+  assert.equal(result.baldes[0].count, 9);
+});

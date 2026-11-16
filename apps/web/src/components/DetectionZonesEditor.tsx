@@ -808,7 +808,7 @@ export function DetectionZonesEditor({ cameraId, cameraName, configurationRevisi
                     <option value="ba">Entrada B → A</option>
                   </select>
                   <select
-                    value={(zone.classes ?? ['person'])[0] === 'car' ? 'car' : 'person'}
+                    value={(zone.classes ?? ['person'])[0]}
                     onChange={(event) => {
                       remember();
                       const classes = [event.target.value];
@@ -819,7 +819,9 @@ export function DetectionZonesEditor({ cameraId, cameraName, configurationRevisi
                     aria-label={`O que contar na linha ${zone.name}`}
                   >
                     <option value="person">Pessoas</option>
-                    <option value="car">Veículos</option>
+                    <option value="car">Carros</option>
+                    <option value="motorcycle">Motos</option>
+                    <option value="bicycle">Bicicletas</option>
                   </select>
                 </>) : (
                 /* O sentido só faz sentido junto da seta no desenho acima —
