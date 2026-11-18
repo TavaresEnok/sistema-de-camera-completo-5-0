@@ -225,6 +225,7 @@ export class SettingsService {
     // requisição extra. Cada instalação tem o seu valor: ligada na matriz,
     // desligada num cliente que não contratou IA.
     branding.aiFeatureEnabled = all.aiFeatureEnabled;
+    branding.recordersEnabled = process.env.RECORDERS_ENABLED === 'true';
     // Também aqui, pelo mesmo motivo: o menu é montado logo após o login e o web
     // já busca /settings/branding no arranque. Cada instalação tem a sua lista.
     branding.hiddenNavPaths = all.hiddenNavPaths;

@@ -1,0 +1,3 @@
+FROM pc-web-builder:20261110
+USER root
+RUN apk add --no-cache chromium && npm install --prefix /tools playwright-core@1.56.1 --no-audit --no-fund

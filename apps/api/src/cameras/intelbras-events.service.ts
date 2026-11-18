@@ -105,6 +105,7 @@ export class IntelbrasEventsService implements OnModuleInit, OnModuleDestroy {
     try {
       const cameras = await this.prisma.camera.findMany({
         where: {
+          recorderId: null,
           enabled: true,
           status: { not: 'OFFLINE' },
           rtspPath: { contains: 'realmonitor' },

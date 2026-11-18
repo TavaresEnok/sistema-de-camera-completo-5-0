@@ -127,6 +127,7 @@ type CameraProbeStep = {
 
 type OnvifMediaProfile = {
   token: string;
+  sourceToken?: string | null;
   name?: string | null;
   width?: number | null;
   height?: number | null;
@@ -306,7 +307,7 @@ export class CamerasService implements OnApplicationBootstrap {
     }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
   }
 
-  async create(dto: CreateCameraDto, privacy?: PrivateCreation) {
+  async create(dto: CreateCameraDto, privacy?: PrivateCreation, recorderId?: string) {
     await this.validateDetectionNotices(dto);
     // ── CÂMERA QUE PUBLICA NÃO TEM ENDEREÇO NOSSO ────────────────────────────
     //
@@ -345,6 +346,7 @@ export class CamerasService implements OnApplicationBootstrap {
     const camera = await this.prisma.camera.create({
       data: {
         name: dto.name,
+        ...(recorderId ? { recorderId } : {}),
         ip: normalizedIp,
         rtspPort: dto.rtspPort,
         onvifPort: dto.onvifPort,
@@ -428,7 +430,7 @@ export class CamerasService implements OnApplicationBootstrap {
     // Pergunta à câmera se ela tem PTZ agora, no cadastro — em vez de deixar o
     // front adivinhar depois. Não espera a resposta: cadastrar não pode demorar
     // o tempo de uma sonda de rede.
-    this.dispararSondaPtz(camera.id, 'câmera cadastrada');
+    if (!recorderId) this.dispararSondaPtz(camera.id, 'câmera cadastrada');
 
     return sanitizeCamera(camera);
   }
@@ -704,6 +706,12 @@ export class CamerasService implements OnApplicationBootstrap {
 
   async update(id: string, dto: UpdateCameraDto) {
     const existing = await this.getCameraOrThrow(id);
+    if (existing.recorderId) {
+      const networkFields = ['ip', 'rtspPort', 'httpPort', 'onvifPort', 'username', 'rtspPath', 'channel', 'liveChannel', 'recordingChannel', 'analyticsChannel', 'groupId'] as const;
+      const changed = networkFields.some(key => dto[key] !== undefined && dto[key] !== existing[key]);
+      if (changed || Boolean(dto.password)) throw new BadRequestException('Este canal pertence a um DVR/NVR. Gerencie a conexão na página DVR/NVR.');
+      if (dto.motionTrigger === 'CAMERA' || dto.hasEdgeAi === true) throw new BadRequestException('Eventos do gravador ainda não estão disponíveis. Use a detecção do S2Cam neste canal.');
+    }
     await this.validateDetectionNotices(dto, existing);
     // Em RTMP push o IP é apenas um marcador inerte criado pelo próprio sistema
     // (`0.0.0.0`): nunca é discado. Validá-lo como alvo RTSP impedia salvar até
@@ -1700,7 +1708,7 @@ export class CamerasService implements OnApplicationBootstrap {
       subtype?: number | null;
       preferredRtspTransport?: string | null;
     },
-    options?: { targetAlreadyProvisioned?: boolean },
+    options?: { targetAlreadyProvisioned?: boolean; strictPath?: boolean },
   ): Promise<SnapshotResult> {
     // Revalida também câmeras persistidas: regras de rede podem ser endurecidas
     // depois do cadastro, e registros legados não podem contornar a política.
@@ -1730,7 +1738,7 @@ export class CamerasService implements OnApplicationBootstrap {
         rtspPorts: [input.rtspPort],
         username: input.username,
         password: input.password,
-        paths: this.buildRtspPathCandidates({
+        paths: options?.strictPath && input.rtspPath ? [input.rtspPath] : this.buildRtspPathCandidates({
           channel: input.channel,
           subtype: input.subtype,
           customPath: input.rtspPath,
@@ -2096,6 +2104,7 @@ export class CamerasService implements OnApplicationBootstrap {
       const height = this.parseOptionalInt(body.match(/<(?:\w+:)?Height>([^<]+)<\/(?:\w+:)?Height>/)?.[1] ?? null);
       profiles.push({
         token,
+        sourceToken: body.match(/<(?:\w+:)?SourceToken>([^<]+)<\/(?:\w+:)?SourceToken>/)?.[1] ?? null,
         name: body.match(/<(?:\w+:)?Name>([^<]+)<\/(?:\w+:)?Name>/)?.[1] ?? null,
         encoding: body.match(/<(?:\w+:)?Encoding>([^<]+)<\/(?:\w+:)?Encoding>/)?.[1] ?? null,
         width,
@@ -2236,8 +2245,9 @@ export class CamerasService implements OnApplicationBootstrap {
    * serve, quando a chave vaza ou o equipamento é trocado.
    */
   async rotateRtmpIngestKey(cameraId: string) {
-    const camera = await this.prisma.camera.findUnique({ where: { id: cameraId }, select: { id: true, name: true } });
+    const camera = await this.prisma.camera.findUnique({ where: { id: cameraId }, select: { id: true, name: true, recorderId: true } });
     if (!camera) throw new NotFoundException(`Camera ${cameraId} não encontrada.`);
+    if (camera.recorderId) throw new BadRequestException('Canais vinculados a DVR/NVR usam a conexão do gravador.');
 
     const key = generateIngestKey();
     await this.prisma.camera.update({
@@ -2601,6 +2611,7 @@ export class CamerasService implements OnApplicationBootstrap {
     username: string;
     password: string;
     deadline?: number;
+    maxProfiles?: number;
   }) {
     const paths = Array.from(new Set([
       input.preferredPath?.trim(),
@@ -2634,7 +2645,7 @@ export class CamerasService implements OnApplicationBootstrap {
         }
 
         const withUris: OnvifMediaProfile[] = [];
-        for (const profile of profiles.slice(0, 6)) {
+        for (const profile of profiles.slice(0, input.maxProfiles ?? 6)) {
           if (input.deadline != null && Date.now() >= input.deadline) break;
           const uriResult = await this.digestSoapRequest({
             host: input.host,
@@ -2659,6 +2670,19 @@ export class CamerasService implements OnApplicationBootstrap {
     }
 
     return { port: null, path: null, profiles: [], errors };
+  }
+
+  /** Recorder discovery is read-only: never invokes PTZ probes or changes camera settings. */
+  async discoverRecorderProfiles(input: { host: string; port: number; username: string; password: string }) {
+    this.assertTestTargetAllowed(input.host, input.port);
+    const result = await this.discoverOnvifMediaProfiles({ ...input, ports: [input.port], deadline: Date.now() + 25_000, maxProfiles: 256 });
+    return result.profiles;
+  }
+
+  async verifyRecorderChannel(dto: { ip: string; rtspPort: number; username: string; password: string; rtspPath: string; channel: number; subtype: number }) {
+    const ip = this.assertTestTargetAllowed(dto.ip, dto.rtspPort);
+    await this.verifyRtspBeforeSave({ ...dto, ip });
+    return { ok: true };
   }
 
   private pickOnvifMainProfile(profiles: OnvifMediaProfile[]) {

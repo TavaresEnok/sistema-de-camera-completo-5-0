@@ -27,6 +27,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/alarms':        'Alertas',
   '/contagem':      'Contagem de passagens',
   '/cameras':       'Câmeras',
+  '/recorders':     'DVR/NVR',
   '/ptz':           'Controle PTZ',
   '/perimetro':     'Perímetro de segurança',
   '/investigation': 'Investigação',

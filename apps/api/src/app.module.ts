@@ -6,6 +6,7 @@ import { PrismaModule } from './common/prisma/prisma.module';
 import { HealthModule } from './health/health.module';
 import { MetricsModule } from './observability/metrics.module';
 import { CamerasModule } from './cameras/cameras.module';
+import { RecordersModule } from './recorders/recorders.module';
 import { CameraStreamModule } from './camera-stream/camera-stream.module';
 import { PtzModule } from './ptz/ptz.module';
 import { JobsModule } from './jobs/jobs.module';
@@ -83,6 +84,7 @@ import { SgpModule } from './sgp/sgp.module';
     PassageCountsModule,
     CameraPermissionsModule,
     CamerasModule,
+    RecordersModule,
     CameraStreamModule,
     PtzModule,
     RecordingsModule,

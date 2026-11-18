@@ -6,6 +6,7 @@ import { cameraPublicIdLabel } from '../lib/camera-list-metadata';
 
 export interface Camera {
   countingFps?: number | null;
+  recorderId?: string | null;
   id: string;
   updatedAt?: string;
   /** Chave operacional curta e única; o UUID em `id` continua sendo interno. */
@@ -339,6 +340,7 @@ function mapCameraItems(
       floor: camera.group?.name ?? previous?.floor ?? '-',
       ipAddress: sourceLabel,
       sourceMode,
+      recorderId: camera.recorderId ?? null,
       countingFps: [5, 8, 12].includes(camera.countingFps) ? camera.countingFps : null,
       siteId: camera.siteId ?? null,
       areaId: camera.areaId ?? null,

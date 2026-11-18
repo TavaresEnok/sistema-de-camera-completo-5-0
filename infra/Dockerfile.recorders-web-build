@@ -1,0 +1,4 @@
+FROM pc-web-builder:20261110 AS builder
+WORKDIR /app
+COPY apps/web/src ./apps/web/src
+RUN pnpm --filter web build

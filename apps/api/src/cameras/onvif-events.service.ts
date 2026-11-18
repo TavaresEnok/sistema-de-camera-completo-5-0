@@ -208,14 +208,14 @@ export class OnvifEventsService implements OnModuleInit, OnModuleDestroy {
   private async discoverMissingOnvifPorts() {
     if (!this.portDiscoveryEnabled()) return;
     const semPorta = await this.prisma.camera.findMany({
-      where: { enabled: true, onvifPort: null },
+      where: { enabled: true, onvifPort: null, recorderId: null },
       select: { id: true, name: true, ip: true, rtspPort: true, httpPort: true, username: true, passwordEncrypted: true },
     });
     if (semPorta.length === 0) return;
 
     // As irmãs do mesmo endereço revelam a regra do roteador daquele site.
     const comPorta = await this.prisma.camera.findMany({
-      where: { onvifPort: { not: null } },
+      where: { onvifPort: { not: null }, recorderId: null },
       select: { ip: true, rtspPort: true, onvifPort: true },
     });
     const irmasPorIp = new Map<string, Array<{ rtspPort: number; onvifPort: number }>>();
@@ -411,7 +411,7 @@ export class OnvifEventsService implements OnModuleInit, OnModuleDestroy {
   private async syncCameras() {
     if (this.isDisabled()) return;
     try {
-      const cameras = await this.prisma.camera.findMany({ where: { motionTrigger: 'CAMERA' } });
+      const cameras = await this.prisma.camera.findMany({ where: { motionTrigger: 'CAMERA', recorderId: null } });
       const currentIds = new Set(cameras.map((c) => c.id));
 
       for (const [id, state] of this.activeCams.entries()) {

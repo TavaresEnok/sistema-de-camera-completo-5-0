@@ -5,6 +5,7 @@ import { buildBrandColorCss } from '../lib/brand-colors';
 import { normalizeFacilityName, PRODUCT_NAME } from '../lib/product-brand';
 
 type PublicBranding = {
+  recordersEnabled?: boolean;
   facilityName?: string;
   brandLogoDataUrl?: string;
   brandUseDefaultColors?: boolean;
@@ -44,6 +45,7 @@ type PublicBranding = {
 };
 
 type BrandingState = {
+  recordersEnabled: boolean;
   facilityName: string;
   logoDataUrl: string;
   aiFeatureEnabled: boolean;
@@ -113,6 +115,7 @@ function applyBrandColors(data: PublicBranding) {
 }
 
 export const useBrandingStore = create<BrandingState>((set, get) => ({
+  recordersEnabled: false,
   facilityName: PRODUCT_NAME,
   logoDataUrl: '',
   // Default FALSE: enquanto o servidor não responde, a página de IA fica
@@ -129,6 +132,7 @@ export const useBrandingStore = create<BrandingState>((set, get) => ({
         // — que é o que toda instalação anterior tem preenchido.
         logoDataUrl: ou(data.systemLogoDataUrl, data.brandLogoDataUrl)?.trim() || '',
         aiFeatureEnabled: data.aiFeatureEnabled === true,
+        recordersEnabled: data.recordersEnabled === true,
         // "/alarms,/review" → ['/alarms','/review']. Vazio = nada escondido.
         hiddenNavPaths: String(data.hiddenNavPaths ?? '').split(',').map((p) => p.trim()).filter(Boolean),
         loaded: true,

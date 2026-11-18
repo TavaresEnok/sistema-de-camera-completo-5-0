@@ -94,6 +94,11 @@ PASSAGE_COUNT_MIGRATIONS = {
     '20261110180000_passage_count': ('f405336e002050032b948b6e85321f75faa953312f20236ccf416446578b9f56', [('Camera', 'countingFps'), ('Camera', 'passageCounts')]),
 }
 PASSAGE_COUNT_MODELS = frozenset({'PassageCount'})
+RECORDERS_MIGRATIONS = {
+    '20261116140000_recorders': ('d1fd41b2b978a3b11d679d5992327cb477ba34a0b1f0a8f98156712305a18be4',
+        [('Camera', 'recorderId'), ('Camera', 'recorder'), ('Camera', '@@unique([recorderId,'), ('CameraGroup', 'recorders')]),
+}
+RECORDERS_MODELS = frozenset({'Recorder'})
 
 
 def image_schema(image):
@@ -181,7 +186,12 @@ def main():
     parser.add_argument('--approve-sgp-policy-schema', action='store_true', help='Approve only the three hash-pinned additive SGP policy migrations; reconcile stale metadata against the actual installed image')
     parser.add_argument('--approve-notice-preferences-schema', action='store_true', help='Approve only the hash-pinned additive sound and duration preferences')
     parser.add_argument('--approve-passage-count-schema', action='store_true', help='Approve only the hash-pinned additive passage-count table and camera column')
+    parser.add_argument('--approve-recorders-schema', action='store_true', help='Vibe and Dguardian: reviewed additive recorder table and optional camera link')
     args = parser.parse_args()
+    if args.approve_recorders_schema:
+        import socket
+        if socket.gethostname() not in {'vibe', 'dguardian'} or args.web_only or args.ai_only or args.include_ai:
+            raise ValueError('The recorder pilot is restricted to Vibe and Dguardian API/web deployments')
     if args.include_ai and args.web_only:
         raise ValueError('AI updates cannot be combined with web-only updates')
     if args.ai_only and (not args.include_ai or args.web_only):
@@ -212,12 +222,14 @@ def main():
     media_before, api_before = media_state(include_ai=not args.include_ai), inspect('vms-api')
     command(['docker', 'load', '-i', str(args.archive)])
     reviewed_policy = []
-    if args.approve_sgp_policy_schema or args.approve_notice_preferences_schema or args.approve_passage_count_schema:
+    if args.approve_sgp_policy_schema or args.approve_notice_preferences_schema or args.approve_passage_count_schema or args.approve_recorders_schema:
         if args.approve_detector_percentage_schema or args.approve_object_notice_schema or args.approve_sgp_schema or args.approve_confidence_40_schema:
             raise ValueError('Choose only one schema approval mechanism')
-        if sum(map(bool, [args.approve_sgp_policy_schema, args.approve_notice_preferences_schema, args.approve_passage_count_schema])) != 1:
+        if sum(map(bool, [args.approve_sgp_policy_schema, args.approve_notice_preferences_schema, args.approve_passage_count_schema, args.approve_recorders_schema])) != 1:
             raise ValueError('Choose only one schema approval mechanism')
-        if args.approve_passage_count_schema:
+        if args.approve_recorders_schema:
+            reviewed_policy = validate_sgp_policy_transition(image_schema(api_before['Image']), image_schema(body['images']['api']['imageId']), body.get('databaseSchemaHash'), RECORDERS_MIGRATIONS, RECORDERS_MODELS)
+        elif args.approve_passage_count_schema:
             reviewed_policy = validate_sgp_policy_transition(image_schema(api_before['Image']), image_schema(body['images']['api']['imageId']), body.get('databaseSchemaHash'),
                 PASSAGE_COUNT_MIGRATIONS, PASSAGE_COUNT_MODELS)
         else:
@@ -280,6 +292,8 @@ def main():
             raise ValueError('Image does not contain the narrowly reviewed additive migration')
     if not args.web_only and not args.ai_only:
         configuration['services']['api'].setdefault('environment', {})['DRAC_VERSION'] = body['commit']
+    if args.approve_recorders_schema:
+        configuration['services']['api'].setdefault('environment', {})['RECORDERS_ENABLED'] = 'true'
     compose = ['docker', 'compose', '--project-name', api_before['Config']['Labels'].get('com.docker.compose.project', 'infra'),
                '--env-file', str(root / 'infra/.env')]
     for path in files:
