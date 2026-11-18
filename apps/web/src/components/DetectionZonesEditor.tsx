@@ -693,7 +693,8 @@ export function DetectionZonesEditor({ cameraId, cameraName, configurationRevisi
               />
               {(() => { const arrow = crossingArrow(zone.points); return arrow ? <g pointerEvents="none">
                 <line {...arrow} stroke={cor} strokeWidth={0.4} markerEnd={fim ? seta : undefined} markerStart={inicio ? seta : undefined} />
-                <text x={arrow.x1} y={arrow.y1 - 1.5} fontSize="2.5" fill="white">{contagem && zone.entrada === 'ba' ? 'Entrada' : 'A'}</text><text x={arrow.x2} y={arrow.y2 + 3} fontSize="2.5" fill="white">{contagem && (zone.entrada ?? 'ab') === 'ab' ? 'Entrada' : 'B'}</text>
+                <text x={arrow.x1} y={arrow.y1 - 1.5} fontSize="2.5" fill="white" stroke="black" strokeWidth="0.6" paintOrder="stroke">{contagem && zone.entrada === 'ba' ? 'A · Entrada' : 'A'}</text>
+                <text x={arrow.x2} y={arrow.y2 + 3} fontSize="2.5" fill="white" stroke="black" strokeWidth="0.6" paintOrder="stroke">{contagem && (zone.entrada ?? 'ab') === 'ab' ? 'B · Entrada' : 'B'}</text>
                 <text x={(zone.points[0][0] + zone.points[1][0]) * 50} y={(zone.points[0][1] + zone.points[1][1]) * 50 - 2.5} textAnchor="middle" fontSize="2.8" fill="white" stroke="black" strokeWidth="0.7" paintOrder="stroke">{zone.name}</text>
               </g> : null; })()}
               {zone.points.map(([x, y], i) => (

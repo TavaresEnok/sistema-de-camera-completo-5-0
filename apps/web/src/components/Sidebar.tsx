@@ -6,7 +6,7 @@ import {
   LogOut, Keyboard, Shield,
   Server, Users, Radar, FolderKey, ShieldCheck, Search, Sun, Moon,
   Bell, Crosshair, HardDrive, UserCircle, ShieldAlert, MapPinned, Newspaper,
-  CircleHelp, LayoutGrid, Activity, FileSearch, ScrollText, Brain,
+  CircleHelp, LayoutGrid, Activity, FileSearch, ScrollText, Brain, BarChart3,
   type LucideIcon,
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -40,7 +40,8 @@ const NAV_SECTIONS: NavSection[] = [
       { path: '/map',      label: 'Mapa',           icon: MapPinned },
       { path: '/review',   label: 'Revisão',        icon: Sparkles },
       // Alertas requerem operador ou superior (viewers não têm acesso)
-      { path: '/alarms',   label: 'Alertas e contagem',        icon: Bell,     roles: ['admin', 'operator'] },
+      { path: '/alarms',   label: 'Alertas', icon: Bell, roles: ['admin', 'operator'] },
+      { path: '/contagem', label: 'Contagem', icon: BarChart3 },
       { path: '/ptz',      label: 'Controle PTZ',   icon: Crosshair },
       { path: '/perimetro', label: 'Perímetro',     icon: ShieldAlert, roles: ['admin', 'operator'] },
       // "Modo Mural" apenas ligava o mural do /live e redirecionava — item de
@@ -170,6 +171,7 @@ export function Sidebar({
       ...section,
       items: section.items.filter(
         (item) => (!item.roles || item.roles.includes(role)) && !escondida(item.path)
+          && (item.path !== '/contagem' || hasPermission('playback'))
           && (role !== 'admin' || !ADMIN_PAGE_PERMISSION[item.path] || hasPermission(ADMIN_PAGE_PERMISSION[item.path])),
       ),
     }))
