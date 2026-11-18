@@ -253,6 +253,9 @@ class ObjectDetector(Detector):
             "NUM_STREAMS": str(max(1, min(self.inference_workers, int(GENERAL_PROFILE.get("openvino_streams", 1))))),
             "INFERENCE_NUM_THREADS": self.inference_threads,
         }
+        pinning = os.getenv("GENERAL_OPENVINO_CPU_PINNING", "").strip().lower()
+        if self.openvino_device.upper() == "CPU" and pinning in {"true", "false"}:
+            properties["ENABLE_CPU_PINNING"] = pinning == "true"
         fallback = None
         try:
             compiled_model = core.compile_model(model, self.openvino_device, properties)
@@ -261,7 +264,7 @@ class ObjectDetector(Detector):
             print(f"[ObjectDetector] OpenVINO properties rejected; explicit fallback: {fallback}")
             compiled_model = core.compile_model(model, self.openvino_device)
         actual = {}
-        for key in ("INFERENCE_NUM_THREADS", "NUM_STREAMS", "PERFORMANCE_HINT", "EXECUTION_DEVICES"):
+        for key in ("INFERENCE_NUM_THREADS", "NUM_STREAMS", "PERFORMANCE_HINT", "EXECUTION_DEVICES", "ENABLE_CPU_PINNING"):
             try:
                 value = compiled_model.get_property(key)
                 actual[key] = value if isinstance(value, (int, float, str, list)) else str(value)
