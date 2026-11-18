@@ -6,6 +6,10 @@ cannot override detector model, thresholds, sizing or overlay behavior.
 
 import os
 
+from inference_capacity import configure_cpu_channels
+
+configure_cpu_channels()
+
 
 def _env_bool(name: str, default: bool) -> bool:
     raw = (os.getenv(name, "") or "").strip().lower()
