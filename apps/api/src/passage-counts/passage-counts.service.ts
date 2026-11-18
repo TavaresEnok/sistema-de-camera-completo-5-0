@@ -86,13 +86,19 @@ export class PassageCountsService implements OnModuleInit, OnModuleDestroy {
       fps: c.countingFps ?? 8,
       active: true,
       enabled: c.enabled && c.aiEnabled,
+      lastPassageAt: null as Date | null,
     })));
-    const keys = new Set(configured.map(l => JSON.stringify([l.cameraId, l.lineId])));
-    const historical = await this.prisma.$queryRaw<Array<{ cameraId: string; lineId: string; lineName: string; classes: string[] }>>`
-      SELECT "cameraId", "lineId", MAX("lineName") AS "lineName", array_agg(DISTINCT "classLabel") AS classes
+    const byKey = new Map(configured.map(l => [JSON.stringify([l.cameraId, l.lineId]), l]));
+    const historical = await this.prisma.$queryRaw<Array<{ cameraId: string; lineId: string; lineName: string; classes: string[]; lastPassageAt: Date | null }>>`
+      SELECT "cameraId", "lineId", MAX("lineName") AS "lineName", array_agg(DISTINCT "classLabel") AS classes,
+             MAX("minuteStart") FILTER (WHERE "count" > 0) AS "lastPassageAt"
       FROM "PassageCount" WHERE "cameraId" IN (${Prisma.join(ids)}) GROUP BY "cameraId", "lineId"`;
     for (const h of historical) {
-      if (keys.has(JSON.stringify([h.cameraId, h.lineId]))) continue;
+      const existing = byKey.get(JSON.stringify([h.cameraId, h.lineId]));
+      if (existing) {
+        existing.lastPassageAt = h.lastPassageAt;
+        continue;
+      }
       const camera = cameras.find(c => c.id === h.cameraId);
       if (!camera) continue;
       configured.push({ ...h, cameraName: camera.name, groupId: camera.group?.id ?? null,

@@ -4,7 +4,7 @@ import {
   Monitor, PlaySquare,
   Camera, Settings,
   LogOut, Sun, Moon, Shield, Clock, Users, FolderKey, ShieldCheck,
-  Bell, Crosshair, HardDrive, UserCircle, MapPinned, Newspaper, LayoutGrid,
+  Bell, Crosshair, HardDrive, UserCircle, MapPinned, Newspaper, LayoutGrid, BarChart3,
   type LucideIcon,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -28,6 +28,7 @@ const PAGES: PalettePage[] = [
   // viewer+
   { label: 'Ao Vivo',       path: '/live',       icon: Monitor,     description: 'Grade de câmeras e controles' },
   { label: 'Reprodução',    path: '/playback',   icon: PlaySquare,  description: 'Revisar gravações' },
+  { label: 'Contagem',      path: '/contagem',   icon: BarChart3,   description: 'Entradas e saídas por linha' },
   { label: 'Mapa',          path: '/map',        icon: MapPinned,   description: 'Câmeras posicionadas por unidade' },
   { label: 'Novidades',     path: '/updates',    icon: Newspaper,  description: 'Últimas funções e melhorias' },
   { label: 'Controle PTZ',  path: '/ptz',        icon: Crosshair,   description: 'Movimentação e presets PTZ' },
@@ -61,6 +62,7 @@ export function CommandPalette({ open, onClose }: Props) {
   const hiddenNavPaths = useBrandingStore((s) => s.hiddenNavPaths);
   const visiblePages = PAGES.filter((page) => {
     return (!page.roles || page.roles.includes(role)) && !hiddenNavPaths.includes(page.path)
+      && (page.path !== '/contagem' || hasPermission('playback'))
       && (role !== 'admin' || !ADMIN_PAGE_PERMISSION[page.path] || hasPermission(ADMIN_PAGE_PERMISSION[page.path]));
   });
 

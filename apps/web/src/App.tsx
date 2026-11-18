@@ -1,5 +1,5 @@
 import { Component, Suspense, lazy, useEffect, useRef, useState, type ComponentType, type ErrorInfo, type ReactNode } from 'react';
-import { Switch, Route, Router as WouterRouter, Redirect, useLocation } from 'wouter';
+import { Switch, Route, Router as WouterRouter, Redirect, useLocation, useSearch } from 'wouter';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/toaster';
@@ -63,6 +63,7 @@ const ReviewPage      = lazyWithReload(() => import('./pages/ReviewPage'));
 const PerformancePage = lazyWithReload(() => import('./pages/PerformancePage'));
 const AuditLogsPage   = lazyWithReload(() => import('./pages/AuditLogsPage'));
 const AlarmsPage      = lazyWithReload(() => import('./pages/AlarmsPage'));
+const ContagemPage    = lazyWithReload(() => import('./components/ContagemDePassagem'));
 const CamerasPage     = lazyWithReload(() => import('./pages/CamerasPage'));
 const RecordersPage   = lazyWithReload(() => import('./pages/RecordersPage'));
 const PTZPage         = lazyWithReload(() => import('./pages/PTZPage'));
@@ -98,6 +99,12 @@ function AppFallback() {
  */
 function LegacyEventsRedirect() {
   return <Redirect to="/alarms" />;
+}
+
+function AlarmsRoute() {
+  const search = useSearch();
+  if (new URLSearchParams(search).get('aba') === 'contagem') return <Redirect to="/contagem" />;
+  return <ProtectedRoute component={AlarmsPage} minRole="operator" />;
 }
 
 /** Loading leve, só na área de conteúdo (mantém a sidebar/header fixos). */
@@ -317,6 +324,9 @@ function AppRoutes() {
       <Route path="/playback">
         {() => <ProtectedRoute component={PlaybackPage} />}
       </Route>
+      <Route path="/contagem">
+        {() => <ProtectedRoute component={ContagemPage} />}
+      </Route>
       <Route path="/map">
         {() => <ProtectedRoute component={MapPage} />}
       </Route>
@@ -360,7 +370,7 @@ function AppRoutes() {
       </Route>
       <Route path="/recorders">{() => <ProtectedRoute component={RecordersPage} minRole="admin" />}</Route>
       <Route path="/alarms">
-        {() => <ProtectedRoute component={AlarmsPage} minRole="operator" />}
+        {() => <AlarmsRoute />}
       </Route>
       <Route path="/investigation">
         {() => <ProtectedRoute component={InvestigationPage} minRole="operator" />}

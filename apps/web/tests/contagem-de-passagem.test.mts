@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { periodoDaContagem, rotuloDoBalde, somarPorBalde, csvDaContagem } from '../src/lib/contagem-de-passagem.ts';
-import { testTrajectory } from '../src/lib/perimeter-test.ts';
+import { describePerimeterPosition, testTrajectory } from '../src/lib/perimeter-test.ts';
 
 const AGORA = new Date('2026-11-10T18:30:00Z');
 
@@ -27,6 +27,14 @@ test('gráfico soma todas as linhas por balde, em ordem', () => {
     { bucket: '2026-11-10T15:00', cameraId: 'd', lineId: 'b', lineName: 'B', in: 3, out: 0 },
   ], 'hour');
   assert.deepEqual(pontos.map((p) => [p.rotulo, p.in, p.out]), [['14h', 5, 4], ['15h', 5, 1]]);
+});
+
+test('gráfico mantém horas sem registros e ignora horas futuras', () => {
+  const pontos = somarPorBalde([
+    { bucket: '2026-11-10T01:00', cameraId: 'c', lineId: 'a', lineName: 'A', in: 2, out: 0 },
+    { bucket: '2026-11-10T03:00', cameraId: 'c', lineId: 'a', lineName: 'A', in: 1, out: 0 },
+  ], 'hour', { from: '2026-11-10T03:00:00Z', to: '2026-11-10T07:00:00Z' });
+  assert.deepEqual(pontos.map(p => [p.rotulo, p.in]), [['00h', 0], ['01h', 2], ['02h', 0], ['03h', 1]]);
 });
 
 test('CSV com ponto e vírgula, BOM para o Excel, saídas opcionais', () => {
@@ -70,6 +78,7 @@ test('counting simulation accepts entry/exit at the boundary of an included area
   const area = { id: 'a', name: 'Store', kind: 'include', points: [[0.5, 0], [1, 0], [1, 1], [0.5, 1]] };
   assert.equal(testTrajectory([0.3, 0.5], [0.7, 0.5], [line, area]).length, 1);
   assert.equal(testTrajectory([0.7, 0.5], [0.3, 0.5], [line, area]).length, 1);
+  assert.equal(describePerimeterPosition([0.7, 0.5], [0.3, 0.5], [line, area], 'simulação'), 'Travessia simulada em Door (entrada)');
   assert.equal(testTrajectory([0.3, 0.5], [0.7, 0.5], [line, { ...area, kind: 'exclude' }]).length, 0);
 });
 
@@ -80,8 +89,8 @@ test('editor oferece uso Alerta/Contagem e sentido de entrada', () => {
   assert.match(fonte, /Qualquer sentido/);
 });
 
-test('página de alarmes ganhou a aba Contagem sem perder os alertas', () => {
-  const fonte = readFileSync('src/pages/AlarmsPage.tsx', 'utf8');
-  assert.match(fonte, /ContagemDePassagem/);
-  assert.match(fonte, /<AlertasPage \/>/);
+test('link antigo da contagem redireciona e os alertas continuam restritos', () => {
+  const fonte = readFileSync('src/App.tsx', 'utf8');
+  assert.match(fonte, /get\('aba'\) === 'contagem'.*Redirect to="\/contagem"/);
+  assert.match(fonte, /component=\{AlarmsPage\} minRole="operator"/);
 });

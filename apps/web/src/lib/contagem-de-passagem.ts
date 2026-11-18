@@ -44,13 +44,29 @@ export function rotuloDoBalde(bucket: string, groupBy: 'hour' | 'day'): string {
 }
 
 /** Soma todas as linhas em cada balde, em ordem cronológica. */
-export function somarPorBalde(series: LinhaDaSerie[], groupBy: 'hour' | 'day'): PontoDoGrafico[] {
+export function somarPorBalde(series: LinhaDaSerie[], groupBy: 'hour' | 'day', intervalo?: { from: string; to: string }): PontoDoGrafico[] {
   const mapa = new Map<string, PontoDoGrafico>();
   for (const s of series) {
     const atual = mapa.get(s.bucket) ?? { bucket: s.bucket, rotulo: rotuloDoBalde(s.bucket, groupBy), in: 0, out: 0 };
     atual.in += s.in;
     atual.out += s.out;
     mapa.set(s.bucket, atual);
+  }
+  if (intervalo && series.length) {
+    const formatter = new Intl.DateTimeFormat('sv-SE', {
+      timeZone: FUSO_DA_CONTAGEM, year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+    });
+    const inicioDoBalde = (data: number) => {
+      const local = formatter.format(new Date(data)).replace(' ', 'T');
+      return Date.parse((groupBy === 'day' ? local.slice(0, 10) + 'T00:00' : local.slice(0, 13) + ':00') + 'Z');
+    };
+    const passo = groupBy === 'day' ? 86_400_000 : 3_600_000;
+    const fim = inicioDoBalde(Date.parse(intervalo.to) - 1);
+    for (let instante = inicioDoBalde(Date.parse(intervalo.from)); instante <= fim; instante += passo) {
+      const bucket = new Date(instante).toISOString().slice(0, 16);
+      if (!mapa.has(bucket)) mapa.set(bucket, { bucket, rotulo: rotuloDoBalde(bucket, groupBy), in: 0, out: 0 });
+    }
   }
   return [...mapa.values()].sort((a, b) => a.bucket.localeCompare(b.bucket));
 }

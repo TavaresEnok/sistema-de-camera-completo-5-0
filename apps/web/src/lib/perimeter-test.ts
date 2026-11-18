@@ -40,14 +40,14 @@ export function testTrajectory(previous: Point | null, current: Point, zones: Zo
 
 export function describePerimeterPosition(previous: Point | null, current: Point, zones: Zone[], subject: 'simulação' | 'objeto' | 'movimento') {
   const label = subject === 'simulação' ? 'Movimento simulado' : subject === 'movimento' ? 'Movimento' : 'Objeto';
+  const crossing = testTrajectory(previous, current, zones);
+  if (crossing.length) return `${subject === 'simulação' ? 'Travessia simulada' : 'Travessia observada'} em ${crossing.join(', ')}`;
   const ignored = zones.find((zone) => zone.kind === 'exclude' && inside(current, zone.points));
   if (ignored) return `${label} ignorado em ${ignored.name}`;
   const included = zones.filter((zone) => zone.kind === 'include');
   if (included.length && !included.some((zone) => inside(current, zone.points))) {
     return `${label} fora da área monitorada`;
   }
-  const crossing = testTrajectory(previous, current, zones);
-  if (crossing.length) return `${subject === 'simulação' ? 'Travessia simulada' : 'Travessia observada'} em ${crossing.join(', ')}`;
   const active = included.find((zone) => inside(current, zone.points));
   if (active) return `${label} dentro de ${active.name}`;
   return subject === 'simulação' ? 'Movimento simulado em área monitorada' : subject === 'movimento' ? 'Movimento observado em área monitorada' : 'Objeto observado em área monitorada';
