@@ -29,6 +29,14 @@ class CrossingConfirmation(unittest.TestCase):
         for i,x in enumerate([40,45,55,60,65]):
             self.assertEqual(d.avaliar([det(x,.35)],100,100,i),[])
 
+    def test_person_count_and_alert_confirm_independently(self):
+        counting = dict(LINE, id='people', uso='contagem', classes=['person'])
+        for confidence, expected in ((.49, set()), (.50, {'people'}), (.75, {'people', 'l'})):
+            detector = self.detector([LINE, counting])
+            for i, x in enumerate([40, 45, 55]):
+                events = detector.avaliar([det(x, confidence)], 100, 100, i)
+            self.assertEqual({e['linhaId'] for e in events}, expected)
+
     def test_expired_crossing_does_not_revive(self):
         d=self.detector()
         d.avaliar([det(40)],100,100,0)

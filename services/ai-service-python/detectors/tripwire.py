@@ -45,6 +45,7 @@ TTL_RASTRO_S = 5.0
 # pode virar vazamento de memória num processo que também atende vídeo.
 MAX_RASTROS = 128
 MARGEM_LINHA = 0.003
+CONFIANCA_CONTAGEM_PESSOAS = 0.50
 
 
 def _lado(ax: float, ay: float, bx: float, by: float, px: float, py: float) -> float:
@@ -316,10 +317,15 @@ class DetectorDeTravessia:
                 # Keep the latest crossing per line briefly while evidence
                 # matures; an early crossing must not disappear at frame two.
                 pending[linha["id"]] = (event, agora)
-            if len(scores) >= self.min_frames and statistics.median(scores) >= self.confidence_threshold:
-                for event, _ in pending.values():
-                    event["confirmationConfidence"] = statistics.median(scores)
-                    travessias.append(event)
-                pending.clear()
+            if pending and len(scores) >= self.min_frames:
+                confidence = statistics.median(scores)
+                for line_id, (event, _) in list(pending.items()):
+                    threshold = self.confidence_threshold
+                    if event.get("uso") == "contagem" and normalizar_classe(event["label"]) == "person":
+                        threshold = CONFIANCA_CONTAGEM_PESSOAS
+                    if confidence >= threshold:
+                        event["confirmationConfidence"] = confidence
+                        travessias.append(event)
+                        del pending[line_id]
         self._limitar()
         return travessias
