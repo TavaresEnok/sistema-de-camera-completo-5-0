@@ -129,7 +129,8 @@ class ObjectDetector(Detector):
         self.openvino_performance_hint = str(GENERAL_PROFILE.get("openvino_performance_hint", "LATENCY") or "LATENCY").strip() or "LATENCY"
         self._runtime_lock = threading.Lock()
         self._runtimes: dict[int, dict] = {}
-        self._global_request_limit = global_request_limit(GENERAL_PROFILE.get("global_infer_requests", 2))
+        automatic_channels = threading_plan["available_threads"] // 2 if self.openvino_device.upper() == "CPU" else 1
+        self._global_request_limit = global_request_limit(GENERAL_PROFILE.get("global_infer_requests", 2), automatic_channels)
         self._global_requests = threading.BoundedSemaphore(self._global_request_limit)
         self._global_busy_drops = 0
         self._real_infer_runs = 0
