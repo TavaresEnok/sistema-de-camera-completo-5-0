@@ -102,6 +102,7 @@ export function DetectionZonesEditor({ cameraId, cameraName, configurationRevisi
     if (zs?.length && zs.every((z) => z.kind === 'line')) return 'line';
     return 'exclude';
   };
+  const [countingDoor, setCountingDoor] = useState(false);
   const [drawKind, setDrawKind] = useState<'include' | 'exclude' | 'line'>(() => ferramentaInicial(initialZones));
   const [saving, setSaving] = useState(false);
   const [posterUrl, setPosterUrl] = useState<string | null>(null);
@@ -238,6 +239,7 @@ export function DetectionZonesEditor({ cameraId, cameraName, configurationRevisi
     try {
       const draft = JSON.parse(sessionStorage.getItem(draftKey) ?? 'null');
       if (draft && Array.isArray(draft.zones) && Date.now() - draft.at < 86400000) {
+        setCountingDoor(draft.kind === "line" && draft.countingDoor === true);
         setZones(draft.zones); setDrawing(draft.drawing ?? null); setDirty(true);
         if (['line', 'include', 'exclude'].includes(draft.kind)) setDrawKind(draft.kind);
         toast({ title: 'Desenho recuperado', description: 'Suas alterações ainda não foram salvas. Confira antes de aplicar.' });
@@ -246,8 +248,8 @@ export function DetectionZonesEditor({ cameraId, cameraName, configurationRevisi
   }, [draftKey]);
   useEffect(() => {
     if (readOnly || (!dirty && drawing === null)) return;
-    try { sessionStorage.setItem(draftKey, JSON.stringify({ zones, drawing, kind: drawKind, at: Date.now() })); } catch { /* Sem espaço: a proteção ao sair continua ativa. */ }
-  }, [draftKey, zones, drawing, dirty, drawKind, readOnly]);
+    try { sessionStorage.setItem(draftKey, JSON.stringify({ zones, drawing, kind: drawKind, countingDoor, at: Date.now() })); } catch { /* Sem espaço: a proteção ao sair continua ativa. */ }
+  }, [draftKey, zones, drawing, dirty, drawKind, countingDoor, readOnly]);
 
   // Snapshot da câmera como pano de fundo (mesmo poster usado no live).
   // O servidor devolve o último frame salvo em disco quando o RTSP recente
@@ -369,7 +371,7 @@ export function DetectionZonesEditor({ cameraId, cameraName, configurationRevisi
       toast({ title: 'Zona incompleta', description: 'Marque pelo menos 3 pontos para fechar a área.', variant: 'destructive' });
       return;
     }
-    const kindLabel = drawKind === 'exclude' ? 'Ignorar' : drawKind === 'include' ? 'Monitorar' : 'Linha';
+    const kindLabel = drawKind === 'exclude' ? 'Ignorar' : drawKind === 'include' ? 'Monitorar' : countingDoor ? 'Porta' : 'Linha';
     const sameKind = zones.filter((z) => z.kind === drawKind).length + 1;
     remember();
     setZones((current) => [
@@ -379,12 +381,13 @@ export function DetectionZonesEditor({ cameraId, cameraName, configurationRevisi
         name: `${kindLabel} ${sameKind}`,
         kind: drawKind,
         points: drawing,
+        ...(drawKind === 'line' && countingDoor ? { uso: 'contagem' as const, entrada: 'ab' as const, classes: ['person'] } : {}),
         ...(drawKind === 'line' ? { sentido: 'ambos' as const } : {}),
       },
     ]);
     setDrawing(null);
     setDirty(true);
-  }, [drawing, drawKind, zones]);
+  }, [drawing, drawKind, countingDoor, zones]);
 
   const save = useCallback(async () => {
     if (!accessToken || readOnly) return;
@@ -435,7 +438,7 @@ export function DetectionZonesEditor({ cameraId, cameraName, configurationRevisi
 
   const hasInclude = useMemo(() => zones.some((z) => z.kind === 'include'), [zones]);
   const hasExclude = useMemo(() => zones.some((z) => z.kind === 'exclude'), [zones]);
-  const startDrawing = (kind: DetectionZone['kind']) => {
+  const startDrawing = (kind: DetectionZone['kind'], door = false) => {
     if (zones.length >= MAX_ZONES) {
       toast({ title: 'Limite de zonas', description: `Máximo de ${MAX_ZONES} zonas por câmera.`, variant: 'destructive' });
       return;
@@ -444,6 +447,7 @@ export function DetectionZonesEditor({ cameraId, cameraName, configurationRevisi
       toast({ title: 'Aguarde a imagem da câmera', description: 'O desenho estará disponível assim que a imagem carregar.' });
       return;
     }
+    setCountingDoor(door);
     setDrawKind(kind);
     setPanMode(false);
     setDrawing([]);
@@ -486,10 +490,14 @@ export function DetectionZonesEditor({ cameraId, cameraName, configurationRevisi
             type="button"
             disabled={drawing !== null}
             onClick={() => startDrawing('line')}
-            className={`seg-btn ${drawing !== null && drawKind === 'line' ? 'active' : ''}`}
+            className={`seg-btn ${drawing !== null && drawKind === 'line' && !countingDoor ? 'active' : ''}`}
             title="Limite que não deve ser atravessado: dispara quando um objeto cruza a linha."
           >
-            Criar linha
+            Linha de alerta
+          </button>
+          <button type="button" disabled={drawing !== null} onClick={() => startDrawing('line', true)}
+            className={`seg-btn ${drawing !== null && drawKind === 'line' && countingDoor ? 'active' : ''}`}>
+            Contar pessoas na porta
           </button>
         </div>
 
@@ -523,7 +531,7 @@ export function DetectionZonesEditor({ cameraId, cameraName, configurationRevisi
           style={{ background: ZONE_COLOR[drawKind].stroke }}
         />
         <span>
-          {drawing === null ? 'Escolha Ignorar movimento, Limitar movimento à área ou Criar linha para desenhar diretamente sobre a câmera.' : drawKind === 'exclude' && (
+          {drawing === null ? 'Para contar entradas e saídas, escolha Contar pessoas na porta.' : drawKind === 'exclude' && (
             <>
               <strong className="font-medium text-foreground">Área ignorada:</strong>{' '}
               O movimento dentro do desenho será ignorado. O restante da imagem continua monitorado.
@@ -535,7 +543,8 @@ export function DetectionZonesEditor({ cameraId, cameraName, configurationRevisi
               Marque o espaço que importa. Com essa regra, somente as áreas marcadas serão consideradas.
             </>
           )}
-          {drawing !== null && drawKind === 'line' && (
+          {drawing !== null && drawKind === 'line' && countingDoor && 'Trace a linha no piso, de um lado ao outro da passagem. Evite reflexos no vidro.'}
+          {drawing !== null && drawKind === 'line' && !countingDoor && (
             <>
               <strong className="font-medium text-foreground">Linha de perímetro:</strong>{' '}
               Marque o início e o fim do limite. A seta mostra o sentido de passagem entre os lados A e B. Selecione um desenho para arrastar seus pontos.
@@ -693,8 +702,8 @@ export function DetectionZonesEditor({ cameraId, cameraName, configurationRevisi
               />
               {(() => { const arrow = crossingArrow(zone.points); return arrow ? <g pointerEvents="none">
                 <line {...arrow} stroke={cor} strokeWidth={0.4} markerEnd={fim ? seta : undefined} markerStart={inicio ? seta : undefined} />
-                <text x={arrow.x1} y={arrow.y1 - 1.5} fontSize="2.5" fill="white" stroke="black" strokeWidth="0.6" paintOrder="stroke">{contagem && zone.entrada === 'ba' ? 'A · Entrada' : 'A'}</text>
-                <text x={arrow.x2} y={arrow.y2 + 3} fontSize="2.5" fill="white" stroke="black" strokeWidth="0.6" paintOrder="stroke">{contagem && (zone.entrada ?? 'ab') === 'ab' ? 'B · Entrada' : 'B'}</text>
+                <text x={arrow.x1} y={arrow.y1 - 1.5} fontSize="2.5" fill="white" stroke="black" strokeWidth="0.6" paintOrder="stroke">{contagem ? (zone.entrada === 'ba' ? 'Entrada' : 'Saída') : 'A'}</text>
+                <text x={arrow.x2} y={arrow.y2 + 3} fontSize="2.5" fill="white" stroke="black" strokeWidth="0.6" paintOrder="stroke">{contagem ? (zone.entrada === 'ba' ? 'Saída' : 'Entrada') : 'B'}</text>
                 <text x={(zone.points[0][0] + zone.points[1][0]) * 50} y={(zone.points[0][1] + zone.points[1][1]) * 50 - 2.5} textAnchor="middle" fontSize="2.8" fill="white" stroke="black" strokeWidth="0.7" paintOrder="stroke">{zone.name}</text>
               </g> : null; })()}
               {zone.points.map(([x, y], i) => (
@@ -746,7 +755,7 @@ export function DetectionZonesEditor({ cameraId, cameraName, configurationRevisi
         {drawing && (
           <div className="pointer-events-none absolute bottom-2 left-1/2 -translate-x-1/2 rounded bg-black/70 px-2 py-1 text-[10px] text-white/80">
             {drawKind === 'line'
-              ? 'Clique no INÍCIO e no FIM da linha · 2 pontos'
+              ? (drawing.length === 0 ? 'Marque a primeira ponta' : drawing.length === 1 ? 'Marque a outra ponta' : 'Confirme a linha')
               : 'Clique para marcar os cantos da área · mínimo 3 pontos'}
           </div>
         )}
@@ -794,20 +803,14 @@ export function DetectionZonesEditor({ cameraId, cameraName, configurationRevisi
                   <option value="contagem">Contagem</option>
                 </select>
                 {zone.uso === 'contagem' ? (<>
-                  <select
-                    value={zone.entrada ?? 'ab'}
-                    onChange={(event) => {
+                  <button type="button" className="btn btn-secondary btn-sm"
+                    aria-label={`Inverter entrada e saída da linha ${zone.name}`}
+                    onClick={() => {
                       remember();
-                      const entrada = event.target.value as 'ab' | 'ba';
-                      setZones((current) => current.map((z) => (z.id === zone.id ? { ...z, entrada } : z)));
+                      setZones(current => current.map(z => z.id === zone.id
+                        ? { ...z, entrada: z.entrada === 'ba' ? 'ab' : 'ba' } : z));
                       setDirty(true);
-                    }}
-                    className="rounded border border-border bg-background px-1.5 py-0.5 text-[10px]"
-                    aria-label={`Sentido de entrada da linha ${zone.name}`}
-                  >
-                    <option value="ab">Entrada A → B</option>
-                    <option value="ba">Entrada B → A</option>
-                  </select>
+                    }}>Inverter entrada e saída</button>
                   <select
                     value={(zone.classes ?? ['person'])[0]}
                     onChange={(event) => {

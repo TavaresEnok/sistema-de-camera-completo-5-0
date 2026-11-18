@@ -85,7 +85,9 @@ test('counting simulation accepts entry/exit at the boundary of an included area
 test('editor oferece uso Alerta/Contagem e sentido de entrada', () => {
   const fonte = readFileSync('src/components/DetectionZonesEditor.tsx', 'utf8');
   assert.match(fonte, /<option value="contagem">Contagem<\/option>/);
-  assert.match(fonte, /Entrada A → B/);
+  assert.match(fonte, /Contar pessoas na porta/);
+  assert.match(fonte, /Inverter entrada e saída/);
+  assert.match(fonte, /entrada: z\.entrada === 'ba' \? 'ab' : 'ba'/);
   assert.match(fonte, /Qualquer sentido/);
 });
 
