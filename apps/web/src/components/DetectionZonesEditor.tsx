@@ -702,8 +702,10 @@ export function DetectionZonesEditor({ cameraId, cameraName, configurationRevisi
               />
               {(() => { const arrow = crossingArrow(zone.points); return arrow ? <g pointerEvents="none">
                 <line {...arrow} stroke={cor} strokeWidth={0.4} markerEnd={fim ? seta : undefined} markerStart={inicio ? seta : undefined} />
-                <text x={arrow.x1} y={arrow.y1 - 1.5} fontSize="2.5" fill="white" stroke="black" strokeWidth="0.6" paintOrder="stroke">{contagem ? (zone.entrada === 'ba' ? 'Entrada' : 'Saída') : 'A'}</text>
-                <text x={arrow.x2} y={arrow.y2 + 3} fontSize="2.5" fill="white" stroke="black" strokeWidth="0.6" paintOrder="stroke">{contagem ? (zone.entrada === 'ba' ? 'Saída' : 'Entrada') : 'B'}</text>
+                {!contagem && <>
+                  <text x={arrow.x1} y={arrow.y1 - 1.5} fontSize="2.5" fill="white" stroke="black" strokeWidth="0.6" paintOrder="stroke">A</text>
+                  <text x={arrow.x2} y={arrow.y2 + 3} fontSize="2.5" fill="white" stroke="black" strokeWidth="0.6" paintOrder="stroke">B</text>
+                </>}
                 <text x={(zone.points[0][0] + zone.points[1][0]) * 50} y={(zone.points[0][1] + zone.points[1][1]) * 50 - 2.5} textAnchor="middle" fontSize="2.8" fill="white" stroke="black" strokeWidth="0.7" paintOrder="stroke">{zone.name}</text>
               </g> : null; })()}
               {zone.points.map(([x, y], i) => (
@@ -750,6 +752,25 @@ export function DetectionZonesEditor({ cameraId, cameraName, configurationRevisi
           )}
           {testing && detections.filter((d) => d.frameWidth && d.frameHeight).map((d) => <rect key={d.id} x={d.bbox[0] / d.frameWidth! * 100} y={d.bbox[1] / d.frameHeight! * 100} width={(d.bbox[2] - d.bbox[0]) / d.frameWidth! * 100} height={(d.bbox[3] - d.bbox[1]) / d.frameHeight! * 100} fill="none" stroke={d.recent ? '#9ca3af' : '#38bdf8'} strokeDasharray={d.recent ? '1 .5' : undefined} strokeWidth=".4" pointerEvents="none" />)}
         </svg>
+        {(testing || posterStatus === 'ready') && zones.map((zone) => {
+          if (zone.kind !== 'line' || zone.uso !== 'contagem') return null;
+          const arrow = crossingArrow(zone.points);
+          if (!arrow) return null;
+          return [0, 1].map((side) => {
+            const entry = side === (zone.entrada === 'ba' ? 0 : 1);
+            const x = side ? arrow.x2 : arrow.x1, y = side ? arrow.y2 : arrow.y1;
+            const dx = side ? arrow.x2 - arrow.x1 : arrow.x1 - arrow.x2;
+            const dy = side ? arrow.y2 - arrow.y1 : arrow.y1 - arrow.y2;
+            const horizontal = Math.abs(dx) > Math.abs(dy);
+            const offsetX = horizontal ? (dx > 0 ? 26 : -26) : 0;
+            const offsetY = horizontal ? 0 : (dy > 0 ? 12 : -12);
+            return <span key={zone.id + side}
+              className="pointer-events-none absolute z-10 -translate-x-1/2 -translate-y-1/2 rounded bg-black/80 px-1.5 py-0.5 text-xs font-medium leading-tight text-white"
+              style={{ left: `clamp(26px, calc(${x}% + ${offsetX}px), calc(100% - 26px))`, top: `clamp(10px, calc(${y}% + ${offsetY}px), calc(100% - 10px))` }}>
+              {entry ? 'Entrada' : 'Saída'}
+            </span>;
+          });
+        })}
         </div>
 
         {drawing && (
