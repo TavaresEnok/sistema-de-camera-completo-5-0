@@ -1,3 +1,4 @@
+import { PersonPatternReview } from './PersonPatternReview';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 import { useLocation } from 'wouter';
@@ -91,6 +92,8 @@ export function PainelDeDeteccoes({ comCabecalho = true }: { comCabecalho?: bool
   const [items, setItems] = useState<ReviewItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [cameraId, setCameraId] = useState('__all__');
+  const role = useAuthStore(s => s.user?.role);
+  const [showReview,setShowReview] = useState(false);
   const [label, setLabel] = useState('__all__');
   const [onlyConfirmed, setOnlyConfirmed] = useState(true);
   const [unseenOnly, setUnseenOnly] = useState(false);
@@ -213,6 +216,8 @@ export function PainelDeDeteccoes({ comCabecalho = true }: { comCabecalho?: bool
         <button type="button" onClick={() => setUnseenOnly((v) => !v)} className={`btn btn-sm ${unseenOnly ? 'btn-primary' : 'btn-secondary'}`}>
           {unseenOnly ? <EyeOff className="h-3.5 w-3.5" aria-hidden /> : <Eye className="h-3.5 w-3.5" aria-hidden />} {unseenOnly ? 'Só não vistas' : 'Todas'}
         </button>
+        {(role==='admin' || role==='operator') && <button type="button" className="btn btn-secondary btn-sm"
+          aria-expanded={showReview} onClick={()=>setShowReview(v=>!v)}>Falsos positivos</button>}
         {/* Atualizar vive na barra de filtros, e não no cabeçalho: como aba, o
             cabeçalho é da Inteligência, e o botão sumiria. */}
         <button type="button" onClick={() => void load()} className="btn btn-secondary btn-sm ml-auto" title="Atualizar" aria-label="Atualizar detecções">
@@ -220,6 +225,9 @@ export function PainelDeDeteccoes({ comCabecalho = true }: { comCabecalho?: bool
         </button>
       </div>
 
+      {showReview && (role==='admin' || role==='operator') && (cameraId==='__all__'?
+        <p className="border-b border-border px-4 py-2 text-sm">Selecione uma câmera para revisar os falsos positivos.</p>:
+        <PersonPatternReview key={cameraId} camera={cameraId} client={client}/>)}
       <div className="flex-1 overflow-y-auto p-4">
         {loading && !items.length ? (
           <div className="flex h-40 items-center justify-center text-[hsl(var(--muted-foreground))]">
