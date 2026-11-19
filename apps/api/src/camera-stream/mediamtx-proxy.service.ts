@@ -854,27 +854,67 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     return { complete };
   }
 
-  private readerRoute(protocol: string) {
-    return ({ webrtc: 'webrtcsessions', rtsp: 'rtspsessions', rtmp: 'rtmpconns', rtmps: 'rtmpconns', srt: 'srtconns' } as Record<string, string>)[protocol];
+  private readerRoutes(protocol: string): string[] {
+    // MediaMTX reports the same auth protocol for plain and TLS connections.
+    switch (protocol) {
+      case 'rtsp': return ['rtspconns', 'rtspsconns'];
+      case 'rtmp':
+      case 'rtmps': return ['rtmpconns', 'rtmpsconns'];
+      case 'webrtc': return ['webrtcsessions'];
+      case 'srt': return ['srtconns'];
+      case 'hls': return ['hlssessions'];
+      default: throw new Error('Protocolo de leitura sem revogação.');
+    }
   }
 
-  async revokeReader(protocol: string, sessionId: string) {
-    const route = this.readerRoute(protocol);
-    if (!route) throw new Error('Protocolo de leitura sem revogação.');
-    try { await this.apiRequest('POST', `/v3/${route}/kick/${encodeURIComponent(sessionId)}`); }
-    catch (error: any) { if (error?.status !== 404) throw error; }
+  async revokeReader(protocol: string, identity: string) {
+    const encoded = encodeURIComponent(identity);
+    for (const route of this.readerRoutes(protocol)) {
+      try {
+        if (protocol === 'rtsp') {
+          // RTSP authenticates the connection. Its session is assigned during SETUP.
+          const conn = JSON.parse(await this.apiRequest('GET', `/v3/${route}/get/${encoded}`));
+          if (conn.id !== identity || typeof conn.session !== 'string' || !/^[0-9a-f-]{36}$/i.test(conn.session)) {
+            throw new Error('Aguardando a sessão da conexão RTSP.');
+          }
+          const sessions = route === 'rtspconns' ? 'rtspsessions' : 'rtspssessions';
+          try {
+            await this.apiRequest('POST', `/v3/${sessions}/kick/${encodeURIComponent(conn.session)}`);
+          } catch (error: any) {
+            if (error?.status !== 404) throw error;
+            // A new SETUP on the same connection must be reconciled on the next pass.
+            await this.apiRequest('GET', `/v3/${route}/get/${encoded}`);
+            throw new Error('Aguardando a desconexão do leitor RTSP.');
+          }
+        } else {
+          await this.apiRequest('POST', `/v3/${route}/kick/${encoded}`);
+        }
+        return;
+      } catch (error: any) {
+        // 404 also means the optional TLS listener is disabled.
+        if (error?.status !== 404) throw error;
+      }
+    }
   }
 
   async readerSessions(protocol: string): Promise<Set<string>> {
-    const route = this.readerRoute(protocol);
-    if (!route) throw new Error('Protocolo de leitura sem revogação.');
     const ids = new Set<string>();
-    for (let page = 0; ; page++) {
-      const result = JSON.parse(await this.apiRequest('GET', `/v3/${route}/list?itemsPerPage=1000&page=${page}`));
-      for (const item of result.items ?? []) ids.add(String(item.id));
-      if (page + 1 >= (result.pageCount ?? 1)) return ids;
-      if (page >= 999) throw new Error('Limite de páginas das sessões excedido.');
+    for (const route of this.readerRoutes(protocol)) {
+      for (let page = 0; ; page++) {
+        let result;
+        try {
+          result = JSON.parse(await this.apiRequest('GET', `/v3/${route}/list?itemsPerPage=1000&page=${page}`));
+        } catch (error: any) {
+          if (page === 0 && error?.status === 404) break;
+          throw error;
+        }
+        if (!Array.isArray(result.items) || !Number.isInteger(result.pageCount)) throw new Error('Lista de leitores inválida.');
+        for (const item of result.items) ids.add(String(item.id));
+        if (page + 1 >= result.pageCount) break;
+        if (page >= 999) throw new Error('Limite de páginas das sessões excedido.');
+      }
     }
+    return ids;
   }
 
   private async reapDuplicateWebrtcSessions() {
