@@ -59,6 +59,27 @@ def filtrar_deteccoes_por_classe(deteccoes, classes: set[str]):
     return [d for d in (deteccoes or []) if normalizar_classe(getattr(d, "label", "")) in classes]
 
 
+def eh_caixa_de_fundo_de_pessoa(deteccao, largura: int, altura: int) -> bool:
+    """Reconhece a caixa de fundo calibrada em câmeras com esse falso positivo."""
+    if normalizar_classe(getattr(deteccao, "label", "")) != "person" or largura <= 0 or altura <= 0:
+        return False
+    caixa = getattr(deteccao, "bbox", None)
+    if not isinstance(caixa, (list, tuple)) or len(caixa) != 4:
+        return False
+    if not all(isinstance(coord, (int, float)) for coord in caixa):
+        return False
+    x1, y1, x2, y2 = caixa
+    # O fundo registrado começa na borda esquerda, termina antes da borda
+    # direita e ocupa quase toda a altura. Caixas grandes em outras posições
+    # continuam passando, inclusive pessoas cortadas perto da lente.
+    return (
+        0 <= x1 <= largura * 0.015
+        and largura * 0.925 <= x2 <= largura * 0.99
+        and 0 <= y1 <= altura * 0.19
+        and altura * 0.965 <= y2 <= altura
+    )
+
+
 def eh_objeto_para_confirmar(deteccao) -> bool:
     return str(getattr(deteccao, "event_type", None) or "AI_DETECTED") in {
         "AI_DETECTED",

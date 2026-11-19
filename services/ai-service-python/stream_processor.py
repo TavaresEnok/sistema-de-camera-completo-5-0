@@ -36,7 +36,7 @@ from capture_rate_guard import CaptureRateGuard
 from stage_timings import StageTimings
 from event_delivery import EventDelivery
 from inference_watchdog import evaluate_inference_health, watchdog_settings
-from object_policy import eh_objeto_para_confirmar, filtrar_deteccoes_por_classe, politica_de_objeto
+from object_policy import eh_caixa_de_fundo_de_pessoa, eh_objeto_para_confirmar, filtrar_deteccoes_por_classe, politica_de_objeto
 
 logger = logging.getLogger("ai-service.stream")
 
@@ -242,6 +242,11 @@ class StreamProcessor:
         self.object_model_runs = 0
         self.visual_track_runs = 0
         self.object_busy_calls = 0
+        self.background_person_boxes_filtered = 0
+        self.filter_background_person_boxes = self.camera_id in {
+            identity.strip() for identity in os.getenv("AI_BACKGROUND_PERSON_BOX_CAMERA_IDS", "").split(",")
+            if identity.strip()
+        }
         self._motion_inference_timestamps = deque(maxlen=120)
         self._motion_infer_latencies_ms = deque(maxlen=240)
         self.motion_infer_runs = 0
@@ -1324,6 +1329,13 @@ class StreamProcessor:
                                 advanced_detections,
                                 self.object_policy["classes"],
                             )
+                            if self.filter_background_person_boxes:
+                                total = len(advanced_detections)
+                                advanced_detections = [
+                                    detection for detection in advanced_detections
+                                    if not eh_caixa_de_fundo_de_pessoa(detection, advanced_width, advanced_height)
+                                ]
+                                self.background_person_boxes_filtered += total - len(advanced_detections)
                     except Exception:
                         self.advanced_infer_errors += 1
                         raise
@@ -1806,6 +1818,8 @@ class StreamProcessor:
             "visual_track_runs": self.visual_track_runs,
             "visual_track_fps": round(float(self._rate_from_timestamps(self._visual_track_timestamps)), 3),
             "object_busy_calls": self.object_busy_calls,
+            "background_person_box_filter_enabled": self.filter_background_person_boxes,
+            "background_person_boxes_filtered": self.background_person_boxes_filtered,
             "advanced_infer_errors": self.advanced_infer_errors,
             "advanced_infer_last_ms": round(float(self.advanced_infer_last_ms), 3),
             "advanced_infer_avg_ms": round(float(avg_advanced_ms), 3),
