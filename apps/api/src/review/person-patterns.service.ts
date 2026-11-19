@@ -83,12 +83,15 @@ export class PersonPatternsService {
     const rows = await this.db.cameraEvent.findMany({where:{cameraId:camera,type:{in:TYPES}},orderBy:{occurredAt:'desc'},take:300});
     const matched = rows.flatMap(r => personExample(r) ?? []).filter(e =>
       e.score <= .65 && e.box.every((v,i)=>Math.abs(v-source.box[i]) <= .025));
-    const samples = matched.slice(0,12);
-    const items = await Promise.all(samples.map(async e => {
-      const recording = await this.db.recording.findFirst({where:{cameraId:camera,startedAt:{lte:e.at},
-        OR:[{endedAt:null},{endedAt:{gte:e.at}}]},select:{id:true}});
-      return {id:e.id, at:e.at, hasVideo:!!recording};
-    }));
+    if (!matched.length) return {checked:rows.length, matched:0, items:[]};
+    // Busca primeiro as gravações disponíveis, mesmo quando os eventos mais novos estão sem vídeo.
+    const linked = await this.db.$queryRaw<Array<{id:string}>>`SELECT e.id FROM "CameraEvent" e
+      WHERE e."cameraId"=${camera} AND e.id IN (${Prisma.join(matched.map(e=>e.id))}) AND EXISTS
+      (SELECT 1 FROM "Recording" r WHERE r."cameraId"=e."cameraId" AND r."startedAt"<=e."occurredAt"
+       AND (r."endedAt" IS NULL OR r."endedAt">=e."occurredAt")) ORDER BY e."occurredAt" DESC LIMIT 12`;
+    const playable = new Set(linked.map(e=>e.id));
+    const samples = [...matched.filter(e=>playable.has(e.id)), ...matched.filter(e=>!playable.has(e.id))].slice(0,12);
+    const items = samples.map(e=>({id:e.id, at:e.at, box:e.box, hasVideo:playable.has(e.id)}));
     return {checked:rows.length, matched:matched.length, items};
   }
 
