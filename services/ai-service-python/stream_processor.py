@@ -34,6 +34,7 @@ from capture_rate_guard import CaptureRateGuard
 from stage_timings import StageTimings
 from event_delivery import EventDelivery
 from inference_watchdog import evaluate_inference_health, watchdog_settings
+from scene_review import PersonBoxReview
 from object_policy import eh_objeto_para_confirmar, filtrar_deteccoes_por_classe, politica_de_objeto
 
 logger = logging.getLogger("ai-service.stream")
@@ -214,6 +215,7 @@ class StreamProcessor:
         self._inference_timestamps = deque(maxlen=120)
         self._object_model_timestamps = deque(maxlen=120)
         self._visual_track_timestamps = deque(maxlen=120)
+        self.person_box_review = PersonBoxReview()
         self.object_model_runs = 0
         self.visual_track_runs = 0
         self.object_busy_calls = 0
@@ -1289,6 +1291,10 @@ class StreamProcessor:
                                 advanced_detections,
                                 self.object_policy["classes"],
                             )
+                            advanced_detections = self.person_box_review.apply(
+                                advanced_detections, advanced_frame, det, self.current_input_size_hint,
+                                self.camera_id, self.api_url, self.service_token, execution_kind,
+                            )
                     except Exception:
                         self.advanced_infer_errors += 1
                         raise
@@ -1761,6 +1767,11 @@ class StreamProcessor:
             "motion_infer_p95_ms": round(motion_latencies[min(len(motion_latencies) - 1, int((len(motion_latencies) - 1) * 0.95))], 3) if motion_latencies else 0.0,
             "advanced_infer_runs": self.advanced_infer_runs,
             "object_model_runs": self.object_model_runs,
+            "person_box_review_invalid": self.person_box_review.invalid,
+            "person_box_review_suspect": self.person_box_review.suspect,
+            "person_box_review_checks": self.person_box_review.checks,
+            "person_box_review_filtered": self.person_box_review.filtered,
+            "person_box_review_unavailable": self.person_box_review.unavailable,
             "object_model_frame_fps": round(float(self._rate_from_timestamps(self._object_model_timestamps)), 3),
             "visual_track_runs": self.visual_track_runs,
             "visual_track_fps": round(float(self._rate_from_timestamps(self._visual_track_timestamps)), 3),

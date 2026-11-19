@@ -3,6 +3,7 @@ USER root
 RUN apt-get update && apt-get install -y --no-install-recommends gcc g++ binutils \
     && pip install --no-cache-dir Cython \
     && rm -r /var/lib/apt/lists/*
+COPY services/ai-service-python/scene_review.py /source/scene_review.py
 COPY services/ai-service-python/stream_processor.py /source/stream_processor.py
 COPY services/ai-service-python/object_policy.py /source/object_policy.py
 COPY services/ai-service-python/detectors/confirmacao_de_objeto.py /source/detectors/confirmacao_de_objeto.py
