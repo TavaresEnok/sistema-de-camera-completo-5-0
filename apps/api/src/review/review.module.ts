@@ -1,3 +1,5 @@
+import { PersonPatternsController } from "./person-patterns.controller";
+import { PersonPatternsService } from "./person-patterns.service";
 import { Module } from '@nestjs/common';
 import { PrismaModule } from '../common/prisma/prisma.module';
 import { AccessControlModule } from '../access-control/access-control.module';
@@ -7,7 +9,7 @@ import { ReviewService } from './review.service';
 
 @Module({
   imports: [PrismaModule, AccessControlModule, RecordingsModule],
-  controllers: [ReviewController],
-  providers: [ReviewService],
+  controllers: [ReviewController, PersonPatternsController],
+  providers: [ReviewService, PersonPatternsService],
 })
 export class ReviewModule {}
