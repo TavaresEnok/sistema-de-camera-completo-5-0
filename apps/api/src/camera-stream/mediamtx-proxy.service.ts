@@ -878,7 +878,14 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
             throw new Error('Aguardando a sessão da conexão RTSP.');
           }
           const sessions = route === 'rtspconns' ? 'rtspsessions' : 'rtspssessions';
-          await this.apiRequest('POST', `/v3/${sessions}/kick/${encodeURIComponent(conn.session)}`);
+          try {
+            await this.apiRequest('POST', `/v3/${sessions}/kick/${encodeURIComponent(conn.session)}`);
+          } catch (error: any) {
+            if (error?.status !== 404) throw error;
+            // A new SETUP on the same connection must be reconciled on the next pass.
+            await this.apiRequest('GET', `/v3/${route}/get/${encoded}`);
+            throw new Error('Aguardando a desconexão do leitor RTSP.');
+          }
         } else {
           await this.apiRequest('POST', `/v3/${route}/kick/${encoded}`);
         }
