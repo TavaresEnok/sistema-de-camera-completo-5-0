@@ -341,8 +341,9 @@ export class CameraStreamController {
       if (tokenUser.integrationGroupId) {
         if (!this.prisma) return deny('Controle de sessão indisponível.');
         const protocol = String(body.protocol ?? '').toLowerCase();
-        if (protocol !== 'hls') {
-          if (!['webrtc', 'rtsp', 'rtmp', 'rtmps', 'srt'].includes(protocol) || !/^[0-9a-f-]{36}$/i.test(String(body.id ?? ''))) return deny('Sessão de vídeo inválida.');
+        // MediaMTX also authorizes the HLS index page, which has no session yet.
+        if (protocol !== 'hls' || body.id) {
+          if (!['webrtc', 'rtsp', 'rtmp', 'rtmps', 'srt', 'hls'].includes(protocol) || !/^[0-9a-f-]{36}$/i.test(String(body.id ?? ''))) return deny('Sessão de vídeo inválida.');
           const identity = { protocol, sessionId: String(body.id) };
           await this.prisma.mediaReaderIdentity.upsert({ where: { protocol_sessionId: identity }, create: { ...identity, userId: tokenUser.id, cameraId: payload.cameraId }, update: { userId: tokenUser.id, cameraId: payload.cameraId } });
         }
