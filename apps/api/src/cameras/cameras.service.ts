@@ -1386,13 +1386,8 @@ export class CamerasService implements OnApplicationBootstrap {
       'rtsp_ports',
       'Verificar portas RTSP',
       async () => {
-        const found: number[] = [];
-        for (const port of rtspPortCandidates) {
-          if (await this.portChecker.check(input.ip, port)) {
-            found.push(port);
-          }
-        }
-        return found;
+        const reachable = await boundedMap(rtspPortCandidates, 4, port => this.portChecker.check(input.ip, port));
+        return rtspPortCandidates.filter((_, index) => reachable[index]);
       },
       (ports) => ports.length ? `Portas abertas: ${ports.join(', ')}` : 'Nenhuma porta RTSP comum respondeu',
     );
@@ -1406,13 +1401,8 @@ export class CamerasService implements OnApplicationBootstrap {
       'onvif_ports',
       'Verificar portas ONVIF',
       async () => {
-        const found: number[] = [];
-        for (const port of onvifPorts) {
-          if (await this.portChecker.check(input.ip, port)) {
-            found.push(port);
-          }
-        }
-        return found;
+        const reachable = await boundedMap(onvifPorts, 4, port => this.portChecker.check(input.ip, port));
+        return onvifPorts.filter((_, index) => reachable[index]);
       },
       (ports) => ports.length ? `Portas abertas: ${ports.join(', ')}` : 'Nenhuma porta ONVIF comum respondeu',
     );
@@ -1531,6 +1521,7 @@ export class CamerasService implements OnApplicationBootstrap {
             username: input.username!,
             password: input.password!,
             paths: this.buildRtspPathCandidates({ channel, subtype: analyticsSubtype, customPath: onvifSub?.rtspPath ?? input.rtspPath }),
+            deadline: detectedRtspPath === '/' && !onvifSub ? Date.now() + 8000 : undefined,
           }),
         ]),
         ([mainResult, subResult]) => {
@@ -1934,6 +1925,7 @@ export class CamerasService implements OnApplicationBootstrap {
     const isMain = subtype === 0;
     return Array.from(new Set([
       input.customPath?.trim().length ? input.customPath.trim() : null,
+      isMain && channel === 1 ? '/' : null,
       `/cam/realmonitor?channel=${channel}&subtype=${subtype}`,
       `/cam/realmonitor?channel=${channel}&subtype=${subtype}&unicast=true`,
       `/cam/realmonitor?channel=${channel}&subtype=${subtype}&unicast=true&proto=Onvif`,
@@ -2859,6 +2851,7 @@ export class CamerasService implements OnApplicationBootstrap {
             'tcp',
             '-timeout',
             String(this.rtspProbeTimeoutMs * 1000),
+            '-analyzeduration', '1000000',
             '-select_streams',
             'v:0',
             '-show_entries',
@@ -2880,7 +2873,7 @@ export class CamerasService implements OnApplicationBootstrap {
         const killTimer = setTimeout(() => {
           proc.kill('SIGKILL');
           finish({ ok: false, error: 'ffprobe timeout', metadata: null });
-        }, Math.min(this.rtspProbeKillTimeoutMs, Math.max(1, (input.deadline ?? Infinity) - Date.now())));
+        }, Math.min(path === '/' ? Math.max(18000, this.rtspProbeKillTimeoutMs) : this.rtspProbeKillTimeoutMs, Math.max(1, (input.deadline ?? Infinity) - Date.now())));
         let stdout = '';
         let stderr = '';
         proc.stdout!.on('data', (chunk) => {
