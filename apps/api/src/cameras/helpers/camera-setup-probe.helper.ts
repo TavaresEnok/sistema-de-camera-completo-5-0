@@ -97,7 +97,8 @@ export async function probeCameraSetup(input: {
   };
   const selected = checked.get(input.port);
   if (input.customPath && (selected === 'rtsp' || selected === 'unknown')) {
-    const result = await run(input.port, [input.customPath], Math.min(input.deadline, now() + 6000));
+    const timeoutMs = input.customPath === '/' ? 18_000 : 6000;
+    const result = await run(input.port, [input.customPath], Math.min(input.deadline, now() + timeoutMs));
     if (result) return finish(result);
   }
   // Discovery is optional and bounded. No PTZ calls, main/sub probes or bitrate
