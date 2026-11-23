@@ -1504,11 +1504,12 @@ export class CamerasService implements OnApplicationBootstrap {
       const portsForProfileProbe = detectedRtspPort ? [detectedRtspPort] : reachableRtspPorts;
       const onvifMain = this.pickOnvifMainProfile(onvifMedia.profiles);
       const onvifSub = this.pickOnvifSubProfile(onvifMedia.profiles, onvifMain?.token);
+      const confirmedRoot = probe.ok && probe.path === '/' && channel === 1 && (input.subtype ?? 0) === 0 && !onvifMain ? probe : null;
       const [mainProbe, subProbe] = await runStep(
         'rtsp_profile_probe',
         'Separar stream principal e substream',
         () => Promise.all([
-          this.probeRtspPaths({
+          confirmedRoot ?? this.probeRtspPaths({
             ip: input.ip,
             rtspPorts: portsForProfileProbe,
             username: input.username!,
